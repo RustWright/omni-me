@@ -111,8 +111,7 @@ pub async fn extract_document(
     // event exists, so it has to refuse before the request goes out.
     require_feature(&state, Feature::Llm)?;
 
-    // Hint values are simple snake_case strings (receipt, bank_statement, ...)
-    // so no URL encoding is needed; the server will 400 on anything unknown.
+    let hint = checked_hint(&hint)?;
     let path = format!(
         "/documents/extract?hint={hint}&attach=true&propose={}",
         propose.unwrap_or(false)
@@ -158,6 +157,16 @@ pub struct CapturePage {
 /// Several photos of one document, read together and archived by the server as
 /// one PDF. The PDF is made there, so nothing is cached here; the viewer fetches
 /// it on first open.
+/// A hint goes into a query string unencoded, so it is held to the snake_case
+/// words the server knows: a `&` in one would set another parameter.
+fn checked_hint(hint: &str) -> Result<&str, String> {
+    if !hint.is_empty() && hint.chars().all(|c| c.is_ascii_lowercase() || c == '_') {
+        Ok(hint)
+    } else {
+        Err(format!("not a document hint: {hint:?}"))
+    }
+}
+
 #[tauri::command(rename_all = "snake_case")]
 pub async fn extract_document_pages(
     state: State<'_, AppState>,
@@ -166,6 +175,7 @@ pub async fn extract_document_pages(
     propose: Option<bool>,
 ) -> Result<ExtractedDraft, String> {
     require_feature(&state, Feature::Llm)?;
+    let hint = checked_hint(&hint)?;
     let path = format!(
         "/documents/extract_pages?hint={hint}&attach=true&propose={}",
         propose.unwrap_or(false)

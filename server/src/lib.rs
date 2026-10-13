@@ -502,8 +502,9 @@ pub fn build_app(
     // calls (everything goes through the Rust client in `commands/*`), while
     // the permissive preflight let any page the user happened to open drive
     // these endpoints cross-origin. With no CORS headers a browser refuses the
-    // preflight, and the JSON content-type these routes require means the
-    // no-preflight "simple request" path can't reach them either.
+    // preflight. The body routes that take text/plain or multipart are still
+    // "simple requests" a page can send blind, so the bearer token is what guards
+    // them; dev, which runs without one, is reachable only from the tailnet.
     app.layer(TraceLayer::new_for_http()).with_state(state)
 }
 
