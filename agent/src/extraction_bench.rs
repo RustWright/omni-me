@@ -35,7 +35,6 @@ const SAMPLE_ENV: &str = "OMNI_BENCH_SAMPLE";
 /// it is overridable — but a single-shot run now says its stability is unmeasured
 /// rather than printing a number that looks like a ranking.
 const REPEATS_ENV: &str = "OMNI_BENCH_EXTRACT_REPEATS";
-const DEFAULT_REPEATS: usize = 3;
 
 /// A directory of documents that are not transaction statements — the abstention
 /// arm, whose honest answer is no postings at all.
@@ -545,11 +544,7 @@ pub async fn run(extractor: &dyn DocumentExtractor, sampling: Sampling) {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(DEFAULT_SAMPLE);
-    let repeats: usize = std::env::var(REPEATS_ENV)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(DEFAULT_REPEATS);
+    let repeats = crate::bench::repeats(REPEATS_ENV);
 
     // Discovery first, so a run with no endpoint configured is a usable dry run:
     // it proves the corpus parses into labels without spending a token.

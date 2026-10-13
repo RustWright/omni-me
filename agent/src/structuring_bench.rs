@@ -14,7 +14,6 @@ use omni_me_core::llm::{LlmClient, NoteProcessingResult, Sampling, derive_note_s
 /// abstained twice out of three" become distinguishable, which is the whole
 /// point of the consistency column.
 const REPEATS_ENV: &str = "OMNI_BENCH_STRUCT_REPEATS";
-const DEFAULT_REPEATS: usize = 3;
 
 /// Amounts are compared as f64 because that is what `ExtractedExpense` holds.
 /// Detection, not arithmetic — role C keeps money in `Decimal` through a string.
@@ -440,11 +439,7 @@ fn report(rows: &[Scored], model: &str, repeats: usize, sampling: Sampling) {
 }
 
 pub async fn run(llm: &dyn LlmClient, sampling: Sampling) {
-    let repeats: usize = std::env::var(REPEATS_ENV)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(DEFAULT_REPEATS);
+    let repeats = crate::bench::repeats(REPEATS_ENV);
 
     let model = llm.model_name().to_string();
     println!(

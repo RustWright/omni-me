@@ -18,7 +18,6 @@ use omni_me_core::llm::LlmClient;
 use serde_json::Value;
 
 const REPEATS_ENV: &str = "OMNI_BENCH_CASES_REPEATS";
-const DEFAULT_REPEATS: usize = 3;
 
 /// One property of a run. Every case also gets [`UNIVERSAL`].
 #[derive(Debug, Clone, Copy)]
@@ -398,11 +397,7 @@ pub async fn run(
             return;
         }
     };
-    let repeats: usize = std::env::var(REPEATS_ENV)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(DEFAULT_REPEATS);
+    let repeats = crate::bench::repeats(REPEATS_ENV);
     println!(
         "case bench: {} cases x {repeats} runs · model {} · ledger {} accounts, {} \
          transactions · today {}\n",

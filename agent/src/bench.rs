@@ -136,7 +136,16 @@ const ABSENCE_SIGNALS: &[&str] = &[
 /// project: a slate is 15 multi-turn cases per variant, so three runs of both
 /// halves is what the plan line prints before it starts.
 const REPEATS_ENV: &str = "OMNI_BENCH_SLATE_REPEATS";
-const DEFAULT_REPEATS: usize = 3;
+
+/// How many times a bench runs each item: `env`'s value if a positive number,
+/// else three. Every bench reads its own variable through this.
+pub(crate) fn repeats(env: &str) -> usize {
+    std::env::var(env)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(3)
+}
 
 struct Case {
     request: &'static str,
@@ -480,11 +489,7 @@ pub async fn run(
         return;
     }
 
-    let repeats: usize = std::env::var(REPEATS_ENV)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(DEFAULT_REPEATS);
+    let repeats = crate::bench::repeats(REPEATS_ENV);
 
     if constrained_only {
         println!(

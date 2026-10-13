@@ -59,7 +59,6 @@ const BELIEFS: &[Seeded] = &[
 ];
 
 const REPEATS_ENV: &str = "OMNI_BENCH_REVIEW_REPEATS";
-const DEFAULT_REPEATS: usize = 3;
 
 /// One review run, reduced to what is scored.
 #[derive(Debug, Default, PartialEq)]
@@ -148,11 +147,7 @@ pub async fn run(
         eprintln!("cannot bench: the LLM feature is off");
         return;
     }
-    let repeats: usize = std::env::var(REPEATS_ENV)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(DEFAULT_REPEATS);
+    let repeats = crate::bench::repeats(REPEATS_ENV);
     let prompt = config.text_of(ConfigKey::AssistantCheckInPrompt);
 
     println!(

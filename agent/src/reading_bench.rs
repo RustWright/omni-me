@@ -12,7 +12,6 @@ use omni_me_core::extraction::document::{DocumentReader, DocumentSummary};
 use omni_me_core::llm::Sampling;
 
 const REPEATS_ENV: &str = "OMNI_BENCH_READ_REPEATS";
-const DEFAULT_REPEATS: usize = 3;
 
 /// What a probe's document states about its own date.
 #[derive(Debug, Clone, Copy)]
@@ -484,11 +483,7 @@ fn report(rows: &[Scored], model: &str, repeats: usize, sampling: Sampling) {
 }
 
 pub async fn run(reader: Option<&dyn DocumentReader>, sampling: Sampling) {
-    let repeats: usize = std::env::var(REPEATS_ENV)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(DEFAULT_REPEATS);
+    let repeats = crate::bench::repeats(REPEATS_ENV);
 
     println!(
         "plan: {} probes x {repeats} runs = {} calls · no corpus, no database · sampling {}",

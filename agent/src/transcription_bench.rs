@@ -37,7 +37,6 @@ const DEFAULT_SAMPLE: usize = 6;
 /// (`MODEL_BENCH.md` R26). The rasterization is shared across the repeats, so the
 /// added cost is the model calls alone.
 const REPEATS_ENV: &str = "OMNI_BENCH_TRANSCRIBE_REPEATS";
-const DEFAULT_REPEATS: usize = 3;
 
 /// A born-digital PDF: one whose own text layer is the answer key.
 struct Case {
@@ -427,11 +426,7 @@ pub async fn run(
         .and_then(|v| v.parse().ok())
         .filter(|n| *n > 0)
         .unwrap_or(DEFAULT_SAMPLE);
-    let repeats: usize = std::env::var(REPEATS_ENV)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(DEFAULT_REPEATS);
+    let repeats = crate::bench::repeats(REPEATS_ENV);
 
     let mut pdfs = Vec::new();
     collect_pdfs(&corpus, 5, &mut pdfs);
