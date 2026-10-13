@@ -35,8 +35,11 @@ pub async fn start_server() -> (String, tokio::task::JoinHandle<()>) {
     let server_db = db::connect(path.to_str().unwrap()).await.unwrap();
     std::mem::forget(dir);
 
+    // Nested, so previews (kept beside the blob dir) land in this test's own
+    // dir; in a shared /tmp a later run was served the last run's preview.
     let blob_dir = tempfile::tempdir().unwrap();
-    let blob_path = blob_dir.path().to_path_buf();
+    let blob_path = blob_dir.path().join("blobs");
+    std::fs::create_dir(&blob_path).unwrap();
     std::mem::forget(blob_dir);
 
     let db_arc = Arc::new(server_db);
@@ -169,8 +172,11 @@ async fn boot_full_server(
     let server_db = db::connect(path.to_str().unwrap()).await.unwrap();
     std::mem::forget(dir);
 
+    // Nested, so previews (kept beside the blob dir) land in this test's own
+    // dir; in a shared /tmp a later run was served the last run's preview.
     let blob_dir = tempfile::tempdir().unwrap();
-    let blob_path = blob_dir.path().to_path_buf();
+    let blob_path = blob_dir.path().join("blobs");
+    std::fs::create_dir(&blob_path).unwrap();
     let blob_path_for_tests = blob_path.clone();
     std::mem::forget(blob_dir);
 

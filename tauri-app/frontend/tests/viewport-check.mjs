@@ -277,6 +277,8 @@ const notes = [];
 // and the deep archive check, which covers the one screen that has really
 // overflowed, is skipped silently when its fixture is missing.
 const measured = [];
+// An app error on a screen that still opened used to pass silently.
+const appErrors = [];
 
 const browser = await chromium.launch();
 try {
@@ -405,6 +407,7 @@ try {
         }
       }
     }
+    for (const e of new Set(pageErrors)) appErrors.push(`${vp.name}: ${e}`);
     await page.close();
   }
 } finally {
@@ -423,6 +426,13 @@ if (gutterFailures.length) {
   for (const g of gutterFailures) {
     console.error(`  ${g.where}: ${g.why}`);
   }
+}
+
+if (appErrors.length) {
+  console.error("\nThe app logged errors while being measured:");
+  for (const e of appErrors.slice(0, 20)) console.error(`  ${e}`);
+  console.error(`\n${appErrors.length} app error(s). A screen that renders can still be broken.`);
+  process.exit(1);
 }
 
 if (failures.length) {

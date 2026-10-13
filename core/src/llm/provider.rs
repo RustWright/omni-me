@@ -247,7 +247,13 @@ pub fn resolved_sampling(creds: &Credentials, role: LlmRole) -> Sampling {
 /// a deployment knob, and a server that will not start because a compose file has
 /// a typo in a delay is worse than one that starts unspaced and says so.
 fn min_interval_from_env() -> Option<std::time::Duration> {
-    let raw = std::env::var(MIN_INTERVAL_ENV).ok()?;
+    min_interval_from(std::env::var(MIN_INTERVAL_ENV).ok())
+}
+
+/// [`min_interval_from_env`] on a value already read, so a test need not set
+/// the process-wide variable other tests read.
+fn min_interval_from(raw: Option<String>) -> Option<std::time::Duration> {
+    let raw = raw?;
     match raw.trim().parse::<u64>() {
         Ok(ms) if ms > 0 => Some(std::time::Duration::from_millis(ms)),
         _ => {
@@ -861,24 +867,20 @@ mod tests {
     }
 
     #[test]
-    fn request_spacing_reads_the_environment_and_a_typo_does_not_stop_the_boot() {
-        // ⚠️ One test, not four: the var is process-global, so separate tests
-        // would interleave and read each other's values.
-        unsafe { std::env::remove_var(MIN_INTERVAL_ENV) };
-        assert_eq!(min_interval_from_env(), None, "unset means unspaced");
-
-        unsafe { std::env::set_var(MIN_INTERVAL_ENV, "250") };
+    fn request_spacing_parses_and_a_typo_does_not_stop_the_boot() {
+        assert_eq!(min_interval_from(None), None, "unset means unspaced");
         assert_eq!(
-            min_interval_from_env(),
+            min_interval_from(Some("250".into())),
             Some(std::time::Duration::from_millis(250))
         );
-
         // A deployment knob with a typo in it must not be the reason a server
         // refuses to start, and must not silently become a different number.
         for bad in ["", "0", "half a second", "-5", "250ms"] {
-            unsafe { std::env::set_var(MIN_INTERVAL_ENV, bad) };
-            assert_eq!(min_interval_from_env(), None, "{bad:?} should not parse");
+            assert_eq!(
+                min_interval_from(Some(bad.into())),
+                None,
+                "{bad:?} should not parse"
+            );
         }
-        unsafe { std::env::remove_var(MIN_INTERVAL_ENV) };
     }
 }

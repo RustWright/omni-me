@@ -274,9 +274,12 @@ async fn snapshot(
     tokio::fs::create_dir_all(&dir)
         .await
         .map_err(|e| refuse(format!("could not create {}: {e}", dir.display())))?;
+    // The id as well as the time: two wipes in one millisecond (parallel tests)
+    // wrote one file, and one deleted the snapshot the other was reading.
     let path = dir.join(format!(
-        "{}.surql",
-        chrono::Utc::now().format("%Y%m%dT%H%M%S%.3fZ")
+        "{}-{}.surql",
+        chrono::Utc::now().format("%Y%m%dT%H%M%S%.3fZ"),
+        ulid::Ulid::new()
     ));
     state
         .db
