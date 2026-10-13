@@ -108,7 +108,11 @@ pub fn ArchivePage() -> Element {
     let mut page_error: Signal<Option<String>> = use_signal(|| None);
     let mut exhausted = use_signal(|| false);
 
+    // Purges and captures happen on the server and arrive by pull; without this
+    // the list kept showing a purged document until the screen was left.
+    let sync_epoch = crate::sync_refresh::use_sync_epoch();
     let documents = use_resource(move || {
+        let _ = sync_epoch.read();
         let q = search.read().clone();
         let k = kind.read().clone();
         let m = if *mail_only.read() {
@@ -183,6 +187,12 @@ pub fn ArchivePage() -> Element {
                             on_done: move |_| view.set(View::List),
                             on_extracted: move |draft: ExtractedDraft| {
                                 reload += 1;
+                                // Filed on the server: pull it now, so the view below
+                                // finds it rather than waiting for the next sync.
+                                spawn(async move {
+                                    let _ = bridge::invoke_trigger_sync().await;
+                                    crate::sync_refresh::bump_sync_epoch(sync_epoch);
+                                });
                                 let to_review = draft.proposed_batch_id.is_some();
                                 added_notice.set(Some(if to_review {
                                     "Filed. It reads as a receipt, so it is also waiting in Finances review.".to_string()
@@ -571,10 +581,12 @@ fn DocumentDetail(
     on_open: EventHandler<String>,
 ) -> Element {
     let mut reload = use_signal(|| 0u32);
+    let sync_epoch = crate::sync_refresh::use_sync_epoch();
     // Reactive on the prop: opening an attachment or the parent swaps the id on
     // this same component, and a plain capture kept fetching the first one.
     let doc = use_resource(use_reactive((&document_id,), move |(id,)| {
         let _ = reload.read();
+        let _ = sync_epoch.read();
         async move { bridge::invoke_get_document(&id).await }
     }));
 
@@ -597,7 +609,7 @@ fn DocumentDetail(
                 },
                 Some(Ok(None)) => rsx! {
                     p { class: "text-sm text-obsidian-text-muted",
-                        "This document is no longer in the archive."
+                        "This document is not on this device yet, or was removed. A new one appears once it syncs."
                     }
                 },
                 Some(Ok(Some(d))) => {
@@ -1115,6 +1127,7 @@ fn PurgeGroup(
     let mut error: Signal<Option<String>> = use_signal(|| None);
     let mut working = use_signal(|| false);
     let mut report: Signal<Option<crate::types::PurgeReport>> = use_signal(|| None);
+    let sync_epoch = crate::sync_refresh::use_sync_epoch();
 
     let for_load = tag.clone();
     let cutoff_for_load = archived_before.clone();
@@ -1266,47 +1279,58 @@ fn PurgeGroup(
                             }
                         }
 
-                        button {
-                            disabled: count == 0 || *working.read(),
-                            onclick: move |_| {
-                                let ids = going.clone();
-                                let token = token.clone();
-                                let group = group.clone();
-                                working.set(true);
-                                spawn(async move {
-                                    match bridge::invoke_confirm_document_purge(
-                                        &token, ids, Some(group),
-                                    ).await {
-                                        Ok(r) => {
-                                            report.set(Some(r));
-                                            error.set(None);
-                                            on_purged.call(());
+                        if report.read().is_some() {
+                            button {
+                                onclick: move |_| on_purged.call(()),
+                                class: "px-3 py-2 text-sm rounded-lg border border-obsidian-border/20",
+                                "Done"
+                            }
+                        } else {
+                            button {
+                                disabled: count == 0 || *working.read(),
+                                onclick: move |_| {
+                                    let ids = going.clone();
+                                    let token = token.clone();
+                                    let group = group.clone();
+                                    working.set(true);
+                                    spawn(async move {
+                                        match bridge::invoke_confirm_document_purge(
+                                            &token, ids, Some(group),
+                                        ).await {
+                                            // Stays until tapped, so a partial failure
+                                            // is read; the pull brings the tombstones.
+                                            Ok(r) => {
+                                                report.set(Some(r));
+                                                error.set(None);
+                                                let _ = bridge::invoke_trigger_sync().await;
+                                                crate::sync_refresh::bump_sync_epoch(sync_epoch);
+                                            }
+                                            // ⚠️ Left on screen rather than bounced
+                                            // back: a purge that half-failed is
+                                            // something the user has to see, and the
+                                            // report above says what did go.
+                                            Err(e) => error.set(Some(e)),
                                         }
-                                        // ⚠️ Left on screen rather than bounced
-                                        // back: a purge that half-failed is
-                                        // something the user has to see, and the
-                                        // report above says what did go.
-                                        Err(e) => error.set(Some(e)),
-                                    }
-                                    working.set(false);
-                                });
-                            },
-                            class: "px-3 py-2 text-sm rounded-lg border border-red-500/40 \
-                                    bg-red-950/30 text-red-200 hover:bg-red-950/50 \
-                                    disabled:opacity-40",
-                            // ⚠️ Read it back before changing it. This is the last
-                            // thing a person sees before an irreversible action,
-                            // so it states the count and what it actually frees —
-                            // and "frees nothing" is a real and common answer when
-                            // every file in the group is shared.
-                            if *working.read() {
-                                "Purging…"
-                            } else if count == 0 {
-                                "Nothing selected"
-                            } else if bytes_going == 0 {
-                                "Purge {count} {crate::types::plural(count, \"document\")} · frees nothing"
-                            } else {
-                                "Purge {count} {crate::types::plural(count, \"document\")} · frees {crate::types::human_bytes(bytes_going)}"
+                                        working.set(false);
+                                    });
+                                },
+                                class: "px-3 py-2 text-sm rounded-lg border border-red-500/40 \
+                                        bg-red-950/30 text-red-200 hover:bg-red-950/50 \
+                                        disabled:opacity-40",
+                                // ⚠️ Read it back before changing it. This is the last
+                                // thing a person sees before an irreversible action,
+                                // so it states the count and what it actually frees —
+                                // and "frees nothing" is a real and common answer when
+                                // every file in the group is shared.
+                                if *working.read() {
+                                    "Purging…"
+                                } else if count == 0 {
+                                    "Nothing selected"
+                                } else if bytes_going == 0 {
+                                    "Purge {count} {crate::types::plural(count, \"document\")} · frees nothing"
+                                } else {
+                                    "Purge {count} {crate::types::plural(count, \"document\")} · frees {crate::types::human_bytes(bytes_going)}"
+                                }
                             }
                         }
                     }
