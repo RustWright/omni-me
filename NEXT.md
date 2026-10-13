@@ -17,8 +17,9 @@ goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/
 Dev workflows: `--ref dev/untested-overlay`. Dev actions need no permission; live ones do.
 
 ## ⛔ Waiting on him
-- **Triage**: security done; logic TRIAGED (every Disposition line filled) and being fixed in
-  order, each one marked `fixed <hash>` as it lands. Then bloat, performance.
+- **Triage**: security and logic DONE (every finding fixed, accepted or deferred, hashes in the
+  docs). CI on the pushed fixes was running 2026-10-13. Next: bloat, then performance, then a
+  dev deploy and the S9 check of L-W18 (+ Photo / + PDF in Archive opens the new document).
   Explain each finding in plain consequences, never by ID alone: he could not follow the shorthand.
 - **Rulings inside the docs**: L-W2 (does the capture form count as review), L-W6 (vendor-scoped order keys).
 - **F3's open half**: whether multi-page reading should be told pages can repeat.
