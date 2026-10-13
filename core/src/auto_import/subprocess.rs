@@ -164,8 +164,8 @@ pub struct JoinedDraft {
 
 /// Drop what this source already proposed, and return what is left with the
 /// number of upstream rows it covers. A joined draft goes out whole only when
-/// none of its parts went out before; otherwise only its unseen parts do, so a
-/// row is never proposed twice and never lost.
+/// none of its parts went out before; otherwise only its unseen parts do, and
+/// nothing does once it went out whole. A row is never proposed twice or lost.
 fn select_unproposed(
     drafts: Vec<DraftTransaction>,
     joined: Vec<JoinedDraft>,
@@ -177,7 +177,12 @@ fn select_unproposed(
     let mut rows = 0;
     let mut singles = drafts;
     for j in joined {
-        if seen(&j.draft) || j.parts.iter().any(seen) {
+        if seen(&j.draft) {
+            // Proposed whole before, so its parts' own ids were never recorded.
+            for part in j.parts {
+                tally.dropped(part.external_id, DropReason::Deduped);
+            }
+        } else if j.parts.iter().any(seen) {
             singles.extend(j.parts);
         } else {
             rows += j.parts.len().max(1);
@@ -749,6 +754,23 @@ mod tests {
         let known = ["t-out", "t-in"].iter().map(|s| s.to_string()).collect();
         let (out, rows) = select_unproposed(vec![], vec![transfer()], &known, &mut tally);
         assert!(out.is_empty());
+        assert_eq!(rows, 0);
+        tally.appended(rows);
+        assert_eq!(tally.finish().unwrap().deduped, 2);
+    }
+
+    /// The steady state: the helper re-sends its window every tick, and the transfer
+    /// went out joined on an earlier one. Re-proposing its halves books it twice.
+    #[test]
+    fn a_transfer_proposed_joined_before_goes_nowhere() {
+        let mut tally = ImportTally::new(2);
+        let known = ["t"].iter().map(|s| s.to_string()).collect();
+        let (out, rows) = select_unproposed(vec![], vec![transfer()], &known, &mut tally);
+        assert!(
+            out.is_empty(),
+            "{:?}",
+            out.iter().map(|d| &d.external_id).collect::<Vec<_>>()
+        );
         assert_eq!(rows, 0);
         tally.appended(rows);
         assert_eq!(tally.finish().unwrap().deduped, 2);
