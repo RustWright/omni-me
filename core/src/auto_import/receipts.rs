@@ -214,8 +214,8 @@ async fn pdftotext_bytes(pdf_bytes: &[u8]) -> Result<String, ImportError> {
     //
     // This is the least-trusted input in the system: an arbitrary PDF, from an
     // unauthenticated email, reaching a large C++ parser as the server user
-    // with no sandbox — and `accepts()` is spoofable, since `from` is taken
-    // from the raw RFC822 header with no SPF or DKIM check. A size cap does not
+    // with no sandbox, from any sender: `accepts()` takes every message, and
+    // `sender_auth` only labels the draft. A size cap does not
     // make poppler safe, but it removes the cheapest attack (a compression bomb
     // that OOM-kills the box) and costs nothing: real receipts are tiny.
     if pdf_bytes.len() > MAX_PDF_BYTES {
@@ -385,9 +385,9 @@ impl ImapHandler for ReceiptHandler {
         // not a UX nicety here — it is the sole control standing between a
         // crafted email and a fabricated transaction in the ledger. The planned
         // LLM-primary interface will be tempted to auto-commit high-confidence
-        // drafts; doing so on this path, without sender authentication (there
-        // is no SPF/DKIM check — see `accepts`), hands write access to anyone
-        // who knows the watched address.
+        // drafts; doing so on this path, where any sender is accepted and
+        // `sender_auth` is a label rather than a gate, hands write access to
+        // anyone who knows the watched address.
         // Nothing cross-checked email-sourced drafts before this: `verify` ran only on
         // the manual upload route, so the unattended path had the weaker guarantee.
         //

@@ -13,7 +13,8 @@
 //! passes `sanitize: false` and the backend's `Tag::normalize` is the only
 //! authority. ⛔ Do not add a second normalizer here to compensate: a tag stored
 //! in a form the query does not expect is invisible rather than wrong, and two
-//! normalizers is how the two forms come apart.
+//! normalizers is how the two forms come apart. The trim and lowercase it does do
+//! are steps `Tag::normalize` takes too, so they cannot disagree with it.
 
 use dioxus::prelude::*;
 

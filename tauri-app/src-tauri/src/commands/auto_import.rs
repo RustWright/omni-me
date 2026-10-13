@@ -719,16 +719,12 @@ fn check_added(added: &mut [DraftCorrection]) -> Result<(), String> {
     Ok(())
 }
 
-/// Trimmed, lowercased, deduplicated; the strict form `Tag::normalize` defines.
+/// Core's tag-set rule, kept as strings for the row they are stored on.
 fn normalize_tags(raw: &[String]) -> Result<Vec<String>, String> {
-    let mut out: Vec<String> = Vec::with_capacity(raw.len());
-    for t in raw {
-        let tag = Tag::normalize(t)?.to_string();
-        if !out.contains(&tag) {
-            out.push(tag);
-        }
-    }
-    Ok(out)
+    Ok(omni_me_core::events::normalize_tag_set(raw)?
+        .iter()
+        .map(ToString::to_string)
+        .collect())
 }
 
 /// Tags already normalized by [`normalize_tags`], so parsing cannot fail.

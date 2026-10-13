@@ -236,8 +236,6 @@ async fn reset_cursor_handler(
 // writers (acceptable per [[project-auth-deferred]]); `config::save` is itself
 // atomic (temp + rename).
 
-/// Same reasoning as [`upstream_err`]: config-layer failures are `io::Error`
-/// strings naming absolute paths on the box. Logged in full, returned generic.
 /// The live change succeeded and the durable one did not, so the two stores
 /// disagree until the next restart. Said explicitly because `/auto_import/status`
 /// reads the registry rather than disk and will show the change as applied.
@@ -257,6 +255,8 @@ fn diverged_err<E: std::fmt::Display>(name: &str, action: &str, e: E) -> (Status
     )
 }
 
+/// Same reasoning as [`upstream_err`]: config-layer failures are `io::Error`
+/// strings naming absolute paths on the box. Logged in full, returned generic.
 fn internal_err<E: std::fmt::Display>(e: E) -> (StatusCode, String) {
     tracing::warn!(error = %e, "auto-import config operation failed");
     (

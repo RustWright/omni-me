@@ -126,8 +126,6 @@ const ABSENCE_SIGNALS: &[&str] = &[
     "not mentioned",
 ];
 
-/// One case: a request, the verb a correct run must reach, and what the answer
-/// has to say.
 /// How many times the whole slate is run.
 ///
 /// Three, matching every other arm, because a single run cannot separate a model
@@ -147,6 +145,8 @@ pub(crate) fn repeats(env: &str) -> usize {
         .unwrap_or(3)
 }
 
+/// One case: a request, the verb a correct run must reach, and what the answer
+/// has to say.
 struct Case {
     request: &'static str,
     /// The verb that has to appear in the trace. `None` means the right outcome
@@ -416,15 +416,6 @@ impl Score {
     }
 }
 
-/// Run every case both ways and print a scorecard.
-///
-/// `constrained_only` runs the schema arm alone. It exists for endpoints that
-/// serve `response_format` and no `tools` parameter at all, where the free-form
-/// arm cannot run and a both-arms invocation aborts in pre-flight rather than
-/// measuring anything — DeepInfra's Llama-4 endpoints are the case in point.
-/// Accuracy, latency and tokens are all still real; only the tax is unavailable,
-/// and it is reported as *not applicable* rather than *not measurable*, because a
-/// deliberate omission and a broken endpoint are different findings.
 /// Run one variant `repeats` times, pooled, keeping each run's correct count.
 ///
 /// Pooled rather than averaged because every field of [`Score`] is a count or a
@@ -477,6 +468,15 @@ fn stability(label: &str, per_run: &[usize], cases: usize) -> String {
     )
 }
 
+/// Run every case both ways and print a scorecard.
+///
+/// `constrained_only` runs the schema arm alone. It exists for endpoints that
+/// serve `response_format` and no `tools` parameter at all, where the free-form
+/// arm cannot run and a both-arms invocation aborts in pre-flight rather than
+/// measuring anything — DeepInfra's Llama-4 endpoints are the case in point.
+/// Accuracy, latency and tokens are all still real; only the tax is unavailable,
+/// and it is reported as *not applicable* rather than *not measurable*, because a
+/// deliberate omission and a broken endpoint are different findings.
 pub async fn run(
     db: &Database,
     config: &ResolvedConfig,

@@ -490,7 +490,8 @@ mod tests {
             // `events::DOCUMENT_TAGS_KEY`. Drifting makes `FieldPanel` offer the
             // joined tag value as an editable text row, writing unnormalized tags.
             ("TAGS_FIELD_KEY", omni_me_core::events::DOCUMENT_TAGS_KEY),
-            // `archive::mime_for`'s `"eml"` arm. Drifting empties the mail filter.
+            // The type the archive files an email under (`archive::is_email`).
+            // Drifting empties the mail filter.
             ("MAIL_MIME", "message/rfc822"),
         ] {
             let decl = format!("const {name}: &str =");
@@ -505,5 +506,26 @@ mod tests {
                 .unwrap_or_else(|| panic!("could not read `{name}`'s value"));
             assert_eq!(literal, expected, "`{name}` has drifted from the backend");
         }
+    }
+
+    /// The commit button says core's refusal before the tap, from its own copy
+    /// (the frontend cannot depend on core). Both must word it the same way.
+    #[test]
+    fn the_frontends_future_date_wording_still_matches_core() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let read = |rel: &str| {
+            std::fs::read_to_string(root.join(rel)).unwrap_or_else(|_| {
+                panic!("{rel} moved; update this path or the check stops checking")
+            })
+        };
+        let wording = "\"Dated {day}{year}. Fix the date, or commit it from {day}{year}.\"";
+        assert!(
+            read("../../core/src/future_dated.rs").contains(wording),
+            "core reworded"
+        );
+        assert!(
+            read("../frontend/src/pages/finances.rs").contains(wording),
+            "finances.rs has drifted from core's wording"
+        );
     }
 }
