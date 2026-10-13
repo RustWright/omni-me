@@ -719,18 +719,25 @@ fn privacy_preflight(
         return Ok(());
     }
 
-    let terms = options
+    // OpenRouter reads both only inside `provider`; a top-level copy is ignored, so
+    // accepting one would pass a run that carries no terms at all.
+    let provider = options
         .extra_body
         .as_ref()
-        .is_some_and(|extra| extra.get("data_collection").is_some() || extra.get("zdr").is_some());
+        .and_then(|extra| extra.get("provider"));
+    let terms = provider.is_some_and(|p| {
+        p.get("zdr").and_then(serde_json::Value::as_bool) == Some(true)
+            || p.get("data_collection").and_then(serde_json::Value::as_str) == Some("deny")
+    });
     if terms {
         return Ok(());
     }
     Err(format!(
         "{arm} reads the real corpus, and this run would send it through a gateway with \
-         no `zdr` or `data_collection` term attached (MODEL_BENCH.md R27). Set them in \
-         {LLM_EXTRA_BODY_ENV} — scripts/bench-openrouter.sh does, in the same object as \
-         the upstream pin. Refusing rather than sending your statements on unstated terms."
+         neither `provider.zdr: true` nor `provider.data_collection: \"deny\"` attached \
+         (MODEL_BENCH.md R27). Set them in {LLM_EXTRA_BODY_ENV} — scripts/bench-openrouter.sh \
+         does, in the same object as the upstream pin. Refusing rather than sending your \
+         records on unstated terms."
     ))
 }
 
@@ -1032,6 +1039,15 @@ async fn run(args: Args) -> Result<(), String> {
     // records this device has not seen would answer "not there" for data that
     // exists, which looks like a retrieval failure and is not one.
     if args.ask.is_some() || args.bench || args.bench_review || args.bench_cases {
+        // These two run the pulled clone of real data through a seat, like the role C benches.
+        if args.bench_cases || args.bench_review {
+            let (role, arm) = if args.bench_cases {
+                (LlmRole::Interactive, "--bench-cases")
+            } else {
+                (LlmRole::Batch, "--bench-review")
+            };
+            privacy_preflight(&load_credentials()?, &client_options_from_env()?, role, arm)?;
+        }
         match sync_client.pull_only(&db).await {
             Ok(outcome) => {
                 tracing::info!(pulled = outcome.pulled, "pull before diagnostics");
@@ -1429,19 +1445,44 @@ mod tests {
     }
 
     #[test]
-    fn the_terms_being_present_is_enough_to_proceed() {
+    fn the_terms_under_provider_are_enough_to_proceed() {
         for extra in [
-            serde_json::json!({ "provider": { "zdr": true } , "zdr": true }),
-            serde_json::json!({ "data_collection": "deny" }),
+            // scripts/bench-openrouter.sh's own default body.
+            serde_json::json!({ "provider": { "only": ["deepinfra/fp4"], "allow_fallbacks": false,
+                "zdr": true, "data_collection": "deny", "require_parameters": true },
+                "temperature": 0 }),
+            serde_json::json!({ "provider": { "zdr": true } }),
+            serde_json::json!({ "provider": { "data_collection": "deny" } }),
         ] {
             assert!(
                 privacy_preflight(
                     &creds_for("https://openrouter.ai/api/v1"),
-                    &options_with(Some(extra)),
+                    &options_with(Some(extra.clone())),
                     LlmRole::Extractor,
                     "--bench-extraction",
                 )
-                .is_ok()
+                .is_ok(),
+                "{extra}"
+            );
+        }
+    }
+
+    /// OpenRouter ignores these keys at the top level, and `false`/`allow` grant nothing.
+    #[test]
+    fn terms_in_the_wrong_place_or_permissive_are_refused() {
+        for extra in [
+            serde_json::json!({ "zdr": true, "data_collection": "deny" }),
+            serde_json::json!({ "provider": { "zdr": false, "data_collection": "allow" } }),
+        ] {
+            assert!(
+                privacy_preflight(
+                    &creds_for("https://openrouter.ai/api/v1"),
+                    &options_with(Some(extra.clone())),
+                    LlmRole::Extractor,
+                    "--bench-extraction",
+                )
+                .is_err(),
+                "{extra}"
             );
         }
     }
