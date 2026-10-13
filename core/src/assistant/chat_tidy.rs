@@ -64,8 +64,15 @@ pub fn plan(threads: &[ChatThread], rules: ChatRetention, now: DateTime<Utc>) ->
             if since < delete_cutoff && t.last_message_at < delete_cutoff && !t.has_pending {
                 out.delete.push(t.thread_id.clone());
             }
-        } else if t.last_message_at < idle_cutoff {
-            out.archive.push(t.thread_id.clone());
+        } else {
+            // On a live thread `archived_at` is when it was brought back, which
+            // restarts the idle clock like a new message would.
+            let active = t
+                .archived_at
+                .map_or(t.last_message_at, |at| at.max(t.last_message_at));
+            if active < idle_cutoff {
+                out.archive.push(t.thread_id.clone());
+            }
         }
     }
     out
@@ -219,6 +226,21 @@ mod tests {
     fn a_chat_written_in_after_archiving_is_not_deleted() {
         let threads = vec![chat("revived", 5, Some(120), false)];
         assert!(plan(&threads, RULES, at(NOW)).is_empty());
+    }
+
+    /// L-W11: bringing a chat back restarts its idle clock, so the next hourly
+    /// tidy does not archive it again.
+    #[test]
+    fn a_chat_brought_back_from_the_archive_stays_out() {
+        let mut back = chat("back", 40, Some(1), false);
+        back.archived = false;
+        assert!(plan(&[back.clone()], RULES, at(NOW)).is_empty());
+        back.archived_at = Some(at(NOW) - chrono::Duration::days(31));
+        assert_eq!(
+            plan(&[back], RULES, at(NOW)).archive,
+            ["back"],
+            "until it idles again"
+        );
     }
 
     #[test]
