@@ -1597,7 +1597,8 @@ pub async fn transcription_attempts(
     let mut resp = db
         .query(
             "SELECT payload.model AS model, timestamp AS sort_ts FROM events
-             WHERE event_type = 'document_text_transcribed'
+             WHERE aggregate_id = $id
+               AND event_type = 'document_text_transcribed'
                AND payload.document_id = $id
              ORDER BY sort_ts ASC",
         )

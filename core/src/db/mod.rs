@@ -50,6 +50,8 @@ async fn init_schema(db: &Surreal<Db>) -> Result<(), DbError> {
         DEFINE INDEX IF NOT EXISTS idx_events_received_at ON events FIELDS received_at;
         DEFINE INDEX IF NOT EXISTS idx_events_aggregate ON events FIELDS aggregate_id;
         DEFINE INDEX IF NOT EXISTS idx_events_device ON events FIELDS device_id;
+        -- Intake, enrichment and purge read the log by type on every tick (P-I5).
+        DEFINE INDEX IF NOT EXISTS idx_events_type ON events FIELDS event_type;
 
         DEFINE TABLE IF NOT EXISTS sync_state SCHEMAFULL;
         DEFINE FIELD IF NOT EXISTS device_id ON sync_state TYPE string;
