@@ -206,13 +206,18 @@ async fn similar_entries(db: &Database, description: &str) -> Vec<(String, Strin
     else {
         return Vec::new();
     };
-    #[derive(SurrealValue)]
-    struct Row {
-        date: String,
-        description: String,
-        postings: surrealdb::types::Value,
-    }
-    let rows: Vec<Row> = resp.take(0).unwrap_or_default();
+    rows_with_accounts(resp.take(0).unwrap_or_default())
+}
+
+#[derive(SurrealValue)]
+struct EntryRow {
+    date: String,
+    description: String,
+    postings: surrealdb::types::Value,
+}
+
+/// (date, description, accounts) for each row.
+fn rows_with_accounts(rows: Vec<EntryRow>) -> Vec<(String, String, Vec<String>)> {
     rows.into_iter()
         .map(|r| {
             let accounts = match r.postings.into_json_value() {
@@ -240,16 +245,17 @@ fn payee_word(description: &str) -> Option<String> {
 }
 
 /// Check a `transaction.record` entry against the ledger. `Err` is the JSON the
-/// model gets back instead of a proposal.
+/// model gets back instead of a proposal; `Ok(Some(_))` proposes it with a
+/// warning for the card.
 pub async fn check_record(
     db: &Database,
     entry: &str,
     today: chrono::NaiveDate,
-) -> Result<(), Value> {
+) -> Result<Option<String>, Value> {
     let parsed = match crate::journal_import::parse_one_entry(entry) {
         Ok(p) => p,
         // Syntax was already checked by the action's own validator.
-        Err(_) => return Ok(()),
+        Err(_) => return Ok(None),
     };
     if let Some(why) = crate::future_dated::refusal(parsed.date, today) {
         return Err(json!({
@@ -275,11 +281,12 @@ pub async fn check_record(
         }));
     }
 
-    // A payee seen before keeps its spending account unless he says otherwise.
+    // A payee seen before under another account is a warning, never a refusal:
+    // "Uber Eats" is food where past "Uber" rides were transport (L-W10).
     let Some(payee) = payee_word(&parsed.description) else {
-        return Ok(());
+        return Ok(None);
     };
-    let past: Vec<_> = similar_entries(db, &parsed.description)
+    let past: Vec<_> = payee_entries(db, &payee)
         .await
         .into_iter()
         .filter(|(_, d, _)| payee_word(d).as_deref() == Some(payee.as_str()))
@@ -293,18 +300,33 @@ pub async fn check_record(
     };
     let mine = spending(&accounts.iter().map(|a| a.to_string()).collect::<Vec<_>>());
     let used_before: BTreeSet<String> = past.iter().flat_map(|(_, _, a)| spending(a)).collect();
-    if !used_before.is_empty() && mine.is_disjoint(&used_before) {
-        let examples: Vec<Value> = past
-            .iter()
-            .map(|(d, desc, a)| json!({ "date": d, "description": desc, "accounts": a }))
-            .collect();
-        return Err(json!({
-            "error": "this payee was recorded before under a different account; follow the \
-                      past entries below unless the user asked for a different one",
-            "past_entries": examples,
-        }));
+    if !mine.is_empty() && !used_before.is_empty() && mine.is_disjoint(&used_before) {
+        let used: Vec<&str> = used_before.iter().map(String::as_str).collect();
+        return Ok(Some(format!(
+            "Check: past \"{payee}\" entries used {}.",
+            used.join(", ")
+        )));
     }
-    Ok(())
+    Ok(None)
+}
+
+/// Past entries whose description starts with `payee`, newest first. Filtered in
+/// the query, so the limit cannot fill with other payees and let a mismatch by.
+async fn payee_entries(db: &Database, payee: &str) -> Vec<(String, String, Vec<String>)> {
+    let Ok(mut resp) = db
+        .query(
+            "SELECT date, description, postings, created_at FROM transactions
+             WHERE removed = false AND superseded_by IS NONE
+               AND string::starts_with(string::lowercase(description), $p)
+             ORDER BY date DESC, created_at DESC LIMIT $n",
+        )
+        .bind(("p", payee.to_string()))
+        .bind(("n", PAST_ENTRIES))
+        .await
+    else {
+        return Vec::new();
+    };
+    rows_with_accounts(resp.take(0).unwrap_or_default())
 }
 
 #[cfg(test)]
@@ -504,5 +526,45 @@ mod tests {
         let mut unknown_payee = vec![line("Expenses:Web:Registration")];
         ground_hints(&db, "Namecheap", &mut unknown_payee).await;
         assert_eq!(unknown_payee[0].account_hint, None);
+    }
+
+    /// L-W10: past "Uber" rides were transport, and "Uber Eats" is food. The
+    /// entry is proposed with a warning for the card, never refused.
+    #[tokio::test]
+    async fn a_payee_under_a_new_account_is_a_warning_not_a_refusal() {
+        let db = crate::db::test_db().await;
+        use crate::events::Projection;
+        crate::events::BudgetProjection
+            .init_schema(&db)
+            .await
+            .unwrap();
+        crate::events::NotesProjection
+            .init_schema(&db)
+            .await
+            .unwrap();
+        db.query(
+            "CREATE generic_notes:conv SET title = 'Ledger conventions', \
+             raw_text = 'Rides: Expenses:Transport. Meals: Expenses:Food:Dining. Cash: Assets:Cash. \
+             Savings: Assets:Savings.', \
+             tags = [], created_at = time::now(), updated_at = time::now();
+             CREATE transactions:u CONTENT { removed: false, superseded_by: NONE, \
+             date: '2026-09-01', description: 'Uber trip', cleared: false, \
+             postings: [{ account: 'Expenses:Transport', amount: '18.00', commodity: 'CAD' }, \
+             { account: 'Assets:Cash', amount: '-18.00', commodity: 'CAD' }], \
+             tags_top: [], merged_ids: [], created_at: time::now(), updated_at: time::now() };",
+        )
+        .await
+        .unwrap();
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 12).unwrap();
+
+        let eats = "2026-10-11 Uber Eats lunch\n    Expenses:Food:Dining  20.00 CAD\n    \
+                    Assets:Cash  -20.00 CAD\n";
+        let warning = check_record(&db, eats, today).await.unwrap().unwrap();
+        assert!(warning.contains("Expenses:Transport"), "{warning}");
+
+        // No spending leg, so nothing to compare: a transfer under a known payee.
+        let moved = "2026-10-11 Uber cash out\n    Assets:Savings  20.00 CAD\n    \
+                     Assets:Cash  -20.00 CAD\n";
+        assert_eq!(check_record(&db, moved, today).await.unwrap(), None);
     }
 }

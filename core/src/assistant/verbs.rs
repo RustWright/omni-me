@@ -447,12 +447,15 @@ async fn propose(db: &Database, config: &ResolvedConfig, args: &Value) -> Value 
         Ok(v) => v,
         Err(why) => return json!({ "error": why }),
     };
+    let mut warning = None;
     if action.name == "transaction.record"
         && let Some(entry) = validated.get("entry").and_then(Value::as_str)
-        && let Err(refusal) =
-            super::ledger_grounding::check_record(db, entry, super::session::today(config)).await
     {
-        return refusal;
+        match super::ledger_grounding::check_record(db, entry, super::session::today(config)).await
+        {
+            Ok(w) => warning = w,
+            Err(refusal) => return refusal,
+        }
     }
     // R4-15 covers moving an entry's date as much as recording one.
     if action.name == "transaction.update"
@@ -462,18 +465,21 @@ async fn propose(db: &Database, config: &ResolvedConfig, args: &Value) -> Value 
     {
         return json!({ "error": why });
     }
-    {
-        json!({
-            "proposed": true,
-            "action": action.name,
-            "args": validated,
-            "rationale": rationale,
-            "reversible": action.reversible,
-            // Said back to the model rather than assumed, because the failure
-            // this guards against is it reporting the change as done.
-            "status": "waiting for the user to accept or decline; nothing has changed yet",
-        })
+    let mut out = json!({
+        "proposed": true,
+        "action": action.name,
+        "args": validated,
+        "rationale": rationale,
+        "reversible": action.reversible,
+        // Said back to the model rather than assumed, because the failure
+        // this guards against is it reporting the change as done.
+        "status": "waiting for the user to accept or decline; nothing has changed yet",
+    });
+    if let Some(w) = warning {
+        // The loop puts this on the card; the model is told so it can say why.
+        out["warning"] = json!(w);
     }
+    out
 }
 
 fn available_action_names(config: &ResolvedConfig) -> Vec<&'static str> {

@@ -252,9 +252,11 @@ whatever account sounds right. Three things hold it to your conventions:
   real accounts and goes back to the model on the same turn, so it can fix the entry
   rather than hand you a wrong one. With a conventions note, "the ledger has it" means
   your note names it: accounts the importers invented do not count.
-- **A payee keeps its account.** If the same payee was recorded before under a
-  different spending account, the proposal is refused with those past entries as the
-  pattern to follow, unless you asked for a different one.
+- **A payee's past account is a warning.** If the same payee was recorded before under a
+  different spending account, the proposal still goes through, and its card ends with
+  "Check: past entries used ..." so you decide. It was a refusal until "Uber Eats" under
+  Food was blocked for good because past "Uber" rides were Transport; the payee is only
+  the description's first word, so it cannot tell those apart.
 
 The receipt reader is held the same way. It is given your spending accounts as the
 only categories to choose from, and told to choose by the merchant and the purchase as a

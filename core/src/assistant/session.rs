@@ -627,9 +627,18 @@ impl<'a> Session<'a> {
                 // refusal (`ledger_grounding`) would still reach the inbox.
                 let refused = refusal.is_some()
                     || (call.name == verbs::PROPOSE && result.get("error").is_some());
+                // A grounding warning rides on the card, in the one line it shows
+                // beside the change: the rationale the proposal is filed with.
+                let mut arguments = call.arguments.clone();
+                if let (Some(warning), Some(rationale)) = (
+                    result["warning"].as_str(),
+                    arguments["rationale"].as_str().map(str::to_owned),
+                ) {
+                    arguments["rationale"] = json!(format!("{rationale} {warning}"));
+                }
                 trace.push(TurnRecord {
                     verb: Some(call.name.clone()),
-                    arguments: call.arguments.clone(),
+                    arguments,
                     repeated,
                     refused,
                     failed: result.get("error").is_some(),
