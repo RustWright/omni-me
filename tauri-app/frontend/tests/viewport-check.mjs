@@ -300,7 +300,14 @@ try {
       if (!isDxNoise(String(e))) pageErrors.push(String(e));
     });
     page.on("console", (m) => {
-      if (m.type() === "error" && !isDxNoise(m.text())) pageErrors.push(m.text());
+      // A failed load is reported below with its URL; this line carries none.
+      const t = m.text();
+      if (m.type() === "error" && !isDxNoise(t) && !t.startsWith("Failed to load resource")) {
+        pageErrors.push(t);
+      }
+    });
+    page.on("response", (r) => {
+      if (r.status() >= 400 && !isDxNoise(r.url())) pageErrors.push(`${r.status()} ${r.url()}`);
     });
 
     await page.addInitScript(cssPathSource());
