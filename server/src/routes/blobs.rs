@@ -170,6 +170,10 @@ async fn get_preview_handler(
 /// holds one. When none opens it, the original goes back marked `no-store`: a
 /// device that cached it would keep showing a locked file after one is added.
 async fn pdf_preview(state: &AppState, hash: &str, original: Vec<u8>) -> Response {
+    // Every view of a plain PDF used to run poppler to learn it was plain (P-I8).
+    if !omni_me_core::statement::pdf::names_encryption(&original) {
+        return blob_response(original);
+    }
     let passwords = omni_me_core::credentials::PdfPasswords::from_secrets(&state.secrets);
     match omni_me_core::statement::pdf::decrypted_copy_with_any(&original, &passwords.values())
         .await

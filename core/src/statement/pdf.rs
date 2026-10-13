@@ -242,6 +242,12 @@ pub enum DecryptError {
     Failed(String),
 }
 
+/// Whether a PDF names an `/Encrypt` dictionary. It sits in plain bytes even in an
+/// xref stream, so a file without it has nothing to unlock and poppler can be skipped.
+pub fn names_encryption(pdf: &[u8]) -> bool {
+    pdf.windows(b"/Encrypt".len()).any(|w| w == b"/Encrypt")
+}
+
 /// An unencrypted copy of an encrypted PDF, so a device that holds no password
 /// can still show it. `None` when the file opens without one.
 ///
@@ -357,6 +363,17 @@ mod tests {
     /// what we believe it prints. `core/tests/fixtures/encrypted/README.md`.
     const ENCRYPTED: &[u8] =
         include_bytes!("../../tests/fixtures/encrypted/encrypted-statement.pdf");
+
+    #[test]
+    fn only_an_encrypted_pdf_names_encryption() {
+        assert!(names_encryption(ENCRYPTED));
+        for plain in [
+            &include_bytes!("../../tests/fixtures/pdf-routing/generated-receipt.pdf")[..],
+            &include_bytes!("../../tests/fixtures/pdf-routing/scanned-receipt.pdf")[..],
+        ] {
+            assert!(!names_encryption(plain));
+        }
+    }
 
     #[tokio::test]
     async fn the_right_password_among_several_opens_the_file() {
