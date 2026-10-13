@@ -259,6 +259,12 @@ pub async fn set_document_retention(
         // destructive reading available.
         return Err("a retention rule of 0 days is not allowed; clear it instead".to_string());
     }
+    if keep_days.is_some_and(|d| d > retention::MAX_KEEP_DAYS && d != retention::KEEP_FOREVER) {
+        return Err(format!(
+            "a retention rule is at most {} days (100 years); use Keep forever for longer",
+            retention::MAX_KEEP_DAYS
+        ));
+    }
 
     tracing::info!(tag = %tag, ?keep_days, "set_document_retention");
     let payload = DocumentRetentionSetPayload { tag, keep_days };
@@ -338,7 +344,10 @@ pub async fn list_retention_candidates(
                 oldest_archived_at: members.first().map(|m| m.archived_at.clone()),
                 // The instant the server must filter on, computed from the same
                 // clock and rule that selected these — never re-derived there.
-                cutoff: (now - chrono::Duration::days(i64::from(keep_days))).to_rfc3339(),
+                cutoff: now
+                    .checked_sub_signed(chrono::Duration::days(i64::from(keep_days)))
+                    .unwrap_or(chrono::DateTime::<chrono::Utc>::MIN_UTC)
+                    .to_rfc3339(),
             }
         })
         .collect())

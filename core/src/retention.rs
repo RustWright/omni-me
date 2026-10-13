@@ -40,6 +40,10 @@ use crate::retention_class::RETAIN_TAG_PREFIX;
 /// carrying it, whatever its retention category says (his rule B, R4-6).
 pub const KEEP_FOREVER: u32 = u32::MAX;
 
+/// The longest timer a rule may set: a century. Past it is Keep forever, and a
+/// count far past it once took the date arithmetic off the calendar and crashed.
+pub const MAX_KEEP_DAYS: u32 = 36_500;
+
 /// The days a document is kept for under the rules, or `None` when it is kept
 /// regardless.
 ///
@@ -150,7 +154,9 @@ pub async fn candidates(
     // its own tags, which is at least the shortest rule anywhere — so nothing
     // older than that boundary can qualify, and asking the database to drop the
     // rest keeps the exact evaluation below off the whole archive.
-    let boundary = now - Duration::days(i64::from(shortest));
+    let boundary = now
+        .checked_sub_signed(Duration::days(i64::from(shortest)))
+        .unwrap_or(DateTime::<Utc>::MIN_UTC);
     let governed: Vec<String> = rules.keys().cloned().collect();
     let rows =
         queries::documents_archived_before(db, &boundary.to_rfc3339(), &governed, limit).await?;
@@ -173,10 +179,9 @@ pub async fn candidates(
         let Ok(archived) = DateTime::parse_from_rfc3339(&archived_at) else {
             continue;
         };
-        if age_from(archived.with_timezone(&Utc), row.document_date.as_deref())
-            + Duration::days(i64::from(longest))
-            > now
-        {
+        let due = age_from(archived.with_timezone(&Utc), row.document_date.as_deref())
+            .checked_add_signed(Duration::days(i64::from(longest)));
+        if due.is_none_or(|due| due > now) {
             continue;
         }
         out.push(RetentionCandidate {
@@ -388,6 +393,21 @@ mod tests {
             previewed, want,
             "the preview selects what the scan proposed"
         );
+    }
+
+    /// L-W21: a rule synced in before the cap, far past the calendar's range,
+    /// keeps its documents rather than crashing the scan.
+    #[tokio::test]
+    async fn a_rule_past_the_calendar_keeps_rather_than_crashes() {
+        let (db, store, runner) = harness().await;
+        set_rule(&store, &runner, "taxes", Some(99_999_999)).await;
+        set_rule(&store, &runner, "promo", Some(14)).await;
+        archive(&store, &runner, "slip.eml", 400, &["taxes"]).await;
+        let promo = archive(&store, &runner, "promo.eml", 30, &["promo"]).await;
+
+        let found = candidates(&db, Utc::now(), 100).await.unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].document_id, promo);
     }
 
     #[tokio::test]
