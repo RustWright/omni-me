@@ -1017,6 +1017,10 @@ Four stages, in this order. ⛔ Each stage finishes before the next starts.
    real belief quoted in `agent/src/case_bench.rs` (introduced in `e92b3e7`, replaced in a new
    commit at stage 3), then re-merge the overlay once. Optionally ask GitHub Support to purge the
    old SHA. Details: `reviews/2026-10-12-security.md` S-W1.
+   🔴 His plan (2026-10-13): AFTER the finance re-import, write an updated "Ledger conventions"
+   note for live, making his own classification rules clear and consistent ("that's part of the
+   problem"), then summarise it into a portable version for the ledger expert agent. Live has no
+   conventions note today; without one, grounding falls back to every account in the ledger.
 
 **Stage 1, the list (my order).** Decisions first, while he is present to answer them; then code;
 then spends, so the phone test runs on the chosen models.
