@@ -4,26 +4,28 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — stage 3, Phase C: triage the review docs with him
-Phase A+B done 2026-10-12: `reviews/2026-10-12-{logic,security,performance,bloat,test-gaps}.md`.
-⚠️ `reviews/` is gitignored and lives ONLY on the WSL laptop (his choice): triage there.
-One doc at a time in his order, one finding at a time: fix / defer / accept, written into the
-doc's `Disposition:` line. Fixes land as small commits per finding. ⛔ Do not re-review: the docs
-are the record. Items marked "per reviewer" get re-read at the code before deciding.
-Then stage 4 (merge), then the go-live sequence.
+## ▶ NEXT ACTION — close stage 3: dev deploy, then the S9 check
+Stage 3 review TRIAGED AND FIXED 2026-10-13: every finding in `reviews/2026-10-12-*.md` carries a
+disposition and a hash. ⚠️ `reviews/` is gitignored and lives ONLY on the WSL laptop (his choice).
+⛔ Do not re-review. Remaining, in order:
+1. Read CI run `38412992265`: its viewport check now fails on ANY app error (T-15). A red there is
+   probably a pre-existing console error the old check ignored: read it, fix or report.
+2. Merge public into the overlay (`dev/untested-overlay`; the stamp and private lock move together),
+   deploy server + agent to dev, build the dev APK, install on the S9.
+3. On the S9: Archive › + Photo / + PDF opens the new document (L-W18); a purge shows its report
+   until Done (L-W17); Retention's Review list matches its count (L-C1).
+Then stage 4 (merge to live). Stage 4 starts with the S-W1 history rewrite (`tasks.md` § release).
 
 ⛔ **Never `cargo build`/`test` on this box** — `check`/`fmt`/`clippy` only; anything that links
 goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/devsrv.py`.
 Dev workflows: `--ref dev/untested-overlay`. Dev actions need no permission; live ones do.
 
 ## ⛔ Waiting on him
-- **Triage**: security and logic DONE (every finding fixed, accepted or deferred, hashes in the
-  docs). CI on the pushed fixes was running 2026-10-13. Next: bloat, then performance, then a
-  dev deploy and the S9 check of L-W18 (+ Photo / + PDF in Archive opens the new document).
-  Explain each finding in plain consequences, never by ID alone: he could not follow the shorthand.
-- **Rulings inside the docs**: L-W2 (does the capture form count as review), L-W6 (vendor-scoped order keys).
+- **C: drive is full** (481 MB free on 2026-10-13). `wsl --shutdown`, then `schtasks /run /tn
+  "\WSL compact"` from Windows; check `C:\Users\erhie\wsl-maint\compact.log` says `done`.
 - **F3's open half**: whether multi-page reading should be told pages can repeat.
 - **Tap targets**: a visual redesign across screens, his call. `tasks.md` § Open.
-- **The official finances import**: go-live sequence, after the merge. Gate 1 (live backup) first.
+- **The official finances import**: go-live sequence, after the merge. Gate 1 (live backup) first;
+  then his conventions-note rewrite (`tasks.md` § release, stage 4).
 - **R27's account side**: his to check; ⛔ no list of affected runs exists, by his decision.
 - **The public-repo identity scrub**: authorised, end of a session only. `tasks.md` § Owed at cycle close.
