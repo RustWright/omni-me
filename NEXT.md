@@ -8,11 +8,9 @@ site. ⛔ If a line here could be derived from either, it does not belong here �
 Stage 3 review TRIAGED AND FIXED 2026-10-13: every finding in `reviews/2026-10-12-*.md` carries a
 disposition and a hash. ⚠️ `reviews/` is gitignored and lives ONLY on the WSL laptop (his choice).
 ⛔ Do not re-review. Remaining, in order:
-1. Read CI run `38412992265`: its viewport check now fails on ANY app error (T-15). A red there is
-   probably a pre-existing console error the old check ignored: read it, fix or report.
-2. Merge public into the overlay (`dev/untested-overlay`; the stamp and private lock move together),
+1. Merge public into the overlay (`dev/untested-overlay`; the stamp and private lock move together),
    deploy server + agent to dev, build the dev APK, install on the S9.
-3. On the S9: Archive › + Photo / + PDF opens the new document (L-W18); a purge shows its report
+2. On the S9: Archive › + Photo / + PDF opens the new document (L-W18); a purge shows its report
    until Done (L-W17); Retention's Review list matches its count (L-C1).
 Then stage 4 (merge to live). Stage 4 starts with the S-W1 history rewrite (`tasks.md` § release).
 
