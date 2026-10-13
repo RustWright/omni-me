@@ -419,6 +419,46 @@ pub trait AutoImportSource: Send + Sync {
     }
 }
 
+/// A source that runs one pull or cursor reset at a time. A manual tick ran beside
+/// the scheduled one over the same mail, archiving it twice and paying the model
+/// twice, and a reset made mid-pull was overwritten when that pull saved (L-W5).
+struct OneAtATime {
+    inner: Arc<dyn AutoImportSource>,
+    busy: tokio::sync::Mutex<()>,
+}
+
+#[async_trait]
+impl AutoImportSource for OneAtATime {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    async fn pull(&self) -> Result<ImportSummary, ImportError> {
+        let _held = self.busy.lock().await;
+        self.inner.pull().await
+    }
+
+    fn poll_interval(&self) -> Option<Duration> {
+        self.inner.poll_interval()
+    }
+
+    fn reauth_capable(&self) -> bool {
+        self.inner.reauth_capable()
+    }
+
+    async fn reauth(&self, otp: &str) -> ReauthOutcome {
+        self.inner.reauth(otp).await
+    }
+
+    async fn reset_cursor(
+        &self,
+        since: Option<NaiveDate>,
+    ) -> Result<CursorResetOutcome, ImportError> {
+        let _held = self.busy.lock().await;
+        self.inner.reset_cursor(since).await
+    }
+}
+
 /// Initial backoff after a failed tick. Doubles per consecutive failure,
 /// capped at `MAX_BACKOFF`.
 pub const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
@@ -592,6 +632,10 @@ impl SourceRegistry {
     /// the first `record_tick` lookup finds it; the handle is written back in a
     /// second lock acquisition (the `task` field isn't read during ticks).
     pub async fn spawn_one(&self, source: Arc<dyn AutoImportSource>, default_interval: Duration) {
+        let source: Arc<dyn AutoImportSource> = Arc::new(OneAtATime {
+            inner: source,
+            busy: tokio::sync::Mutex::new(()),
+        });
         let interval = source.poll_interval().unwrap_or(default_interval);
         let name = source.name().to_string();
         self.remove(&name).await;
@@ -1408,6 +1452,46 @@ mod tests {
             !registry.remove("live").await,
             "a second remove finds nothing"
         );
+    }
+
+    /// L-W5: two manual ticks and the scheduled one, all at once, still pull
+    /// one at a time.
+    #[tokio::test]
+    async fn a_source_never_pulls_twice_at_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        struct Counting {
+            now: AtomicUsize,
+            most: AtomicUsize,
+        }
+        #[async_trait]
+        impl AutoImportSource for Counting {
+            fn name(&self) -> &str {
+                "counting"
+            }
+            async fn pull(&self) -> Result<ImportSummary, ImportError> {
+                let now = self.now.fetch_add(1, Ordering::SeqCst) + 1;
+                self.most.fetch_max(now, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                self.now.fetch_sub(1, Ordering::SeqCst);
+                Ok(ImportSummary::empty())
+            }
+        }
+        let src = Arc::new(Counting {
+            now: AtomicUsize::new(0),
+            most: AtomicUsize::new(0),
+        });
+        let registry = SourceRegistry::new();
+        registry
+            .spawn_one(src.clone(), Duration::from_secs(1800))
+            .await;
+
+        let (a, b) = tokio::join!(
+            registry.trigger_manual("counting"),
+            registry.trigger_manual("counting")
+        );
+        assert!(a.is_ok() && b.is_ok());
+        assert_eq!(src.most.load(Ordering::SeqCst), 1, "pulls overlapped");
+        registry.remove("counting").await;
     }
 
     #[tokio::test]
