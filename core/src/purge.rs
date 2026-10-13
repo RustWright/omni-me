@@ -83,9 +83,8 @@ pub struct PurgePreview {
 /// What a purge actually did.
 ///
 /// ⚠️ `selected == purged + skipped + failed`, asserted by
-/// [`Self::check_accounting`] rather than assumed. The shape is
-/// `archive::IngestReport`'s and exists for the same reason: a bare count of
-/// successes is unfalsifiable, and for an irreversible operation an unnoticed
+/// [`Self::check_accounting`] rather than assumed. A bare count of successes is
+/// unfalsifiable, and for an irreversible operation an unnoticed
 /// gap between "selected" and "done" is the worst possible thing to discover
 /// later.
 #[derive(Debug, Clone, Default, serde::Serialize)]
@@ -232,7 +231,7 @@ fn label_for(row: &DocumentRow) -> String {
 /// confirmed. That is what keeps deletion out of autonomy's reach.
 ///
 /// The order is load-bearing. Every tombstone is written **first**, then blobs
-/// are considered — because [`queries::blob_reference_count`] excludes purged
+/// are considered — because [`queries::blob_reference_counts`] excludes purged
 /// documents, so a blob becomes reclaimable only once every document naming it
 /// has been tombstoned. Deleting as we went would refuse to free anything a batch
 /// internally shares.

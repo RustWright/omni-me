@@ -215,17 +215,8 @@ fn stamp_email_document(event: &mut NewEvent, document_id: &str) {
 /// until the PDF passwords made the two identical.
 pub type ArchiveTarget<'a> = crate::archive::IngestContext<'a>;
 
-/// Run one polling pass for one account: fetch new messages, dispatch each to
-/// the first willing handler, and return a [`PollOutcome`] accounting for every
-/// message fetched. The caller is responsible for persisting the cursor +
-/// appending events — keeps this function pure-ish + testable without an
-/// EventStore handle.
-///
-/// With `archive` set, **every fetched message is archived** as a document plus
-/// one per real attachment, before dispatch and regardless of its outcome.
-/// ⚠️ Including the ones no handler claims: everything here is in a label the
-/// user deliberately applied, and an unrouted message is precisely the one they
-/// will later want to look at to ask why it produced nothing.
+/// [`poll_once_skipping`] with nothing skipped.
+#[cfg(test)]
 pub async fn poll_once(
     fetcher: &dyn ImapFetcher,
     handlers: &[Box<dyn ImapHandler>],
@@ -256,9 +247,21 @@ pub fn is_skipped_sender(from: &str, skip: &[String]) -> bool {
         .any(|d| domain == *d || domain.ends_with(&format!(".{d}")))
 }
 
-/// [`poll_once`], leaving out mail from the senders in `skip`: not archived and
-/// not offered to any handler (his ruling, 2026-10-11: social notifications are
-/// not records). Counted in [`PollOutcome::skipped`], never dropped silently.
+/// Run one polling pass for one account: fetch new messages, dispatch each to
+/// the first willing handler, and return a [`PollOutcome`] accounting for every
+/// message fetched. The caller is responsible for persisting the cursor +
+/// appending events — keeps this function pure-ish + testable without an
+/// EventStore handle.
+///
+/// With `archive` set, **every fetched message is archived** as a document plus
+/// one per real attachment, before dispatch and regardless of its outcome.
+/// ⚠️ Including the ones no handler claims: everything here is in a label the
+/// user deliberately applied, and an unrouted message is precisely the one they
+/// will later want to look at to ask why it produced nothing.
+///
+/// Mail from the senders in `skip` is left out: not archived and not offered to
+/// any handler (his ruling, 2026-10-11: social notifications are not records).
+/// Counted in [`PollOutcome::skipped`], never dropped silently.
 pub async fn poll_once_skipping(
     fetcher: &dyn ImapFetcher,
     handlers: &[Box<dyn ImapHandler>],

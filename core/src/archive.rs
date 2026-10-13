@@ -110,68 +110,6 @@ pub enum IngestError {
     Payload(#[from] serde_json::Error),
 }
 
-/// What one batch run did, in terms that add up.
-///
-/// ⚠️ `seen == archived + failed`, asserted by [`Self::check_accounting`]. The
-/// shape is `auto_import::ParseOutcome`'s and it exists for the same reason: a
-/// bare count of successes is unfalsifiable, and a file that fell out of the loop
-/// without being classified is invisible. Over a corpus of several hundred, a
-/// clean-looking partial import is the failure that costs the most to discover
-/// later.
-#[derive(Debug, Default)]
-pub struct IngestReport {
-    /// Files the walk yielded, before anything was attempted.
-    pub seen: usize,
-    /// Documents filed. ⚠️ **Counted, not `events.len()`** — one file now yields
-    /// two events when a parser recognises it, and counting envelopes would make
-    /// [`Self::check_accounting`] fail on precisely the runs that went well.
-    pub archived: usize,
-    /// Everything to append, in the order it happened.
-    ///
-    /// ⛔ Not one document's worth. Read [`Self::archived`] for a count.
-    pub events: Vec<NewEvent>,
-    /// `(path, reason)` per file that could not be archived at all.
-    pub failed: Vec<(String, String)>,
-    /// Archived, but with no text layer — so findable by name and not by content.
-    ///
-    /// ⚠️ Not a failure and deliberately not counted as one. It is reported
-    /// separately because a batch that archives 700 files and can read none of
-    /// them is technically a success and practically a problem.
-    pub without_text: usize,
-    /// Archived with parser-derived fields, so findable by *condition* and not
-    /// only by content.
-    ///
-    /// ⚠️ Reported for `without_text`'s reason, inverted. Format discovery is a
-    /// signature match against real exports the fixtures only approximate, so a
-    /// run over 276 CSVs that claims none of them has silently degraded to
-    /// filename search — and every other number in this report would still look
-    /// perfect.
-    pub with_parser_fields: usize,
-}
-
-impl IngestReport {
-    pub fn check_accounting(&self) -> Result<(), String> {
-        let accounted = self.archived + self.failed.len();
-        if accounted != self.seen {
-            return Err(format!(
-                "ingest did not account for every file: saw {} but classified {} \
-                 ({} archived + {} failed)",
-                self.seen,
-                accounted,
-                self.archived,
-                self.failed.len()
-            ));
-        }
-        Ok(())
-    }
-
-    /// The first few failures, for a log line that is actionable rather than a
-    /// number. ⛔ A count alone tells nobody which files to go and look at.
-    pub fn sample_failures(&self, n: usize) -> Vec<&(String, String)> {
-        self.failed.iter().take(n).collect()
-    }
-}
-
 /// Read whatever text the bytes themselves carry.
 ///
 /// Returns `(text, source)`. Whitespace-only output counts as none: `pdftotext`
@@ -266,10 +204,9 @@ fn is_pdf(mime: &str) -> bool {
     mime == "application/pdf" || mime == "application/x-pdf"
 }
 
-/// ⚠️ Both spellings: `message/rfc822` is what this project files an email
-/// under, and `.eml` arriving from a share sheet or a file picker is commonly
-/// labelled `application/mbox` or nothing at all — `mime_for` recovers the
-/// former from the extension.
+/// Both spellings of an email type. Nothing here reads the extension, so an `.eml`
+/// sent as `application/octet-stream` is filed by name only; the bulk upload
+/// script names it `message/rfc822`.
 fn is_email(mime: &str) -> bool {
     let mime = mime.to_ascii_lowercase();
     mime == "message/rfc822" || mime == "message/global"
@@ -487,132 +424,6 @@ fn sanitize_filename(subject: &str) -> String {
         .to_string()
 }
 
-/// Ingest every path given, carrying on past the ones that fail.
-///
-/// ⛔ One unreadable file must not end the run. A backfill over several hundred
-/// documents that aborts on the first permission error has done nothing and says
-/// nothing about the other six hundred.
-pub async fn ingest_paths(
-    ctx: &IngestContext<'_>,
-    paths: &[std::path::PathBuf],
-    source: IngestSource,
-) -> IngestReport {
-    let mut report = IngestReport {
-        seen: paths.len(),
-        ..Default::default()
-    };
-
-    for path in paths {
-        let shown = path.display().to_string();
-        let bytes = match tokio::fs::read(path).await {
-            Ok(b) => b,
-            Err(e) => {
-                report.failed.push((shown, format!("read: {e}")));
-                continue;
-            }
-        };
-        let filename = path
-            .file_name()
-            .map(|f| f.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "document".to_string());
-        let mime = mime_for(path, &bytes);
-
-        match ingest_one(ctx, &bytes, &filename, &mime, source, None).await {
-            Ok(ingested) => {
-                if ingested.text_source == TextSource::None {
-                    report.without_text += 1;
-                }
-                if ingested.parsed_fields {
-                    report.with_parser_fields += 1;
-                }
-                report.archived += 1;
-                report.events.extend(ingested.events);
-            }
-            Err(e) => report.failed.push((shown, e.to_string())),
-        }
-    }
-
-    report
-}
-
-/// Every file under `root`, recursively, in a stable order.
-///
-/// ⚠️ **Sorted, and that is not cosmetic.** Directory order is filesystem order,
-/// so an interrupted backfill resumed later would visit files in a different
-/// sequence and its report would not line up with the first run's. Sorting makes
-/// "the same 765 files" mean the same list twice.
-///
-/// `skip` names extensions to leave out — the finance corpus carries 785
-/// generated `.ledger` files beside its documents, and archiving a derived
-/// artifact alongside the thing it was derived from is how an archive stops being
-/// worth searching. ⛔ Compared lowercased; a `.LEDGER` is the same file.
-///
-/// Unreadable directories are reported rather than skipped silently: a
-/// permission error on one subtree means the backfill covered less than it says.
-pub fn walk_dir(root: &Path, skip: &[&str]) -> (Vec<std::path::PathBuf>, Vec<(String, String)>) {
-    let mut files = Vec::new();
-    let mut errors = Vec::new();
-    let mut stack = vec![root.to_path_buf()];
-
-    while let Some(dir) = stack.pop() {
-        let entries = match std::fs::read_dir(&dir) {
-            Ok(e) => e,
-            Err(e) => {
-                errors.push((dir.display().to_string(), format!("read_dir: {e}")));
-                continue;
-            }
-        };
-        for entry in entries {
-            let Ok(entry) = entry else { continue };
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-                continue;
-            }
-            let skipped = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|e| e.to_ascii_lowercase())
-                .is_some_and(|e| skip.contains(&e.as_str()));
-            if !skipped {
-                files.push(path);
-            }
-        }
-    }
-
-    files.sort();
-    (files, errors)
-}
-
-/// Best-effort content type: sniff the bytes, fall back to the extension.
-///
-/// ⚠️ Sniffing first is deliberate. Extensions in a backup folder are whatever
-/// the exporting bank chose, and `infer` reads the magic number — but it knows
-/// nothing about CSV, which has no magic number and is a large fraction of the
-/// corpus, so the extension has to be the fallback rather than the other way
-/// round.
-fn mime_for(path: &Path, bytes: &[u8]) -> String {
-    if let Some(kind) = infer::get(bytes) {
-        return kind.mime_type().to_string();
-    }
-    match path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.to_ascii_lowercase())
-        .as_deref()
-    {
-        Some("csv") => "text/csv".to_string(),
-        Some("txt") => "text/plain".to_string(),
-        Some("md") => "text/markdown".to_string(),
-        Some("json") => "application/json".to_string(),
-        // ⚠️ Load-bearing, not completeness: without it a bulk-ingested `.eml`
-        // is `application/octet-stream`, `derive_text` skips its body, and the
-        // message is filed searchable by filename only.
-        Some("eml") => "message/rfc822".to_string(),
-        _ => "application/octet-stream".to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     /// No passwords configured, which is every test here: the encrypted path has
@@ -779,51 +590,6 @@ mod tests {
         );
         assert_eq!(pa.source, "email");
         assert_eq!(pb.source, "scan");
-    }
-
-    #[tokio::test]
-    async fn a_batch_carries_on_past_an_unreadable_file_and_accounts_for_it() {
-        let d = dir();
-        let src = dir();
-        let good = src.path().join("statement.csv");
-        std::fs::write(&good, b"date,amount\n2026-01-01,5.00\n").unwrap();
-        let missing = src.path().join("not-here.pdf");
-
-        let report = ingest_paths(
-            &ctx(d.path(), &no_passwords()),
-            &[good, missing.clone()],
-            IngestSource::Bulk,
-        )
-        .await;
-
-        assert_eq!(report.seen, 2);
-        assert_eq!(report.archived, 1);
-        assert_eq!(report.failed.len(), 1);
-        report.check_accounting().expect("every file classified");
-        assert!(report.sample_failures(5)[0].0.contains("not-here.pdf"));
-    }
-
-    #[tokio::test]
-    async fn a_batch_reports_how_many_arrived_without_text() {
-        // A run that archives everything and can read none of it is technically a
-        // success; this is the number that says otherwise.
-        let d = dir();
-        let src = dir();
-        let readable = src.path().join("a.csv");
-        std::fs::write(&readable, b"x,y\n1,2\n").unwrap();
-        let opaque = src.path().join("b.bin");
-        std::fs::write(&opaque, [0u8, 1, 2, 3]).unwrap();
-
-        let report = ingest_paths(
-            &ctx(d.path(), &no_passwords()),
-            &[readable, opaque],
-            IngestSource::Bulk,
-        )
-        .await;
-
-        assert_eq!(report.archived, 2);
-        assert_eq!(report.without_text, 1);
-        report.check_accounting().unwrap();
     }
 
     /// A real bank's statement email: 5 inline JPEGs of branding and 1 PDF.
@@ -1014,76 +780,6 @@ mod tests {
                 .iter()
                 .all(|e| e.aggregate_id == ingested.document_id),
             "both fold onto the row the bytes created, or the fields belong to nothing"
-        );
-    }
-
-    #[tokio::test]
-    async fn the_counters_still_add_up_when_one_file_yields_two_events() {
-        // ⚠️ The regression this guards: `archived` counted envelopes once, so a
-        // parsed file scored 2 and `check_accounting` — the thing built to catch
-        // a miscount — would fail on precisely the runs that went well.
-        let d = dir();
-        let src = dir();
-        let parsed = src.path().join("brokerage.csv");
-        std::fs::write(
-            &parsed,
-            b"Date,Amount,Balance\n2026-01-05,-20.00,980.00\n2026-01-09,-30.00,950.00\n",
-        )
-        .unwrap();
-        let plain = src.path().join("letter.txt");
-        std::fs::write(&plain, b"a letter no parser claims\n").unwrap();
-
-        let report = ingest_paths(
-            &ctx(d.path(), &no_passwords()),
-            &[parsed, plain],
-            IngestSource::Bulk,
-        )
-        .await;
-
-        report.check_accounting().expect("two files, two documents");
-        assert_eq!(report.archived, 2);
-        assert_eq!(report.with_parser_fields, 1);
-        assert_eq!(report.events.len(), 3, "2 archived + 1 fields");
-    }
-
-    #[test]
-    fn a_walk_recurses_sorts_and_skips_derived_artifacts() {
-        let root = dir();
-        std::fs::create_dir_all(root.path().join("cra/2023")).unwrap();
-        std::fs::write(root.path().join("cra/2023/notice.pdf"), b"x").unwrap();
-        std::fs::write(root.path().join("zz.csv"), b"x").unwrap();
-        std::fs::write(root.path().join("aa.csv"), b"x").unwrap();
-        // The corpus carries 785 of these beside the documents they came from.
-        std::fs::write(root.path().join("main.ledger"), b"x").unwrap();
-        std::fs::write(root.path().join("OTHER.LEDGER"), b"x").unwrap();
-
-        let (files, errors) = walk_dir(root.path(), &["ledger"]);
-
-        assert!(errors.is_empty());
-        let names: Vec<String> = files
-            .iter()
-            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
-            .collect();
-        assert_eq!(
-            names,
-            vec!["aa.csv", "notice.pdf", "zz.csv"],
-            "recursive, sorted, and neither .ledger case included"
-        );
-    }
-
-    #[test]
-    fn csv_falls_back_to_its_extension_because_it_has_no_magic_number() {
-        let p = Path::new("/tmp/export.csv");
-        assert_eq!(mime_for(p, b"date,amount\n"), "text/csv");
-    }
-
-    #[test]
-    fn a_sniffed_type_beats_a_wrong_extension() {
-        // Backup folders carry whatever the exporting bank named the file.
-        let p = Path::new("/tmp/statement.txt");
-        assert_eq!(
-            mime_for(p, b"%PDF-1.4\n%\xE2\xE3\xCF\xD3\n"),
-            "application/pdf"
         );
     }
 }

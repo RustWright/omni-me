@@ -18,16 +18,6 @@ pub fn build() -> std::io::Result<tokio::runtime::Runtime> {
     build_with(worker_stack_bytes())
 }
 
-/// Build the runtime and run `future` to completion on it.
-///
-/// For entry points where failing to build one is fatal anyway. The deployed
-/// binaries call [`build`] instead, so they can report it in their own voice.
-pub fn block_on<F: std::future::Future>(future: F) -> F::Output {
-    build()
-        .expect("the async runtime must build")
-        .block_on(future)
-}
-
 /// The part that takes its size as an argument, so a test can pin one.
 fn build_with(stack_bytes: usize) -> std::io::Result<tokio::runtime::Runtime> {
     tokio::runtime::Builder::new_multi_thread()

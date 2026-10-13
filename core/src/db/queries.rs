@@ -1315,29 +1315,6 @@ pub async fn document_tags(db: &Database) -> Result<Vec<String>, DbError> {
     Ok(tags)
 }
 
-/// How many live things still reference a blob.
-///
-/// 🔴 **Two referrers, and they are read from two different places.**
-/// `documents.sha256` comes from the projection. Transaction attachments come
-/// from the **event log**, because the server — the one host that holds the
-/// blobs, and therefore the only place a purge can delete them — builds its
-/// `ProjectionRunner` with `DocumentsProjection` alone. `transactions` does not
-/// exist there, and querying a missing table is a hard error, not an empty set.
-///
-/// ⛔ That distinction is the difference between a purge that fails loudly on the
-/// server and one that silently reports "no references" and deletes bytes a
-/// committed receipt still points at, leaving a ledger entry whose evidence is
-/// gone. `known_top_tag_values` learned the same lesson: a filter that looks
-/// correct, tests green against a harness carrying `BudgetProjection`, and does
-/// nothing in production.
-///
-/// ⚠️ **Deliberately conservative.** The log has no cheap notion of current
-/// visibility, so a transaction the user later deleted still counts. Over-counting
-/// keeps bytes that might be reclaimable; under-counting destroys bytes something
-/// needs. Only one of those is recoverable.
-///
-/// ⛔ Purged documents do not count — that is what makes a blob become
-/// reclaimable once every document naming it has gone.
 /// The id and `text_source` of an unpurged document holding exactly these
 /// bytes, if any. What lets a bulk upload be re-run without filing every
 /// document twice.
@@ -1358,15 +1335,22 @@ pub async fn archived_document_with_sha(
     }))
 }
 
+/// [`blob_reference_counts`] for one blob.
+#[cfg(test)]
 pub async fn blob_reference_count(db: &Database, sha256: &str) -> Result<usize, DbError> {
     let counts = blob_reference_counts(db, &[sha256.to_string()]).await?;
     Ok(counts.get(sha256).copied().unwrap_or(0))
 }
 
-/// [`blob_reference_count`] for many blobs in one read of the event log.
+/// How many live things still reference each blob, in one read of the event log.
 ///
-/// One query per blob scanned the whole log each time (`event_type` has no
-/// index), and a 372-document purge preview ran past the phone's 30s timeout.
+/// Two referrers: `documents.sha256` from the projection, and transaction
+/// attachments from the event log, which every host holds whatever it projects.
+/// Under-counting deletes bytes a committed receipt still points at.
+///
+/// Deliberately conservative: a transaction the user later deleted still counts.
+/// Purged documents do not, which is what frees a blob once every document naming
+/// it has gone. One query per blob ran a 372-document preview past 30 s.
 pub async fn blob_reference_counts(
     db: &Database,
     hashes: &[String],

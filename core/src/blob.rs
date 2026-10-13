@@ -69,7 +69,7 @@ pub fn path_for(dir: &Path, hash: &str) -> Result<PathBuf, BlobError> {
 /// Blobs are content-addressed and therefore *shared*: a statement that arrived
 /// by email and the same statement scanned from paper are one file here and two
 /// archive entries, and a transaction attachment can point at it as well. See
-/// `queries::blob_reference_count`, which is the only sanctioned way to decide.
+/// `queries::blob_reference_counts`, which is the only sanctioned way to decide.
 ///
 /// ⚠️ Absent is success, not an error. Purge is a batch over documents that may
 /// share bytes, so the second document to release a hash finds it already gone —

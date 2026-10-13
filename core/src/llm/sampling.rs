@@ -53,11 +53,6 @@ impl Sampling {
         }
     }
 
-    /// Whether anything at all is sent.
-    pub fn is_provider_default(&self) -> bool {
-        *self == Self::provider_default()
-    }
-
     /// Insert every set parameter into a request body, leaving the rest alone.
     ///
     /// Applied before `extra_body` at both call sites, so a caller that names a

@@ -34,19 +34,16 @@ use crate::db::Database;
 use crate::llm::chat::{ChatMessage, ChatRequest, Usage};
 use crate::llm::{LlmClient, LlmError};
 
-/// Today's date where the user is, as YYYY-MM-DD: the date the prompt states.
-/// Today in the user's zone.
+/// Today in the user's zone: the date the prompt states.
 pub fn today(config: &ResolvedConfig) -> chrono::NaiveDate {
     chrono::Utc::now()
         .with_timezone(&config.user_zone())
         .date_naive()
 }
 
+/// [`today`] as YYYY-MM-DD.
 pub fn today_iso(config: &ResolvedConfig) -> String {
-    chrono::Utc::now()
-        .with_timezone(&config.user_zone())
-        .format("%Y-%m-%d")
-        .to_string()
+    today(config).to_string()
 }
 
 /// The date, so "today" means today. Without it the model guessed from its
