@@ -11,8 +11,6 @@ title = "Omni-Me"
 watch_path = ["src", "assets"]
 reload_html = true
 
-[web.resource.dev]
-style = ["tailwind.css"]
-
-[web.resource.build]
-style = ["tailwind.css"]
+# No [web.resource] style here: `main.rs` loads the stylesheet with `asset!`, under
+# a hashed name. A `style = ["tailwind.css"]` linked a path no build produces and
+# 404'd on every launch.
