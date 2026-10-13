@@ -754,6 +754,11 @@ fn ThreadDetail(thread_id: String, on_back: EventHandler<()>) -> Element {
     let mut waited_ms = use_signal(|| 0i64);
 
     let mut proposals = use_signal(Vec::<AssistantProposal>::new);
+    // `None` until the first read lands, `Some(false)` when the last one failed.
+    // The outcome line speaks only after a good read: an empty list from a failed
+    // fetch read as "No changes made", which is false (L-W20).
+    let mut proposals_read = use_signal(|| None::<bool>);
+    let mut reload = use_signal(|| 0u32);
     // A signal rather than a clone: the proposal cards are built inside an
     // `rsx!` loop, whose closures must be `Copy`, and a `String` captured there
     // moves on the first iteration.
@@ -763,6 +768,7 @@ fn ThreadDetail(thread_id: String, on_back: EventHandler<()>) -> Element {
     let sync_epoch = crate::sync_refresh::use_sync_epoch();
     use_effect(move || {
         let _ = sync_epoch.read();
+        let _ = reload.read();
         let id = id_for_load.clone();
         spawn(async move {
             match bridge::invoke_read_assistant_thread(&id).await {
@@ -772,8 +778,12 @@ fn ThreadDetail(thread_id: String, on_back: EventHandler<()>) -> Element {
                 }
                 Err(e) => error_msg.set(Some(e)),
             }
-            if let Ok(list) = bridge::invoke_read_thread_proposals(&id).await {
-                proposals.set(list);
+            match bridge::invoke_read_thread_proposals(&id).await {
+                Ok(list) => {
+                    proposals.set(list);
+                    proposals_read.set(Some(true));
+                }
+                Err(_) => proposals_read.set(Some(false)),
             }
         });
     });
@@ -805,8 +815,14 @@ fn ThreadDetail(thread_id: String, on_back: EventHandler<()>) -> Element {
                     // Only once the answer has landed: an answer and the
                     // proposals it made are appended in one batch, so before
                     // that there is nothing new to fetch.
-                    if settled && let Ok(list) = bridge::invoke_read_thread_proposals(&id).await {
-                        proposals.set(list);
+                    if settled {
+                        match bridge::invoke_read_thread_proposals(&id).await {
+                            Ok(list) => {
+                                proposals.set(list);
+                                proposals_read.set(Some(true));
+                            }
+                            Err(_) => proposals_read.set(Some(false)),
+                        }
                     }
                 }
             }
@@ -840,19 +856,32 @@ fn ThreadDetail(thread_id: String, on_back: EventHandler<()>) -> Element {
 
                     // The app's account of what the reply did, under the model's.
                     if !message.is_user() && message.failure_note().is_none() {
-                        {
-                            let mine: Vec<_> = proposals
-                                .read()
-                                .iter()
-                                .filter(|p| p.message_id == message.message_id)
-                                .cloned()
-                                .collect();
-                            let outcome = crate::types::reply_outcome(&mine);
-                            rsx! {
-                                div { class: "self-start pl-1 text-[11px] text-obsidian-text-muted",
-                                    "{outcome}"
+                        match *proposals_read.read() {
+                            Some(true) => {
+                                let mine: Vec<_> = proposals
+                                    .read()
+                                    .iter()
+                                    .filter(|p| p.message_id == message.message_id)
+                                    .cloned()
+                                    .collect();
+                                let outcome = crate::types::reply_outcome(&mine);
+                                rsx! {
+                                    div { class: "self-start pl-1 text-[11px] text-obsidian-text-muted",
+                                        "{outcome}"
+                                    }
                                 }
                             }
+                            Some(false) => rsx! {
+                                div { class: "self-start pl-1 text-[11px] text-obsidian-text-muted flex items-center gap-2",
+                                    "Couldn't load what this reply suggested."
+                                    button {
+                                        class: "underline",
+                                        onclick: move |_| reload += 1,
+                                        "Retry"
+                                    }
+                                }
+                            },
+                            None => rsx! {},
                         }
                     }
 
@@ -870,8 +899,12 @@ fn ThreadDetail(thread_id: String, on_back: EventHandler<()>) -> Element {
                             on_decided: move |_| {
                                 let id = card_thread_id.read().clone();
                                 spawn(async move {
-                                    if let Ok(list) = bridge::invoke_read_thread_proposals(&id).await {
-                                        proposals.set(list);
+                                    match bridge::invoke_read_thread_proposals(&id).await {
+                                        Ok(list) => {
+                                            proposals.set(list);
+                                            proposals_read.set(Some(true));
+                                        }
+                                        Err(_) => proposals_read.set(Some(false)),
                                     }
                                 });
                             },
