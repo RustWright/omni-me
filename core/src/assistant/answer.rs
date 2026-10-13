@@ -249,6 +249,7 @@ mod tests {
             arguments,
             repeated: false,
             refused: false,
+            failed: false,
             usage: Usage::default(),
             latency: Duration::from_millis(100),
         }

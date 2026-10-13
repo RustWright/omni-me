@@ -19,6 +19,7 @@ pub fn belief_needs_a_recent_look(earlier: &[TurnRecord], today: NaiveDate) -> O
     let looked = earlier.iter().any(|turn| {
         turn.verb.as_deref() == Some("list")
             && !turn.refused
+            && !turn.failed
             && reaches(&turn.arguments["filters"], since, today)
     });
     (!looked).then(|| {
@@ -64,6 +65,7 @@ mod tests {
             arguments: json!({ "type": "journal", "filters": filters }),
             repeated: false,
             refused: false,
+            failed: false,
             usage: Usage::default(),
             latency: StdDuration::ZERO,
         }
@@ -92,6 +94,17 @@ mod tests {
         let open = list(json!({ "date": { "from": "2026-09-20" } }));
         assert!(belief_needs_a_recent_look(&[closed], today()).is_none());
         assert!(belief_needs_a_recent_look(&[open], today()).is_none());
+    }
+
+    /// L-W9: a list that errored read nothing, whatever range it named. One that
+    /// ran and matched nothing did look, which is all the rule asks.
+    #[test]
+    fn a_list_that_failed_does_not_count() {
+        let empty = TurnRecord {
+            failed: true,
+            ..list(json!({ "date": { "from": "2026-09-20" } }))
+        };
+        assert!(belief_needs_a_recent_look(&[empty], today()).is_some());
     }
 
     /// Only a date range is a look at a period; a tag or a flag is not.

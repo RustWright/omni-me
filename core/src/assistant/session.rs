@@ -194,6 +194,9 @@ pub struct TurnRecord {
     /// True when the loop refused the call before it ran: a refused `propose`
     /// is not a proposal, though it is in the trace like one.
     pub refused: bool,
+    /// True when the call came back as an error: a `list` that failed looked at
+    /// nothing, whatever it asked for.
+    pub failed: bool,
     pub usage: Usage,
     pub latency: Duration,
 }
@@ -531,6 +534,7 @@ impl<'a> Session<'a> {
                     arguments: Value::Null,
                     repeated: false,
                     refused: false,
+                    failed: false,
                     usage: reply.usage,
                     latency: reply.latency,
                 });
@@ -637,6 +641,7 @@ impl<'a> Session<'a> {
                     arguments: call.arguments.clone(),
                     repeated,
                     refused,
+                    failed: result.get("error").is_some(),
                     usage: reply.usage,
                     latency: reply.latency,
                 });
@@ -686,6 +691,7 @@ impl<'a> Session<'a> {
                         arguments: Value::Null,
                         repeated: false,
                         refused: false,
+                        failed: false,
                         usage: reply.usage,
                         latency: reply.latency,
                     });

@@ -493,7 +493,8 @@ opened was eleven weeks old. Relevance ranking has no sense of time, so a recent
 the older majority without ever being read.
 
 So a `belief.record` proposal is refused until the run has listed records with a date range
-reaching into the last 30 days, counted from the day it runs. The refusal tells the model to
+reaching into the last 30 days, counted from the day it runs. A listing that errored read
+nothing and does not count; one that ran and matched nothing did look. The refusal tells the model to
 check whether the belief still holds now: propose it again if the recent records support it,
 say what changed and since when if they contradict it, and propose it unchanged if they say
 nothing about it.
