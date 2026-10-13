@@ -246,22 +246,28 @@ pub async fn fetch_attachment_preview(
     if let Some(bytes) = cache_read(&dir, &sha256).await? {
         return Ok(bytes);
     }
-    if let Some(bytes) = cache_read(&state.attachment_cache_dir, &sha256).await?
+    let original = cache_read(&state.attachment_cache_dir, &sha256).await?;
+    if let Some(bytes) = &original
         && !bytes.starts_with(b"%PDF")
     {
-        return Ok(bytes);
+        return Ok(bytes.clone());
     }
-    let resp = state
+    // Offline, or the server failing: a cached PDF that may be locked still beats
+    // an error, which is all a viewer used to get for a document on the device.
+    let resp = match state
         .box_request(reqwest::Method::GET, &format!("/blobs/{sha256}/preview"))
         .await
         .send()
         .await
-        .map_err(|e| format!("preview fetch: {e}"))?;
+    {
+        Ok(resp) => resp,
+        Err(e) => return original.ok_or_else(|| format!("preview fetch: {e}")),
+    };
     if resp.status() == reqwest::StatusCode::NOT_FOUND {
         return fetch_attachment(state, sha256).await;
     }
     if !resp.status().is_success() {
-        return Err(format!("preview fetch: server returned {}", resp.status()));
+        return original.ok_or_else(|| format!("preview fetch: server returned {}", resp.status()));
     }
     // The server sends a PDF it could not decrypt as `no-store`, so a password
     // configured later still reaches a device that has already looked.
