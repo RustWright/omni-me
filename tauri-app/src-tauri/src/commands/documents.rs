@@ -344,6 +344,22 @@ pub async fn list_retention_candidates(
         .collect())
 }
 
+/// The ids the retention scan proposes under `tag`, by the same rules as
+/// [`list_retention_candidates`].
+async fn retention_group_members(state: &AppState, tag: &str) -> Result<Vec<String>, String> {
+    let rules = retention::rules(&state.db)
+        .await
+        .map_err(|e| e.to_string())?;
+    let candidates = retention::candidates(&state.db, chrono::Utc::now(), RETENTION_SCAN_LIMIT)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(retention::group_by_deciding_tag(&candidates, &rules)
+        .into_iter()
+        .filter(|(group, _)| group == tag)
+        .flat_map(|(_, members)| members.into_iter().map(|m| m.document_id))
+        .collect())
+}
+
 /// How many documents one retention scan looks at.
 ///
 /// ⚠️ A page, not the archive: the scan is a read of every document older than the
@@ -381,11 +397,21 @@ pub async fn preview_document_purge(
     if tag.trim().is_empty() {
         return Err("a purge needs a group".to_string());
     }
+    // A retention group is exactly what the scan proposed. Tag and cutoff alone would
+    // also select documents another of their tags keeps (Keep forever, say).
+    let document_ids = match archived_before {
+        Some(_) => Some(retention_group_members(&state, &tag).await?),
+        None => None,
+    };
 
     let resp = state
         .box_request(reqwest::Method::POST, "/documents/purge/preview")
         .await
-        .json(&serde_json::json!({ "tag": tag, "archived_before": archived_before }))
+        .json(&serde_json::json!({
+            "tag": tag,
+            "archived_before": archived_before,
+            "document_ids": document_ids,
+        }))
         .send()
         .await
         .map_err(|e| format!("purge preview: {e}"))?;

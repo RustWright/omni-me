@@ -330,3 +330,43 @@ async fn a_retention_group_previews_only_what_is_past_the_cutoff() {
         "a cutoff that excluded a document is not a suggestion"
     );
 }
+
+/// L-C1. Tag and cutoff alone also catch a document another tag keeps (Keep forever
+/// on `taxes`, say), and the server holds no rules to tell. The device names the
+/// group's members, and the preview never widens past them.
+#[tokio::test]
+async fn a_retention_preview_lists_only_the_documents_the_device_named() {
+    let (url, db, _blobs, _h) = common::start_full_server_with_blobs().await;
+    let client = reqwest::Client::new();
+
+    let (due, _) = archive(&client, &url, "due.eml", b"a receipt past its rule\n").await;
+    let (kept, _) = archive(&client, &url, "kept.eml", b"a receipt also tagged taxes\n").await;
+    tag(&client, &url, &due, "retain:receipt").await;
+    tag(&client, &url, &kept, "retain:receipt,taxes").await;
+    for id in [&due, &kept] {
+        db.query("UPDATE type::record('documents', $id) SET archived_at = type::datetime($ts)")
+            .bind(("id", id.clone()))
+            .bind(("ts", "2024-01-01T00:00:00Z".to_string()))
+            .await
+            .expect("backdate failed");
+    }
+
+    let resp = client
+        .post(format!("{url}/documents/purge/preview"))
+        .json(&serde_json::json!({
+            "tag": "retain:receipt",
+            "archived_before": "2025-01-01T00:00:00Z",
+            "document_ids": [due],
+        }))
+        .send()
+        .await
+        .expect("preview failed");
+    assert!(resp.status().is_success(), "preview: {}", resp.status());
+    let view: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(view["total"], 1, "the kept document is not offered");
+    assert_eq!(view["items"][0]["document_id"], due.as_str());
+
+    let token = view["token"].as_str().unwrap().to_string();
+    let widened = confirm(&client, &url, &token, &[&due, &kept]).await;
+    assert_eq!(widened.status(), 400, "nor can a confirm reach it");
+}

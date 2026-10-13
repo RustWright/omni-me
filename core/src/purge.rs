@@ -128,12 +128,19 @@ impl PurgeReport {
 /// past X's rule", not the whole tag. ⛔ It narrows the one selection rather than
 /// adding a second query, because the preview and the confirm have to be looking at
 /// the same set.
+///
+/// `only` narrows it to the documents a retention scan proposed. Tag and cutoff
+/// alone also select documents another tag keeps, such as one tagged Keep forever.
 pub async fn preview(
     db: &Database,
     tag: &str,
     archived_before: Option<&str>,
+    only: Option<&[String]>,
 ) -> Result<PurgePreview, PurgeError> {
-    let rows = queries::documents_tagged(db, tag, archived_before).await?;
+    let mut rows = queries::documents_tagged(db, tag, archived_before).await?;
+    if let Some(ids) = only {
+        rows.retain(|row| ids.contains(&row.document_id));
+    }
     let total = rows.len();
 
     let mut bytes_reclaimable = 0u64;
@@ -410,7 +417,7 @@ mod tests {
         let h = harness().await;
         let id = seed(&h, b"one newsletter", "newsletter").await;
 
-        let p = preview(&h.db, "newsletter", None).await.unwrap();
+        let p = preview(&h.db, "newsletter", None, None).await.unwrap();
         assert_eq!(p.total, 1);
         assert_eq!(p.items[0].document_id, id);
         assert!(!p.items[0].bytes_shared);
@@ -513,7 +520,7 @@ mod tests {
         let a = seed(&h, b"identical bytes", "newsletter").await;
         let b = seed(&h, b"identical bytes", "newsletter").await;
 
-        let p = preview(&h.db, "newsletter", None).await.unwrap();
+        let p = preview(&h.db, "newsletter", None, None).await.unwrap();
         assert_eq!(p.total, 2);
         assert_eq!(p.bytes_shared, 0, "both referrers are in the selection");
 

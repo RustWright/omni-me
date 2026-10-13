@@ -478,6 +478,10 @@ pub struct PurgePreviewRequest {
     /// whole tag. Absent means the whole tag.
     #[serde(default)]
     pub archived_before: Option<String>,
+    /// The documents a device's retention scan proposed. The preview never widens
+    /// past them: the server holds no retention rules to tell a kept document apart.
+    #[serde(default)]
+    pub document_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -504,9 +508,14 @@ async fn purge_preview_handler(
     State(state): State<AppState>,
     Json(body): Json<PurgePreviewRequest>,
 ) -> Result<Json<PurgePreviewResponse>, (StatusCode, String)> {
-    let preview = purge::preview(&state.db, &body.tag, body.archived_before.as_deref())
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let preview = purge::preview(
+        &state.db,
+        &body.tag,
+        body.archived_before.as_deref(),
+        body.document_ids.as_deref(),
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let token = ulid::Ulid::new().to_string();
     let ticket = PurgeTicket {
