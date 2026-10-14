@@ -1012,7 +1012,7 @@ Four stages, in this order. ⛔ Each stage finishes before the next starts.
    what we both missed. Fixes worth making get made.
    ✅ **CLOSED 2026-10-14.** Dev: server `dev-55c3a98-125d6ff`, agent `dev-125d6ff`, APK 1.1.42-dev on
    the S9 (backup `omni-dev-20261014T032557-pre-125d6ff`). The overlay broke twice against public:
-   `b5f70f1` removed `async_runtime::block_on`, which three overlay examples called (`55c3a98`), and
+   `9ebfbc7` removed `async_runtime::block_on`, which three overlay examples called (`55c3a98`), and
    P-I5's `event_type` index made `SELECT VALUE count()` decode as an object in a wise test
    (`83cca30`; every public count already uses the row form). The first server boot replays the
    projections for ~80s, past the compose healthcheck, so the agent needed a second `up -d`.
@@ -1025,9 +1025,18 @@ Four stages, in this order. ⛔ Each stage finishes before the next starts.
    ordering: the finances tab goes on only after both server and app are updated; the official
    import needs the updated live server AND a wipe first.
    🔴 RULED 2026-10-12 (stage 3, S-W1): before merging, rewrite the branch history to drop a
-   real belief quoted in `agent/src/case_bench.rs` (introduced in `e92b3e7`, replaced in a new
+   real belief quoted in `agent/src/case_bench.rs` (introduced in `d5e4a0f`, replaced in a new
    commit at stage 3), then re-merge the overlay once. Optionally ask GitHub Support to purge the
    old SHA. Details: `reviews/2026-10-12-security.md` S-W1.
+   ✅ **DONE 2026-10-14**, widened by his pick to the journal-derived lines in this file (a family
+   name, the journal's themes, the eating belief's topic). 140 commits from `abbe215` rewritten by
+   literal replacement, force-pushed with lease (old tip `cc81dcb`); 0 of 942 commits still match,
+   and the final tree differs only in those lines. Citations here, in `reviews/` and in memory were
+   remapped (122; image tags and backup names keep the old hash, they name real things).
+   Map, scrub and pre-rewrite bundle: `~/omni-dev-tools/sw1/`. ⏳ GitHub still serves the old
+   commits by SHA, PR #1's force-push entry included; only a Support purge removes them (his call).
+   ⚠️ Other device: its start hook's `pull --rebase` lands on the new history, as long as it holds
+   no unpushed omni-me commits.
    🔴 His plan (2026-10-13): AFTER the finance re-import, write an updated "Ledger conventions"
    note for live, making his own classification rules clear and consistent ("that's part of the
    problem"), then summarise it into a portable version for the ledger expert agent. Live has no
@@ -1262,12 +1271,12 @@ September checked · 3 meaning search found the colour note · 4 not exercised (
   unverified field, 795 with NO fields; 4+795 = 799. `approvals.rs`
   `fields[WHERE verified = false] != []` is true when `fields` is absent. Check the Archive filter
   (`queries.rs` `unverified_only`) for the twin.
-  ✅ FIXED `aea6767` (+fmt `24837a6`): `(fields[WHERE verified = false] ?? []) != []` in both, and
+  ✅ FIXED `3e29b23` (+fmt `b35684b`): `(fields[WHERE verified = false] ?? []) != []` in both, and
   the fixtures now include a never-extracted document (they all carried fields before, which is
   how the gap passed). ⏳ CI verifies; no SurrealDB here to run it.
 - R1-2 A Digi-Key PROMO email was recorded as an Amazon purchase receipt; he rejected it. Trace and
   fix the cause. ⛔ Not by adding a sender (2026-09-25 ruling).
-  ✅ FIXED `7de7a08`. Cause, from the archived blob: text/plain part = `"\r\n\r\n."`, content all in
+  ✅ FIXED `85530d9`. Cause, from the archived blob: text/plain part = `"\r\n\r\n."`, content all in
   the 174 KB HTML part, which `parse_eml` read only when no text part existed. Handed nothing, the
   model returned an "Amazon" order in the prompt's own example prices (12.34, 5.67, 1.23) with
   order `112-3456789-1234567`, which then GROUPED five unrelated promos into one batch. Fixes: an
@@ -1286,7 +1295,7 @@ September checked · 3 meaning search found the colour note · 4 not exercised (
   pdftotext); the audit did not.
 - R1-3 Assistant home (thread list) cramped, does not match the app's look; Ask button misaligned
   beside a taller text box on the S9. Restyle on the app's primitives; screenshots for him.
-  ✅ FIXED `9987b62`. Cause: the shell pads every page `p-4`, and this page added `px-4`/`mx-4`
+  ✅ FIXED `1db1f24`. Cause: the shell pads every page `p-4`, and this page added `px-4`/`mx-4`
   on top, so its content was 32 px narrower than every other tab and misaligned with its own
   header. Now: no own padding, queue rows and the two links as cards, threads as cards with a
   two-line title, Ask stretched to the text box (`items-stretch`). Checked at 360 px in the mock
@@ -1295,7 +1304,7 @@ September checked · 3 meaning search found the colour note · 4 not exercised (
   date, amount, account, origin.
 - R1-5 Reconcile blanks to "Loading candidates…" after every merge (`load_candidates` sets
   `loading`). Remove the pair in place; refetch silently.
-  ✅ R1-4 + R1-5 FIXED `f4fb517` (+ test fix `591a0cd`): each side shows its full description
+  ✅ R1-4 + R1-5 FIXED `b2b2111` (+ test fix `8cb51c1`): each side shows its full description
   (wraps, never truncates), date, unsigned amount, origin ("Globepay feed", "Receipt email",
   "Statement · x", from the importers' own stamps) and its other account(s); sides stack instead
   of two 150 px columns. Merge/resolve drop the item in place and refresh silently; only the
@@ -1306,7 +1315,7 @@ September checked · 3 meaning search found the colour note · 4 not exercised (
   suggestion on each no-pair row from his own past categorisation of that merchant, plus
   "accept all suggested" over the listed rows. Beat: B (one by one, faster) and C (bulk merges
   only; most rows have nothing to pair).
-  ✅ BUILT `f4fb517`. (a) "Merge N high-confidence pairs…" opens a list of exactly those pairs
+  ✅ BUILT `b2b2111`. (a) "Merge N high-confidence pairs…" opens a list of exactly those pairs
   ("cannot be undone") before anything runs; pairs are chosen disjoint, best score first, so no
   merge strands another. (b) `reconciliation::CategoryHistory`: from the newest 5000 settled
   transactions, the single Expenses/Income leg per merchant (alphabetic words ≥3 letters minus
@@ -1328,16 +1337,16 @@ September checked · 3 meaning search found the colour note · 4 not exercised (
   assistant. Supersedes the "counter → destination → action inventory" proposal. Clear bugs it
   finds: fix. ⛔ Design changes: list for his ruling, do not apply. Beat: defer past release;
   counter-only inventory.
-  ✅ BUILT `308b307`: `interaction-map/README.md` (screens, a counters table with "does the
+  ✅ BUILT `e7fa86f`: `interaction-map/README.md` (screens, a counters table with "does the
   destination deliver", five walkthroughs on the four cognitive-walkthrough questions with tap
   counts, findings) + `inventory.md` (467 handlers) from `scripts/interaction-inventory.py`.
-  Found and FIXED (`c804523`): "Unmatched to reconcile" showed the clearing BALANCE (-1.50 CAD
+  Found and FIXED (`b8dfeaa`): "Unmatched to reconcile" showed the clearing BALANCE (-1.50 CAD
   over ~380 rows on dev) and the dashboard card said "everything reconciles" whenever rows
   netted to zero; both now use a row count (`queries::count_unmatched_transactions`).
   ⏳ For his ruling, not applied: D1 "next unchecked" in document detail · D2 bulk commit in
   the batch list · D3 reconcile rows on the Finances menu badge · D4 the WS driver's scheduled
   orders. ⚠️ Walked in code and the mock at 360 px, not on the S9: round 2 is that check.
-✅ **R1-8 DEPLOYED 2026-10-07** (public `c8ba0bf`, overlay `dev/untested-overlay` @ `bbf48fa`):
+✅ **R1-8 DEPLOYED 2026-10-07** (public `9f3f99e`, overlay `dev/untested-overlay` @ `bbf48fa`):
 dev server `dev-bbf48fa-c8ba0bf`, agent `dev-c8ba0bf` (backup
 `omni-dev-20261007T170014-pre-round2.tar.gz`, 790/790 files, 135 MB; `.env.bak.20261007T170014`),
 healthy, agent 0 restarts. APK 1.1.26-dev installed on the S9 and opened once: initialised,
@@ -1383,33 +1392,33 @@ Round 2 findings, all to fix before release:
   reads config once at boot; `is_due` compares the hour in UTC.
 
 Fixes (2026-10-09, all checked/clippy clean; tests run in CI):
-- R2-5 ✅ `2c3eba7`. Root cause, verified in source: the responder's 30 s branch was a
+- R2-5 ✅ `b8572b6`. Root cause, verified in source: the responder's 30 s branch was a
   `sleep` inside `select!`, recreated each loop, and the pull scheduler sends `Idle` every 3 s,
   so it never fired on any agent. Now a `tokio::time::interval`. Also: config re-read per tick
   and per question (it was a boot snapshot); new shared key `assistant.check_in_timezone`,
   stamped from the phone's zone whenever the switch or hour is saved; `is_due` reads hour and
   date in that zone. Sibling checked: `index_refresh` has the same shape but a deadline-based
   wait, so it is correct.
-- R2-2 ✅ `7f50f5c`. `DocumentDetail`'s resource captured the first id; opening another
+- R2-2 ✅ `b3bfbfd`. `DocumentDetail`'s resource captured the first id; opening another
   document re-rendered the same one. Detail is now keyed per document (full remount) and its
   resources use `use_reactive`; `ParentLink`, `EmailView` the same.
-- R2-1 ✅ `7f50f5c`, ⚠️ ON MY READING: no document on the phone has a tag at all, and the field
+- R2-1 ✅ `b3bfbfd`, ⚠️ ON MY READING: no document on the phone has a tag at all, and the field
   panel was add/edit-only, so I read "tags" as the reviewer's FIELDS. Field editor has Remove:
   an empty human value, which outranks any re-read; hidden in the panel, `None` in hoisted
   columns. `docs/src/archive.md`. The tag ×, if he meant literal tags, is untested on device.
-- R2-3 ✅ `7f50f5c`. Archive's root and the five assistant views scrolled internally, so the
+- R2-3 ✅ `b3bfbfd`. Archive's root and the five assistant views scrolled internally, so the
   shell never saw a scroll. Now the shell scrolls; assistant top bars `sticky top-0`, the
   composer `.sticky-composer` above the system insets.
-- R2-4 ✅ `7f50f5c`. Not broken: zero tags exist, so both menus held only their placeholder.
+- R2-4 ✅ `b3bfbfd`. Not broken: zero tags exist, so both menus held only their placeholder.
   Filter hidden until a tag exists; Retention says how to get one.
-- D1 ✅ `7f50f5c` · D2 ✅ `d6c31ae` (`commits_unseen`: also excludes manual-FX, revisions,
-  any warning) · D3 ✅ `d6c31ae` · D4 ✅ overlay `a18abd0` (+ lock `a8bcfbb`).
+- D1 ✅ `b3bfbfd` · D2 ✅ `c775670` (`commits_unseen`: also excludes manual-FX, revisions,
+  any warning) · D3 ✅ `c775670` · D4 ✅ overlay `a18abd0` (+ lock `a8bcfbb`).
 Found while verifying, fixed:
-- R2-6 ✅ `40b646e`. Belief search failed on every call ("no suitable index"): the catalog
+- R2-6 ✅ `ead66d5`. Belief search failed on every call ("no suitable index"): the catalog
   lists `beliefs.statement` as searchable and no FULLTEXT index existed. Surfaced by the first
   real check-in, whose job is reviewing beliefs. All other catalog text fields checked: indexed.
   New test searches every catalog type on a fresh database.
-- R2-7 ✅ `13aa3dd`. Retention never proposed anything on dev: the scan took the OLDEST 500
+- R2-7 ✅ `dc52321`. Retention never proposed anything on dev: the scan took the OLDEST 500
   documents of any kind and filtered by tag afterwards, so with 834 documents the tagged ones
   were never reached. Tag filter moved into the SQL (`CONTAINSANY`, docs-checked); regression
   test. Purge preview checked: it filters by tag in SQL already.
@@ -1458,24 +1467,24 @@ Findings and rulings:
 - R3-1 🔴 RULED (his pick B, my recommendation): the archive is a filing cabinet, not an inbox.
   No Archive badge or reminder count; Unchecked filter and D1 stay. Cause of "700s → 800s":
   the reading pass marks every document it reads unchecked (819 of 852). Beat: queue only
-  receipt/statement/tax/bill/payslip kinds (relies on the reader's label). ✅ `21282d1`.
+  receipt/statement/tax/bill/payslip kinds (relies on the reader's label). ✅ `aa0f579`.
 - R3-2 D1 did not advance on his Uber receipt: its only unchecked field was `tags`, which the
   panel hides and "All look right" never confirms, so it never left the queue. Tags and
-  removed (empty) values no longer count as unchecked, app and SQL alike. ✅ `21282d1`.
+  removed (empty) values no longer count as unchecked, app and SQL alike. ✅ `aa0f579`.
 - R3-3 🔴 RULED (his words): check-ins archive the previous one and are DELETED after a
   window; I chose 14 days. A thread with an undecided suggestion is never deleted. ✅
-  `21282d1` (`check_in::plan_housekeeping`, run by the agent after each new check-in).
-- R3-4 Add a value (the counterpart of Remove). ✅ `f6d2463`.
+  `aa0f579` (`check_in::plan_housekeeping`, run by the agent after each new check-in).
+- R3-4 Add a value (the counterpart of Remove). ✅ `f603aea`.
 - Reconcile no-pair rows on dev: left alone, his call ("no bandwidth, dev data").
 Assistant capability run on the S9 (2026-10-11), 13 requests, all actions he granted:
 - ✅ routine.create, add_item ×6, complete, skip, modify_item; note.create/append/rename;
   transaction.categorize/tag; belief.record; all auto-applied under his grants.
 - ✅ belief.supersede (not granted) stayed pending; transaction.clear refused without a
   statement to cite; journal write refused, offered a note.
-- 🔴 R3-5 FIXED `97a0023`: the prompt never said today's date, so "today" was a guess:
+- 🔴 R3-5 FIXED `5a6eabc`: the prompt never said today's date, so "today" was a guess:
   a lunch "today" was recorded as 2025-06-25 (deleted from dev). Prompt now states the date
   in his zone.
-- 🔴 R3-6 FIXED `850d44b`: steps added together all took position 10000 (tie); position is
+- 🔴 R3-6 FIXED `287d49d`: steps added together all took position 10000 (tie); position is
   now resolved at approval, after the routine's last step.
 - 🔴 R3-7 + R3-8 RULED 2026-10-11 (his pick, my recommendation): an app-written line under
   every reply, built from its suggestions, never from the prose: "Carried out: N · Waiting for
@@ -1488,18 +1497,18 @@ Assistant capability run on the S9 (2026-10-11), 13 requests, all actions he gra
   then steps needs two turns (steps need the routine's id). No weekday frequency exists.
 - ⚠️ R3-11 A research-then-write request ("note with three books from my journal") spent all
   10 turns searching and returned an empty answer.
-Deployed 2026-10-11: server+agent `1ce9973` (test-only fix `7d6d485` after), APK 1.1.30-dev on
+Deployed 2026-10-11: server+agent `f1de348` (test-only fix `fcafc6b` after), APK 1.1.30-dev on
 the S9; backup `omni-dev-20261011T050913-pre-round4.tar.gz` (95 MB vs 139 MB before: 857 docs
 present, so read as compaction). Verified on device: no Archive badge; the Uber receipt left
 "Unchecked only"; Add a value adds, survives reopening, removes. His zone is America/Winnipeg
 (I had assumed Toronto); stamped by re-saving the hour from the phone.
-⚠️ CI failed once on `1ce9973` (a test asserting no `order` param; updated to allow the
-approval-resolved one); and `f6d2463`'s agent image failed on `chrono` being a dev-dependency
+⚠️ CI failed once on `f1de348` (a test asserting no `order` param; updated to allow the
+approval-resolved one); and `f603aea`'s agent image failed on `chrono` being a dev-dependency
 only (fixed by moving the clock into core).
 
 ✅ Check-in housekeeping verified live 2026-10-11: fired 11:00 UTC (06:00 Winnipeg), "tidied
 earlier check-ins archived=2 deleted=0", answered; the phone lists only today's as active. All
-deployed code is CI-green (`7d6d485`).
+deployed code is CI-green (`fcafc6b`).
 
 **Round 4 early feedback (his, 2026-10-11).**
 - R4-1 Assistant page: the sticky Back bar and reply box cover content; worst at the bottom
@@ -1539,76 +1548,76 @@ deployed code is CI-green (`7d6d485`).
   same class of bug and "accounts the ledger has" on dev is not his convention; (c) his
   conventions are written down: `CONVENTIONS.md` in the restored paisa ledger (local only, ⛔
   never in the public repo), MECE account trees plus posting tags. Case bench (step 1) is
-  `--bench-cases`, `e92b3e7`.
+  `--bench-cases`, `d5e4a0f`.
   🔴 RULED 2026-10-11 (his pick A, my recommendation): his `CONVENTIONS.md` is the source.
   Imported as a reference note the assistant reads for money requests; proposed accounts
   validated against his account tree with "did you mean" errors fed back; past entries as
   examples once the official import lands; the same check on the receipt extractor (same bug
   class). Beat: B, learn from omni-me's ledger (teaches the importer drift); C, a new spec
   (second copy of his document).
-- Dev changes 2026-10-11 (decision log): deployed server `6f9bcc5` + agent `e92b3e7`, APK
+- Dev changes 2026-10-11 (decision log): deployed server `8c27899` + agent `d5e4a0f`, APK
   1.1.32-dev on the S9 (backup `omni-dev-20261011T154941-pre-r44`). Archive window set to 10
   days and back to 30 to see R4-4 work: it archived the one active 09-27 chat. Created the
   note "Ledger conventions" (his CONVENTIONS.md + the 124 accounts his paisa ledger uses,
   excluding budget.ledger's old names). Bench baseline ran on a copy of the agent volume
   (`omni-dev_bench_data`), log in `~/omni-dev-bench/` on the box.
-- Step 1 BASELINE 2026-10-11 (agent `e92b3e7`, DeepSeek-V4-Pro, dev data: 180 accounts,
+- Step 1 BASELINE 2026-10-11 (agent `d5e4a0f`, DeepSeek-V4-Pro, dev data: 180 accounts,
   10,927 transactions): 25/36 runs pass every check (69%), 1.6M tokens. 0/3 routine (R3-10),
   0/3 research-then-write (R3-11; one false "done"), 0/3 record (invented Expenses:Food and
   Assets:Cash every time), 2/3 newest+categorize (R3-9), 2/3 belief (a false "done": may be
   the claim heuristic, unchecked). Everything else 3/3.
-- Step 2 first cut `1903af6`: `propose` refuses unknown accounts (closest named) and a
+- Step 2 first cut `80f91c5`: `propose` refuses unknown accounts (closest named) and a
   known payee under a different account; `specialist::route` sends money requests to the
   ledger brief. Extractor guard: `ground_hint` on the mail and capture paths (unknown
   hint mapped by last name part, else dropped to review); overlay `.with_accounts`. ⏳ Not
   yet: CategoryInUse grounding for categorize/tag.
 - Steps 3-6 built 2026-10-11, all clippy-clean, unmeasured until the next bench:
-  3 `5bd7ffb` `list` takes a `description` text filter (newest first) for "most recent X";
-  4 `c4b9081` `routine.create` carries `steps` ("name, minutes"), card lists them; still
-  no weekday frequency (domain gap, unbuilt); 5 `12b2828` the last turn offers `propose`
-  only, plus a loop rule to research briefly then propose; 6 `86a766a` a reply claiming a
+  3 `b545f8b` `list` takes a `description` text filter (newest first) for "most recent X";
+  4 `6ecd3c6` `routine.create` carries `steps` ("name, minutes"), card lists them; still
+  no weekday frequency (domain gap, unbuilt); 5 `b68245d` the last turn offers `propose`
+  only, plus a loop rule to research briefly then propose; 6 `2134998` a reply claiming a
   change with nothing proposed is sent back once (`claims.rs`), and a `propose` that
   returned an error is now marked refused. ⚠️ That last one closed a hole in step 2: the
   collector re-checks syntax only, so ledger-refused entries would have reached the inbox.
-- Bench after steps 2-6 (`f3de10e`): 18/36 (50%), WORSE than the 25/36 baseline, 3.8M tokens
+- Bench after steps 2-6 (`e6dc075`): 18/36 (50%), WORSE than the 25/36 baseline, 3.8M tokens
   (2.3x; the 44 KB conventions note rides every ledger call). Cause, read from a trace: with
   `propose` offered on the last turn the model called `search` anyway (not offered), which
-  spent the turn and ended in silence; 12 runs ended "TurnBudget, 0 chars". Fix `26287bc`: a
+  spent the turn and ended in silence; 12 runs ended "TurnBudget, 0 chars". Fix `532f580`: a
   closing call with no tools when the budget runs out, so a reply is guaranteed again. Also
   the routine check now counts steps inside `routine.create` (run 1 had created one).
-- Bench after the closing call (`26287bc`): 27/36 (75%, baseline 69%), 4.0M tokens. Record
+- Bench after the closing call (`532f580`): 27/36 (75%, baseline 69%), 4.0M tokens. Record
   3/3 (was 0/3); routine 1/3; R3-11 still 0/3 (reads 15+ entries, never proposes). Several
   "failures" were dev state, not the model: a Weekday Morning routine, the exercise belief and
   the retired test belief already exist; a bank row and its receipt tie on the newest
-  date. Deployed to dev: server `b4aa329` (overlay `034798d`), agent `26287bc`; backup
-  `pre-step2-6`. Next run `8a269f7`: last-turn lookups refused (not run), default budget
+  date. Deployed to dev: server `48c2028` (overlay `034798d`), agent `532f580`; backup
+  `pre-step2-6`. Next run `d1554ff`: last-turn lookups refused (not run), default budget
   10 -> 15 (my call under his quality-over-cost ruling; it is a Settings dial), bench checks
   fixed for those dev-state cases. ⏳ Then: trim the 44 KB conventions brief.
-- Bench `8a269f7` (budget 15, last-turn lookups refused): 30/36 (83%), 5.7M tokens. R3-11 2/3,
+- Bench `d1554ff` (budget 15, last-turn lookups refused): 30/36 (83%), 5.7M tokens. R3-11 2/3,
   routine 2/3, record 3/3. Two belief "failures" were the claim check matching "done" inside
   the model's own correction. The "most recent Uber" misses found a real bug: the catalog hid
   only `removed` rows, so a bank row merged into its receipt (`superseded_by` set) stayed
-  readable and was categorized as the newest. Fixed `1fc6da4` (`hidden_when_set`, one
+  readable and was categorized as the newest. Fixed `d0f0593` (`hidden_when_set`, one
   visible/hidden condition used by search, list, read, counts and the vector index), with
-  narrower claim phrases. Cost: `1afc2fa` moves the brief ahead of the minute-level date line
+  narrower claim phrases. Cost: `b4a394a` moves the brief ahead of the minute-level date line
   so DeepInfra's automatic prefix cache can reuse it, and counts `cached_tokens`.
-- Bench `1fc6da4`: 26/30 of the runs that reached the model (6 hit HTTP 402, DeepInfra out of
+- Bench `d0f0593`: 26/30 of the runs that reached the model (6 hit HTTP 402, DeepInfra out of
   balance; he is topping up, 2026-10-11). Cache works: 3.47M of ~4.0M prompt tokens served from
   the prefix cache. Still weak: R3-11 1/3, routine 2/3, one newest-Uber run tagged two old
   imports. ⏳ Re-run in full once a call succeeds.
-- ✅ Bench `d2ddc22` (adds: a reply announcing a change it then does not make is sent back
+- ✅ Bench `de168e1` (adds: a reply announcing a change it then does not make is sent back
   once, `claims::announced_change`): 35/36 (97%; baseline 25/36), 5.35M tokens of which 4.68M
   served from cache (my estimate ~$1.30 a bench vs ~$2.10 at baseline, cache-write fee not
   counted). Only miss: one R3-11 run listed the books without proposing. Deployed to dev:
-  agent `d2ddc22`, server `d2ddc22` (overlay `034798d`, backup `pre-d2ddc22`), APK 1.1.33-dev
+  agent `de168e1`, server `de168e1` (overlay `034798d`, backup `pre-d2ddc22`), APK 1.1.33-dev
   on the S9; Settings shows budget 15, archive 30, delete 90. Step 7 running: Kimi-K3,
   GLM-5.3, Kimi-K2.6, DeepSeek-V4.1-Flash on the same set (`omni-dev-bench/models.sh`).
-- Step 7, first pair (agent `d2ddc22`): Kimi-K3 24/36 but 10 of its 12 failures were DeepInfra
+- Step 7, first pair (agent `de168e1`): Kimi-K3 24/36 but 10 of its 12 failures were DeepInfra
   rate limits / network errors (about 24/26 of runs that reached it; routine 1/3), so K3 is
   capacity-limited there, itself a reason not to depend on it. GLM-5.3 18/36, nearly all "ran
-  out of output budget": the loop's 3,000-token cap was spent on reasoning. Fixed `c5c0b36`
+  out of output budget": the loop's 3,000-token cap was spent on reasoning. Fixed `cb0719e`
   (16k cap for the loop only). Re-running GLM-5.3, Kimi-K2.6, DeepSeek-V4.1-Flash on it.
-  GLM-5.3 on `c5c0b36`: 34/36 (94%), both misses network errors; R3-11 3/3 and routine 3/3
+  GLM-5.3 on `cb0719e`: 34/36 (94%), both misses network errors; R3-11 3/3 and routine 3/3
   (V4-Pro: 2/3, 3/3), but slow: several runs 5-7 min against V4-Pro's ~30-70 s. A candidate
   for the batch seat (scheduled check-in, nobody waiting), not the interactive one.
   DeepSeek-V4.1-Flash: 29/36 (81%), median 11.5 s, worst 32 s; real misses (no proposal on
@@ -1618,13 +1627,13 @@ deployed code is CI-green (`7d6d485`).
   batch seat later; not urgent. Logs in `~/omni-dev-bench/` on the box.
 - R4-5 (his report 2026-10-11): Archive cards narrower than every other page. Measured on the
   S9: 296px at 32px vs 328px at 16px; Archive and four Assistant sub-screens padded inside the
-  shell's gutter. Fixed `d1b5845`. 🔴 RULED (his pick A, my recommendation): a CI gate, not a
+  shell's gutter. Fixed `ca63fdf`. 🔴 RULED (his pick A, my recommendation): a CI gate, not a
   habit. The phone-width sweep gained a gutter check (leftmost painted content must start at
   the shell's gutter; validated on the S9 against the double-padded build: flagged exactly
   those screens) and visits Assistant sub-screens; its `continue-on-error` is gone, so it
   blocks. Beat: B, me checking on the S9 (depends on remembering, how this slipped); C, a
   rule only. Rule in `UI_WORKFLOW.md` § The layout sweep.
-  ✅ CI `339093e` green as a gate (20 screens). APK 1.1.34-dev on the S9: every tab, both
+  ✅ CI `f7cdf43` green as a gate (20 screens). APK 1.1.34-dev on the S9: every tab, both
   Assistant sub-screens and a chat measured at the 16px gutter.
 - R4-6 Retention before live (his ask 2026-10-11). Analysis of the dev archive (clone of live):
   862 docs, 820 from email. By what they are: social notifications 411 (276 untagged), dev/CI
@@ -1652,17 +1661,17 @@ deployed code is CI-green (`7d6d485`).
   unless a topic tag carries a longer timer he set (an explicit "keep forever" joins the timer
   choices); topic tags with no timer are ignored. Beat: A, category alone (a miscategorised tax
   document would ride the wrong clock, caught only at the purge confirm); C, today's every-tag
-  rule (junk with stray untimed tags never expires). Skip list built `b5c53f0`: listed senders
+  rule (junk with stray untimed tags never expires). Skip list built `90fba05`: listed senders
   are offered to the receipt handlers first and skipped only when nothing comes of it (a
   LinkedIn Premium charge still imports); Settings › Archive & import.
-  Built 2026-10-11/12: `2447e96` category list (`retention_class.rs`, 12 categories, receipt
+  Built 2026-10-11/12: `02ad027` category list (`retention_class.rs`, 12 categories, receipt
   first: "any email showing a charged amount is a receipt") enforced by the reader schema, stored
   as its own `retention` field and shown as a `retain:<key>` tag; an email that yields a charge
-  is written `receipt` at parser rank. `74b4e05` rule B + `KEEP_FOREVER`. `6fba67d` retention
+  is written `receipt` at parser rank. `c9249ac` rule B + `KEEP_FOREVER`. `527a7f7` retention
   screen offers categories and a real "keep forever" (the old button cleared the timer, which
-  rule B would ignore). `944cce1` backfill: the enrichment sweep re-reads any document with no
+  rule B would ignore). `1c9761f` backfill: the enrichment sweep re-reads any document with no
   `retain:` tag (parser statements write `statement`, an off-list answer `other`, so nothing
-  loops). Deployed to dev 2026-10-12: server `1f214ad` (backup `pre-retention`), APK
+  loops). Deployed to dev 2026-10-12: server `81bc1f9` (backup `pre-retention`), APK
   1.1.38-dev; the type-to-search tag filter checked by real taps on the S9. Backfill reader is
   `google/gemma-4-26B-A4B-it`; first 11 categories all right at 1/min, then raised to 20/min in
   the dev compose (⚠️ drop back to 1 once done). Scoring: 63 hand-labelled emails, labels in
@@ -1679,9 +1688,9 @@ deployed code is CI-green (`7d6d485`).
   him to confirm. ⚠️ Timers count from `archived_at`, not the email's date, so an imported
   backlog expires gradually; worth a look before live (the official import re-archives).
 - R4-7 Type-to-search picker for the archive tag filter, Kind filter and retention tag picker
-  (his report: the tag list is too long to scroll). `250903f`; APK 1.1.35-dev building.
+  (his report: the tag list is too long to scroll). `ceb6c75`; APK 1.1.35-dev building.
 - Assistant asked "Shall I propose creating this?" instead of proposing (S9-equivalent run,
-  2026-10-11); asking leave now gets the same send-back as an announced change, `362e6da`.
+  2026-10-11); asking leave now gets the same send-back as an announced change, `4238235`.
 - R4-4 🔴 RULED 2026-10-11 (his words): chats untouched 30 days auto-archive; chats in the
   archive 90 days auto-delete (events remain, so recoverable). Both durations tunable on the
   Settings page. My defaults, not his: the 90 days count from when it was archived, manual
@@ -1690,15 +1699,15 @@ deployed code is CI-green (`7d6d485`).
 - R4-9 His round 4 test, 2026-10-12: every auto-imported receipt said `Expenses:Unknown`.
   Cause, from the dev batches: the extractor invented accounts (`Expenses:Transportation:Taxi`,
   `Expenses:Subscriptions`) without seeing his list, and the R4-2 grounding then dropped every
-  name it could not match. Fix `42c4490`: the extractor is given his spending accounts as the
+  name it could not match. Fix `60f4719`: the extractor is given his spending accounts as the
   only choices (mail and capture paths); a line that still does not ground takes the payee's
   past account when all past entries agree. Found alongside: Porkbun dated 2028-02-01 (the
-  renewal date) and Amazon 2026-01-01; `8feee65` replaces a date more than 31 days from the
+  renewal date) and Amazon 2026-01-01; `d384a79` replaces a date more than 31 days from the
   email's arrival with the arrival date, with a review warning (31, not "never after": a Hydro
   reminder names a withdrawal 3 days ahead).
 - R4-11 Topic tags, his go-ahead 2026-10-12 ("clean up the tags"). Before: 62 tags on 876
   documents, 27 used once; `social` on 395. Causes: the reader prompt seeded `receipt` and
-  `newsletter` as examples, and never saw the tags in use. `5821f50`: the reader tags the area of
+  `newsletter` as examples, and never saw the tags in use. `b95e217`: the reader tags the area of
   life only (never sender or message kind), kind labels are dropped in code
   (`tag_vocabulary::is_topic`), and the reader is shown the tags in use to reuse. One-time dev
   cleanup (`~/omni-dev-tools/tag_cleanup.py`, my mapping, recorded in the script): 635 documents
@@ -1707,24 +1716,24 @@ deployed code is CI-green (`7d6d485`).
   correction: he never set it); removed with a human-rank write, the only rank above it. Backup
   `pre-tag-cleanup`. Live needs no cleanup: it predates model tags (v1.1.2). Judgement calls he
   may want changed: dance and strava as fitness, pension as employment.
-- Dev now: server `5821f50` (receipt accounts, receipt dates, tags), APK 1.1.39-dev on the S9
+- Dev now: server `b95e217` (receipt accounts, receipt dates, tags), APK 1.1.39-dev on the S9
   (Accent row wraps, checked at 360px).
 - R4-9 corrected 2026-10-12: the cause above was half of it. The server registered the
   documents projection only, so grounding on the server found no conventions note and no
-  ledger; the known list was empty and every hint was dropped. `42c4490` handed the reader
+  ledger; the known list was empty and every hint was dropped. `60f4719` handed the reader
   that same empty list. Found by re-extracting his restaurant photo: it answered
-  `Expenses:Groceries`, not one of his accounts. `44a08a3`: the server also projects notes and
+  `Expenses:Groceries`, not one of his accounts. `3b9cd65`: the server also projects notes and
   the ledger, guarded by a test through the server's own projection list.
 - R4-15 🔴 RULED 2026-10-12 (his pick A, my recommendation): a draft dated after today cannot
   be committed from review, whatever its source (mail, scan, import). The commit button names
   the date ("Dated Oct 15. Fix the date, or commit it from Oct 15"); a misread date is fixed in
   place, a real upcoming payment waits in review until it has happened. Beat: B, a "commit
   anyway?" confirm (the same tap-through that let his accidental future commits in). Built
-  `20a16a3`: `future_dated::refusal`, enforced in `commit_batch` after corrections (the
+  `da3cc5c`: `future_dated::refusal`, enforced in `commit_batch` after corrections (the
   phone's day), shown on the commit button, and applied at propose time to the assistant's
   `transaction.record` (the user's zone), beside the unknown-account refusal.
   Also agreed: the retention clock counts from the email's own date (his reason: a live
-  backfill of old mail would land already past its window). Built `63b1ce5`: an email files
+  backfill of old mail would land already past its window). Built `b915b54`: an email files
   its `Date:` header as `document_date` at `parser:email` rank; a document's age counts from
   the earlier of that and `archived_at` (a later date never holds one back). The scan and the
   purge preview share one condition (`queries::OLDER_THAN_CUTOFF`). Dev emails archived
@@ -1736,25 +1745,25 @@ deployed code is CI-green (`7d6d485`).
 - R4-12 His report: purge review slow for small lists, and the 372 social list errored.
   Reproduced from the S9: the preview ran past the app's 30s request limit. Cause: one full
   event-log scan per document to count transaction references (`event_type` has no index).
-  `d215722`: preview and confirm count every blob in one read (`blob_reference_counts`).
+  `22d5923`: preview and confirm count every blob in one read (`blob_reference_counts`).
 - R4-13 His scan of a restaurant receipt: Groceries instead of Dining, and no date. The dev
   conventions note does offer `Expenses:Food:Dining`; my prompt said "choose by what was
   bought", and bread and rice pudding read as groceries. Now: by the merchant and the purchase
   as a whole. The date printed "October 11" with no year, which the reader is told to leave
   empty; it is now told the day the document arrived (capture day, email date) and completes
   the year. His conventions table files Uber Eats under `Food:Convenience`; he expected
-  dining, so I followed him. `d215722`.
+  dining, so I followed him. `22d5923`.
 - R4-14 His UI report: "+ Add" hugs the Overview/Ledger/Analyze bar, and the net-worth range
-  picker went to two rows. Cause of the first: my R4-1 bulk edit (`6f9bcc5`) glued `z-30flex`,
+  picker went to two rows. Cause of the first: my R4-1 bulk edit (`8c27899`) glued `z-30flex`,
   and `bg-obsidian-bgflex` on four assistant sub-screen headers. The range picker needed 288px
   of 286 (it had overflowed 2px since it was built; the wrap made it visible); `SegmentedNav
   fill` spans the row in equal segments. Class guard: `tests/class-check.mjs` in CI fails on any
   class the built stylesheet lacks. It also found `border-bottom` (meant `border-b`) and that
   the animation classes (`animate-in`, `fade-in`, ...) never worked, the plugin was never
-  installed; defined in `input.css`. `d215722`.
+  installed; defined in `input.css`. `22d5923`.
 - R4-10 His report: Settings › Appearance › Accent overflowed on the phone (six accents plus
   Follow in one row). `SegmentedNav` now wraps, which covers all six users; the viewport sweep
-  now opens every settings row, since an expanded row was never measured. `42c4490`.
+  now opens every settings row, since an expanded row was never measured. `60f4719`.
 
 **Stage 2, round 4 checklist (1.1.30-dev).**
 1. Archive: no badge; Unchecked only still filters; confirm a document's values and the next
