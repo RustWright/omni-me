@@ -1010,6 +1010,17 @@ Four stages, in this order. ⛔ Each stage finishes before the next starts.
    thinks are worth fixing get fixed, and the loop repeats until he is satisfied.
 3. **Code review gate.** The codebase reviewed for security, logic, performance and bloat, to find
    what we both missed. Fixes worth making get made.
+   ✅ **CLOSED 2026-10-14.** Dev: server `dev-55c3a98-125d6ff`, agent `dev-125d6ff`, APK 1.1.42-dev on
+   the S9 (backup `omni-dev-20261014T032557-pre-125d6ff`). The overlay broke twice against public:
+   `b5f70f1` removed `async_runtime::block_on`, which three overlay examples called (`55c3a98`), and
+   P-I5's `event_type` index made `SELECT VALUE count()` decode as an object in a wise test
+   (`83cca30`; every public count already uses the row form). The first server boot replays the
+   projections for ~80s, past the compose healthcheck, so the agent needed a second `up -d`.
+   S9 over CDP, junk documents only; the picker was fed a generated file, so the camera is untested:
+   L-W18 ✅ + PDF and + Photo each open the new document. L-C1 ✅ `retain:social` counted 2 and
+   Review listed those 2, without the junk doc kept by a Keep-forever tag. L-W17 ✅ the report held
+   for 20s until Done, then the purged row was gone and the unchecked row was spared.
+   Left on dev: junk PDF `…9G0RMD`, rules `zz-keep` and `zz-purge-test`.
 4. **Merge dev to live**, then a go-live sequence still to be worked out. His examples of its
    ordering: the finances tab goes on only after both server and app are updated; the official
    import needs the updated live server AND a wipe first.

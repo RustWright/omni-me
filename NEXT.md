@@ -4,23 +4,24 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — close stage 3: dev deploy, then the S9 check
-Stage 3 review TRIAGED AND FIXED 2026-10-13: every finding in `reviews/2026-10-12-*.md` carries a
-disposition and a hash. ⚠️ `reviews/` is gitignored and lives ONLY on the WSL laptop (his choice).
-⛔ Do not re-review. Remaining, in order:
-1. Merge public into the overlay (`dev/untested-overlay`; the stamp and private lock move together),
-   deploy server + agent to dev, build the dev APK, install on the S9.
-2. On the S9: Archive › + Photo / + PDF opens the new document (L-W18); a purge shows its report
-   until Done (L-W17); Retention's Review list matches its count (L-C1).
-Then stage 4 (merge to live). Stage 4 starts with the S-W1 history rewrite (`tasks.md` § release).
+## ▶ NEXT ACTION — stage 4: merge dev to live
+Stage 3 CLOSED 2026-10-14 (`tasks.md` § release, item 3: what is on dev, what the S9 showed).
+⛔ Do not re-review or re-check it. Stage 4, in the order his rulings set:
+1. S-W1 history rewrite on the public branch, then re-merge the overlay once (`tasks.md` § release,
+   item 4; details in `reviews/2026-10-12-security.md`, WSL laptop only). It rewrites published
+   history and force-pushes the public repo: confirm with him before running it.
+2. Draft the go-live sequence (it is drafted at stage 4, not before). His fixed points: gate 1 (live
+   backup) first; the tab goes on only after server AND app are updated; the official import needs
+   the updated live server and a wipe first; his conventions note comes after the re-import.
+⛔ Live is the pause: every live-affecting step waits for his go.
 
 ⛔ **Never `cargo build`/`test` on this box** — `check`/`fmt`/`clippy` only; anything that links
 goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/devsrv.py`.
-Dev workflows: `--ref dev/untested-overlay`. Dev actions need no permission; live ones do.
+Dev workflows: `--ref dev/untested-overlay`. Before any overlay build, dispatch overlay `ci.yml`
+with `-f public_ref=<full public SHA>`: public-only changes broke it twice at stage 3.
 
 ## ⛔ Waiting on him
-- **C: drive is full** (481 MB free on 2026-10-13). `wsl --shutdown`, then `schtasks /run /tn
-  "\WSL compact"` from Windows; check `C:\Users\erhie\wsl-maint\compact.log` says `done`.
+- **S-W1 go-ahead**: the force-push above.
 - **F3's open half**: whether multi-page reading should be told pages can repeat.
 - **Tap targets**: a visual redesign across screens, his call. `tasks.md` § Open.
 - **The official finances import**: go-live sequence, after the merge. Gate 1 (live backup) first;
