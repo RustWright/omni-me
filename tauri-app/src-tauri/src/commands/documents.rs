@@ -413,14 +413,36 @@ pub async fn preview_document_purge(
         None => None,
     };
 
-    let resp = state
-        .box_request(reqwest::Method::POST, "/documents/purge/preview")
-        .await
-        .json(&serde_json::json!({
+    post_purge_preview(
+        &state,
+        serde_json::json!({
             "tag": tag,
             "archived_before": archived_before,
             "document_ids": document_ids,
-        }))
+        }),
+    )
+    .await
+}
+
+/// The same preview for one document, deleted from its own view. Confirmed
+/// through [`confirm_document_purge`] like any other group.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn preview_document_delete(
+    state: State<'_, AppState>,
+    document_id: String,
+) -> Result<serde_json::Value, String> {
+    require_feature(&state, Feature::Documents)?;
+    post_purge_preview(&state, serde_json::json!({ "document_id": document_id })).await
+}
+
+async fn post_purge_preview(
+    state: &AppState,
+    body: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let resp = state
+        .box_request(reqwest::Method::POST, "/documents/purge/preview")
+        .await
+        .json(&body)
         .send()
         .await
         .map_err(|e| format!("purge preview: {e}"))?;

@@ -916,6 +916,7 @@ pub fn run() {
             commands::documents::list_retention_classes,
             commands::documents::list_retention_candidates,
             commands::documents::preview_document_purge,
+            commands::documents::preview_document_delete,
             commands::documents::confirm_document_purge,
             // Auto-import observability (Phase 3.9)
             commands::auto_import::list_auto_import_sources,

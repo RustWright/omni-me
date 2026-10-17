@@ -63,7 +63,7 @@ pub struct PurgeItem {
 /// What a purge would do, computed without writing anything.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct PurgePreview {
-    /// The tag this group was formed under.
+    /// The tag this group was formed under, or [`SINGLE_DOCUMENT_GROUP`].
     pub group: String,
     /// Up to [`MAX_PREVIEW_ITEMS`] of them.
     pub items: Vec<PurgeItem>,
@@ -140,6 +140,33 @@ pub async fn preview(
     if let Some(ids) = only {
         rows.retain(|row| ids.contains(&row.document_id));
     }
+    summarise(db, tag, rows).await
+}
+
+/// What deleting one document by hand would remove, under the group name
+/// [`SINGLE_DOCUMENT_GROUP`]. Same accounting as a tag group, so shared bytes
+/// are reported the same way. An unknown or already purged id previews empty.
+pub async fn preview_document(
+    db: &Database,
+    document_id: &str,
+) -> Result<PurgePreview, PurgeError> {
+    let rows: Vec<DocumentRow> = queries::get_document(db, document_id)
+        .await?
+        .into_iter()
+        .filter(|row| !row.purged.unwrap_or(false))
+        .collect();
+    summarise(db, SINGLE_DOCUMENT_GROUP, rows).await
+}
+
+/// The group a single-document delete is previewed under, and the purge reason
+/// recorded when the confirm names none.
+pub const SINGLE_DOCUMENT_GROUP: &str = "deleted by hand";
+
+async fn summarise(
+    db: &Database,
+    group: &str,
+    rows: Vec<DocumentRow>,
+) -> Result<PurgePreview, PurgeError> {
     let total = rows.len();
 
     let mut bytes_reclaimable = 0u64;
@@ -182,7 +209,7 @@ pub async fn preview(
     }
 
     Ok(PurgePreview {
-        group: tag.to_string(),
+        group: group.to_string(),
         items,
         total,
         bytes_reclaimable,
@@ -426,6 +453,54 @@ mod tests {
         assert_ne!(row.purged, Some(true));
         let sha = row.sha256.unwrap();
         assert!(blob::path_for(h.blob_dir.path(), &sha).unwrap().exists());
+    }
+
+    /// One document, whatever its tags, and nothing else that shares the tag.
+    #[tokio::test]
+    async fn a_single_document_preview_lists_only_that_document() {
+        let h = harness().await;
+        let id = seed(&h, b"a test email", "inbox").await;
+        let _other = seed(&h, b"another email", "inbox").await;
+
+        let p = preview_document(&h.db, &id).await.unwrap();
+        assert_eq!(p.group, SINGLE_DOCUMENT_GROUP);
+        assert_eq!(p.total, 1);
+        assert_eq!(p.items[0].document_id, id);
+        assert_eq!(p.bytes_reclaimable, b"a test email".len() as u64);
+    }
+
+    /// The same blob behind two documents: deleting one frees nothing.
+    #[tokio::test]
+    async fn a_single_document_preview_reports_shared_bytes() {
+        let h = harness().await;
+        let id = seed(&h, b"same bytes", "a").await;
+        let _twin = seed(&h, b"same bytes", "b").await;
+
+        let p = preview_document(&h.db, &id).await.unwrap();
+        assert!(p.items[0].bytes_shared);
+        assert_eq!(p.bytes_reclaimable, 0);
+        assert_eq!(p.bytes_shared, b"same bytes".len() as u64);
+    }
+
+    #[tokio::test]
+    async fn a_purged_or_unknown_document_previews_empty() {
+        let h = harness().await;
+        let id = seed(&h, b"gone soon", "x").await;
+        apply(
+            &h.db,
+            &h.writer,
+            h.blob_dir.path(),
+            std::slice::from_ref(&id),
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(preview_document(&h.db, &id).await.unwrap().total, 0);
+        assert_eq!(
+            preview_document(&h.db, "no-such-id").await.unwrap().total,
+            0
+        );
     }
 
     /// The ordinary case, end to end: tombstone written, bytes gone, accounting

@@ -370,3 +370,70 @@ async fn a_retention_preview_lists_only_the_documents_the_device_named() {
     let widened = confirm(&client, &url, &token, &[&due, &kept]).await;
     assert_eq!(widened.status(), 400, "nor can a confirm reach it");
 }
+
+#[tokio::test]
+async fn one_untagged_document_can_be_deleted_by_hand() {
+    let (url, db, blobs, _h) = common::start_full_server_with_blobs().await;
+    let client = reqwest::Client::new();
+    let (doomed, sha_doomed) = archive(&client, &url, "test.txt", b"a test email\n").await;
+    let (other, _) = archive(&client, &url, "other.txt", b"something to keep\n").await;
+
+    let resp = client
+        .post(format!("{url}/documents/purge/preview"))
+        .json(&serde_json::json!({ "document_id": doomed }))
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success(), "preview: {}", resp.status());
+    let view: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(view["total"], 1, "only the named document");
+    assert_eq!(view["items"][0]["document_id"], doomed.as_str());
+
+    // A sibling id cannot ride on this ticket.
+    let token = view["token"].as_str().unwrap().to_string();
+    let widened = confirm(&client, &url, &token, &[&doomed, &other]).await;
+    assert_eq!(widened.status(), 400);
+
+    let view = client
+        .post(format!("{url}/documents/purge/preview"))
+        .json(&serde_json::json!({ "document_id": doomed }))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let token = view["token"].as_str().unwrap().to_string();
+    let resp = confirm(&client, &url, &token, &[&doomed]).await;
+    assert!(resp.status().is_success(), "confirm: {}", resp.status());
+    let report: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(
+        (report["selected"].as_u64(), report["purged"].as_u64()),
+        (Some(1), Some(1))
+    );
+
+    let path = omni_me_core::blob::path_for(&blobs, &sha_doomed).unwrap();
+    assert!(!path.exists(), "its bytes left the disk");
+    let row = queries::get_document(&db, &doomed).await.unwrap().unwrap();
+    assert_eq!(row.purged, Some(true));
+    let kept = queries::get_document(&db, &other).await.unwrap().unwrap();
+    assert_ne!(kept.purged, Some(true), "the other document is untouched");
+}
+
+#[tokio::test]
+async fn a_preview_must_name_a_tag_or_a_document_not_both() {
+    let (url, _db, _blobs, _h) = common::start_full_server_with_blobs().await;
+    let client = reqwest::Client::new();
+    for body in [
+        serde_json::json!({}),
+        serde_json::json!({ "tag": "junk", "document_id": "x" }),
+    ] {
+        let resp = client
+            .post(format!("{url}/documents/purge/preview"))
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 400, "{body}");
+    }
+}

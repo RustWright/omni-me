@@ -55,6 +55,8 @@ enum View {
     /// ⛔ The cutoff travels from `RetentionGroup::cutoff` untouched — re-deriving
     /// it here would let the screen and the server disagree about the set.
     Purge(String, Option<String>),
+    /// The same preview and confirm, for one document deleted from its own view.
+    Delete(String),
     /// "Add document": the capture screen, reading any document.
     Add(DocumentKind),
 }
@@ -95,9 +97,16 @@ pub fn ArchivePage() -> Element {
     use_page_back(
         move || match *view.read() {
             View::List => 0,
-            View::Detail(_) | View::Purge(_, _) | View::Add(_) => 1,
+            View::Detail(_) | View::Purge(_, _) | View::Delete(_) | View::Add(_) => 1,
         },
-        move || view.set(View::List),
+        // A delete preview backs out to the document it was opened from.
+        move || {
+            let back = match &*view.read() {
+                View::Delete(id) => View::Detail(id.clone()),
+                _ => View::List,
+            };
+            view.set(back);
+        },
     );
 
     // Pages past the first, appended as the user asks for them. ⛔ Reset whenever
@@ -229,7 +238,20 @@ pub fn ArchivePage() -> Element {
                             on_back: move |_| view.set(View::List),
                             on_corrected: move |_| reload += 1,
                             on_open: move |id: String| view.set(View::Detail(id)),
+                            on_delete: move |id: String| view.set(View::Delete(id)),
                         }
+                    }
+                },
+                View::Delete(id) => rsx! {
+                    PurgeGroup {
+                        tag: String::new(),
+                        archived_before: None,
+                        document_id: Some(id.clone()),
+                        on_back: move |_| view.set(View::Detail(id.clone())),
+                        on_purged: move |_| {
+                            reload += 1;
+                            view.set(View::List);
+                        },
                     }
                 },
                 View::List => rsx! {
@@ -579,6 +601,8 @@ fn DocumentDetail(
     /// its own right and so gets the same detail view rather than a preview
     /// nested inside its parent.
     on_open: EventHandler<String>,
+    /// Open the delete preview for this document.
+    on_delete: EventHandler<String>,
 ) -> Element {
     let mut reload = use_signal(|| 0u32);
     let sync_epoch = crate::sync_refresh::use_sync_epoch();
@@ -697,6 +721,19 @@ fn DocumentDetail(
                                             }
                                         }
                                     },
+                                }
+                                // Opens the same preview and confirm as a group
+                                // purge, so nothing goes from this tap alone.
+                                if !d.purged.unwrap_or(false) {
+                                    button {
+                                        onclick: {
+                                            let id = d.document_id.clone();
+                                            move |_| on_delete.call(id.clone())
+                                        },
+                                        class: "px-3 py-2 text-xs rounded-lg border border-red-500/30 \
+                                                text-red-300/80 hover:bg-red-950/30",
+                                        "Delete document…"
+                                    }
                                 }
                             }
                         }
@@ -873,15 +910,6 @@ fn EmailView(document_id: String, on_open: EventHandler<String>) -> Element {
     }
 }
 
-/// The purge queue for one tag group: every document listed, each sparable, one
-/// confirm.
-///
-/// ⛔ **This shape is the ruling, not a layout choice** (user, 2026-09-27).
-/// Strict per-item confirmation was refused as unusable at backfill scale, and
-/// approving a *rule* was refused because it grants autonomy over an irreversible
-/// action. What makes this satisfy the autonomy rule is that nothing goes without
-/// the person having seen it listed — so if the list is ever truncated, the
-/// confirm must cover only what was listed, and say so.
 /// Retention rules, and what they have caught.
 ///
 /// ⛔ Proposes only. "Review" opens the same purge preview and confirm every purge
@@ -1112,14 +1140,27 @@ fn RetentionPanel(on_review: EventHandler<(String, String)>) -> Element {
     }
 }
 
+/// The purge queue for one tag group: every document listed, each sparable, one
+/// confirm.
+///
+/// ⛔ **This shape is the ruling, not a layout choice** (user, 2026-09-27).
+/// Strict per-item confirmation was refused as unusable at backfill scale, and
+/// approving a *rule* was refused because it grants autonomy over an irreversible
+/// action. What makes this satisfy the autonomy rule is that nothing goes without
+/// the person having seen it listed — so if the list is ever truncated, the
+/// confirm must cover only what was listed, and say so.
 #[component]
 fn PurgeGroup(
     tag: String,
     // Set for a retention group: only documents archived before this are in it.
     archived_before: Option<String>,
+    /// Set to delete one document by hand; `tag` is then unused.
+    #[props(default)]
+    document_id: Option<String>,
     on_back: EventHandler<()>,
     on_purged: EventHandler<()>,
 ) -> Element {
+    let single = document_id.is_some();
     // Ids the user has unchecked. Absent means going — the default is that the
     // group the user chose to purge is purged.
     let mut spared: Signal<std::collections::HashSet<String>> =
@@ -1131,10 +1172,17 @@ fn PurgeGroup(
 
     let for_load = tag.clone();
     let cutoff_for_load = archived_before.clone();
+    let id_for_load = document_id.clone();
     let preview = use_resource(move || {
         let t = for_load.clone();
         let before = cutoff_for_load.clone();
-        async move { bridge::invoke_preview_document_purge(&t, before.as_deref()).await }
+        let id = id_for_load.clone();
+        async move {
+            match id {
+                Some(id) => bridge::invoke_preview_document_delete(&id).await,
+                None => bridge::invoke_preview_document_purge(&t, before.as_deref()).await,
+            }
+        }
     });
 
     rsx! {
@@ -1155,7 +1203,13 @@ fn PurgeGroup(
                     }
                 },
                 Some(Ok(p)) if p.items.is_empty() => rsx! {
-                    p { class: "text-sm text-obsidian-text", "Nothing is tagged \"{tag}\" any more." }
+                    p { class: "text-sm text-obsidian-text",
+                        if single {
+                            "This document is already gone."
+                        } else {
+                            "Nothing is tagged \"{tag}\" any more."
+                        }
+                    }
                 },
                 Some(Ok(p)) => {
                     let going: Vec<String> = p
@@ -1179,7 +1233,11 @@ fn PurgeGroup(
 
                     rsx! {
                         h1 { class: "text-lg font-semibold text-obsidian-text",
-                            "Purge \"{p.group}\""
+                            if single {
+                                "Delete this document"
+                            } else {
+                                "Purge \"{p.group}\""
+                            }
                         }
                         div { class: "text-xs text-obsidian-text-muted space-y-1",
                             p {

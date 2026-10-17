@@ -471,8 +471,12 @@ pub struct PurgeTicket {
 
 #[derive(Debug, Deserialize)]
 pub struct PurgePreviewRequest {
-    /// The tag forming this group.
-    pub tag: String,
+    /// The tag forming this group. Exactly one of this and `document_id`.
+    #[serde(default)]
+    pub tag: Option<String>,
+    /// One document, deleted by hand from its own view.
+    #[serde(default)]
+    pub document_id: Option<String>,
     /// RFC3339. Narrows the group to documents archived before it, which is how a
     /// retention group is previewed — "tagged X and past X's rule" rather than the
     /// whole tag. Absent means the whole tag.
@@ -508,19 +512,30 @@ async fn purge_preview_handler(
     State(state): State<AppState>,
     Json(body): Json<PurgePreviewRequest>,
 ) -> Result<Json<PurgePreviewResponse>, (StatusCode, String)> {
-    let preview = purge::preview(
-        &state.db,
-        &body.tag,
-        body.archived_before.as_deref(),
-        body.document_ids.as_deref(),
-    )
-    .await
+    let preview = match (&body.tag, &body.document_id) {
+        (Some(tag), None) => {
+            purge::preview(
+                &state.db,
+                tag,
+                body.archived_before.as_deref(),
+                body.document_ids.as_deref(),
+            )
+            .await
+        }
+        (None, Some(id)) => purge::preview_document(&state.db, id).await,
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "name a tag or one document_id, not both and not neither".to_string(),
+            ));
+        }
+    }
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let token = ulid::Ulid::new().to_string();
     let ticket = PurgeTicket {
         token: token.clone(),
-        group: body.tag.clone(),
+        group: preview.group.clone(),
         ids: preview
             .items
             .iter()

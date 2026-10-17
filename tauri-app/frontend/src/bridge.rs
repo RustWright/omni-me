@@ -6004,6 +6004,45 @@ pub async fn invoke_preview_document_purge(
     }
 }
 
+/// What deleting this one document would remove. ⛔ Writes nothing; the confirm
+/// is [`invoke_confirm_document_purge`], as for any group.
+pub async fn invoke_preview_document_delete(document_id: &str) -> Result<PurgePreview, String> {
+    #[cfg(feature = "mock")]
+    {
+        let items: Vec<crate::types::PurgeItem> = mock_documents()
+            .into_iter()
+            .filter(|d| d.document_id == document_id)
+            .map(|d| crate::types::PurgeItem {
+                document_id: d.document_id.clone(),
+                label: d.display_name(),
+                archived_at: d.archived_at.clone(),
+                ingest_source: d.ingest_source.clone(),
+                size: d.size,
+                bytes_shared: false,
+            })
+            .collect();
+        let bytes_reclaimable = items.iter().map(|i| i.size.unwrap_or(0).max(0) as u64).sum();
+        let listed = items.len();
+        Ok(PurgePreview {
+            group: "deleted by hand".into(),
+            items,
+            total: listed,
+            bytes_reclaimable,
+            bytes_shared: 0,
+            token: "mock-token".into(),
+            listed,
+        })
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            document_id: &'a str,
+        }
+        invoke("preview_document_delete", &Args { document_id }).await
+    }
+}
+
 /// ⛔ Irreversible. Only ever called with a set the user has just confirmed, and
 /// the `token` is what lets the server check that.
 pub async fn invoke_confirm_document_purge(

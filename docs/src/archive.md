@@ -501,6 +501,11 @@ group is larger than one preview page, the confirm covers the listed rows only a
 screen says so, because a confirm reaching rows the user never saw is exactly what the
 listing exists to prevent.
 
+A single document can be deleted from its own view, and that is the same operation rather
+than a second one: the preview names one document instead of a tag, and the ticket, the
+subset rule and the report all apply unchanged. It exists because a group had to be formed
+to delete anything, so removing one stray test email meant inventing a tag for it.
+
 Both numbers are reported rather than netted off: bytes that will actually come back, and
 bytes that will not because something else still holds them. "Frees 31 MB" and "frees
 0.3 MB of the 31 MB you selected" are different answers, and on a corpus that shares bytes
