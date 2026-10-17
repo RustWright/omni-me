@@ -4,20 +4,24 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — his turn: the autonomous queue is exhausted (2026-10-17)
-Done and green: B-b older-mail backfill, the recurring-cost comparison, Phase A (v1.2.0 on both
-`main`s). All in `tasks.md` § release, "Stage 4: the go-live sequence" (the Phase B list and the
-entries under it). Ask him, one at a time, in this order (my proposal):
-1. **May the box pull `alpine`?** B4's read-only clone of live runs `snapshot.sh`, which runs in
-   `alpine`, and the box has none (`tasks.md` § the alpine finding). Then B4 itself, on dev.
-2. **The cost decision**: resize to CX33 + R2 as off-box blob backup (mine) vs a separate agent
-   host. Write-up in `tasks.md`; the LLM spend figure is his billing page.
+## ▶ NEXT ACTION — finish B4, then re-measure the cost question, then ask him
+B4 is running on dev with his go (`tasks.md` § release, "B4 REHEARSAL"; decision log
+`~/omni-dev-tools/state/b4-log.md`). Left: the agent's first index sweep on the fixed image
+(watch memory; `~/omni-dev-tools/state/b4/agent-watch2.log`), then pause the three backfills
+so they do not run for days on dev, and write the B4 verdict into `tasks.md`.
+Then, one question at a time (my order):
+1. **Cost**: the server `mem_limit` fix (overlay `09568ef`) cut the dev server from 2.1 GB to
+   288 MB, so re-measure the box with everything running before asking resize vs not.
+2. **B5 and the bank-source ordering** (`tasks.md` § B5 and the B4 entry): live needs mail and
+   enrichment switched on, his credentials sections, and the bank sources must not start at C3.
+3. **Fast-forward `main` again** for `e8cfd89`, `0f40a73` (draft PR #4 runs CI meanwhile).
 ⛔ Live is the pause: every Phase C to F step on live waits for his go, one at a time.
 
 ⛔ **Never `cargo build`/`test` on this box** — `check`/`fmt`/`clippy` only; anything that links
-goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/devsrv.py`.
-Overlay workflows: dispatch from the overlay branch that pairs with the public ref, and before any
-overlay build run overlay `ci.yml` with `-f public_ref=<full public SHA>` (`project-overlay-ci-blind-spot`).
+goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/devsrv.py`,
+`set_config.py`, `set_retention_timers.py`. Overlay workflows: dispatch from the overlay branch that
+pairs with the public ref, and before any overlay build run overlay `ci.yml` with
+`-f public_ref=<full public SHA>` (`project-overlay-ci-blind-spot`).
 
 ## ⛔ Waiting on him
 - **September statements** for the paisa importers (go-live E2). Nothing in Phase E starts without them.
