@@ -6021,7 +6021,10 @@ pub async fn invoke_preview_document_delete(document_id: &str) -> Result<PurgePr
                 bytes_shared: false,
             })
             .collect();
-        let bytes_reclaimable = items.iter().map(|i| i.size.unwrap_or(0).max(0) as u64).sum();
+        let bytes_reclaimable = items
+            .iter()
+            .map(|i| i.size.unwrap_or(0).max(0) as u64)
+            .sum();
         let listed = items.len();
         Ok(PurgePreview {
             group: "deleted by hand".into(),
