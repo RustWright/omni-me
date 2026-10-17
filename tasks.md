@@ -1127,6 +1127,40 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   ⏳ His, before F1: create `credentials-agent.toml` (credential files are his to copy).
   ⚠️ B4: take the clone BEFORE Phase C, while live has no marker; a later clone carries
   `production` and refuses to boot as dev without `OMNI_INSTANCE_RESTAMP=1`.
+- ✅ B-b BUILT 2026-10-17 (`4cf8aac`, overlay `9156d6b`). `auto_import::backfill`: per mailbox a
+  `<account>-backfill` source on its own cursor, idle until `archive.backfill_before` (a date) is
+  set; `archive.backfill_batch` per 10 min (default 20, my number). No handlers, so no drafts. The
+  reader seat names the category before archiving; a category whose timer has run out (from the
+  email's date) is left in Gmail. Skip-list senders skipped; bytes any document ever held
+  (purged too) skipped. It refuses to run with no category timed; a screen outage stops the tick
+  rather than wave mail through. 6 unit tests. Design: `docs/src/archive.md` § Older mail.
+  My calls, his to change: reader seat for the screen (its category choice scored 93%), not
+  triage; an off-list answer keeps. ⚠️ Go-live: his 2026-10-12 timers were set on dev only, and
+  live's build predates the categories, so set them on live before turning this on; set the date to the same one as E4's
+  cursor rewind, so the two meet with no gap. Not yet run against a real mailbox (dev, B4).
+- 📊 Recurring-cost comparison, 2026-10-17 (owed to him; prices excl. VAT, Germany/Finland).
+  Measured on the box: 3.8 GB, 951 MB available with dev server 942 MB + dev agent 933 MB + live
+  470 MB; live agent sweep peak ~1.8 GB. Disk 39% (22 GB free). Blob bytes: live 0 (none yet),
+  dev 93 MB for ~870 documents; the corpus and backfilled mail will add little next to 22 GB.
+  Hetzner, from its price-adjustment page: from 15 June 2026 new orders AND rescales pay the new
+  rates, so resizing leaves our legacy CX22 rate. CX23 (4 GB) €5.49, CX33 (8 GB) €8.49, CAX21
+  (ARM, 8 GB) €10.49, IPv4 €0.50 per server (third-party figure). Our current CX22 rate: on his
+  invoice, not checked by me.
+  (1) Resize to CX33: ~€9/mo total, one box, deploy pipeline unchanged; ~5.5 GB peak with
+  everything running, so dev keeps running. (2) Separate agent host, a CX23: ~€6/mo extra on top
+  of today, plus a second box to patch, a second deploy target in CI, and the agent's calls to
+  the server crossing a network (Hetzner private network is free). One gain: the LLM keys live
+  apart from the bank secrets. (3) Object storage: no capacity case (93 MB). Its real value is a
+  second copy of blobs, which today have one. Cheapest form: an off-box backup copy, not moving
+  the live store (`blob.rs` is filesystem-only; moving it is a code change). R2 is free under
+  10 GB (Cloudflare's page); Hetzner Object Storage is a flat monthly base with 1 TB included,
+  quoted as €4.99 and as €6.49 by different sources, unverified (Hetzner's page renders prices
+  in script).
+  ⚠️ Gap: the LLM spend itself. No monthly figure exists; the provider reports `estimated_cost`
+  per call and we do not read it (`MODEL_BENCH.md` R4b). His provider billing page settles it.
+  Totals with today's rate as C: (1) ~€9/mo; (2) C + ~€6/mo. (1) is cheaper whenever C is above
+  €3, and no CX22 rate we know of was below €3.79. My recommendation: (1) resize, plus R2 as the
+  off-box blob backup. Beat (2): costs more, and adds a second machine to keep running.
 
 **Stage 1, the list (my order).** Decisions first, while he is present to answer them; then code;
 then spends, so the phone test runs on the chosen models.
