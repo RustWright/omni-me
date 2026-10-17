@@ -1091,7 +1091,10 @@ Dev must keep running for parallel development after go-live. ⚠️ Disk is not
 backup + wipe snapshot + corpus size against free space before C1.
 📊 Disk, measured 2026-10-17: of 29 GB used, Docker images are 17.0 GB with **15.7 GB reclaimable**
 (86 images, 3 in use); all volumes 2.0 GB; `/home/deploy` 4.0 GB; `/var/omni-updates` 372 MB. The
-81% is old images, not documents. Nothing prunes them after a deploy. His question 2026-10-17: move
+81% is old images, not documents. ✅ FIXED 2026-10-17 (his go): pruned on the box (16.05 GB freed,
+81% → 39%, 22 GB free, all three containers up), and overlay `ae5fc78` adds `deploy/prune-images.sh`
+after a successful live deploy, keeping the new and previous image. Smoke-run: kept 3, removed 0;
+its removal branch is unexercised until the next deploy leaves something to remove. His question 2026-10-17: move
 blobs to object storage (R2 / S3 / Hetzner Object Storage) for the on-demand archive. Goes into the
 cost comparison above; its real gain is durability (blobs have one copy), not capacity.
 🔴 RULED 2026-10-17 (his pick): old mail IS archived on live, as a slow-tick backfill, so omni-me
