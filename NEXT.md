@@ -4,17 +4,17 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — work the autonomous queue, then switch to his tasks
-His instruction 2026-10-17: do everything that needs no input from him first; switch to his tasks
-only when the queue is exhausted. Rulings: `tasks.md` § release, "Stage 4: the go-live sequence".
-⛔ Do not re-ask them. B-a and B1–B3 are built and green. The queue, in this order (my proposal):
-1. **B-b old-mail backfill**: design, then build with the per-category timers as config. Proposed
-   values go in as defaults that he confirms later; never block the build on them.
-2. **The recurring-cost comparison** owed to him (larger box vs separate agent host vs object
-   storage, beside the LLM spend). Measure and source prices; write it up for his decision.
-3. **Phase A**: merge both dev branches to `main`, stamp the version, overlay CI on the SHA.
-4. **B4 rehearsal** on a fresh clone of live (read-only snapshot, before Phase C), Phases C–F on
-   dev except E2, which needs his statements.
+## ▶ NEXT ACTION — his turn: the autonomous queue is exhausted (2026-10-17)
+Done and green: B-b older-mail backfill, the recurring-cost comparison, the v1.2.0 stamp. All in
+`tasks.md` § release, "Stage 4: the go-live sequence" (Phase B list and the entries under it).
+Ask him, one at a time, in this order (my proposal):
+1. **Merge to `main`.** The permission check refused my push. Public is a fast-forward to
+   `feed4fb`; overlay merge is ready on local branch `merge-main`, still needing
+   `.github/public-ref` = `main`. Then overlay `ci.yml` with `-f public_ref=<main SHA>`.
+2. **May the box pull `alpine`?** B4's read-only clone of live runs `snapshot.sh`, which runs in
+   `alpine`, and the box has none (`tasks.md` § the alpine finding). Then B4 itself, on dev.
+3. **The cost decision**: resize to CX33 + R2 as off-box blob backup (mine) vs a separate agent
+   host. Write-up in `tasks.md`; the LLM spend figure is his billing page.
 ⛔ Live is the pause: every Phase C to F step on live waits for his go, one at a time.
 
 ⛔ **Never `cargo build`/`test` on this box** — `check`/`fmt`/`clippy` only; anything that links
@@ -25,6 +25,7 @@ with `-f public_ref=<full public SHA>` (`project-overlay-ci-blind-spot`).
 ## ⛔ Waiting on him
 - **September statements** for the paisa importers (go-live E2). Nothing in Phase E starts without them.
 - **`/etc/omni-me/credentials-agent.toml`** on the box, `[llm]` only (+ `auth_token` if set), before F1.
+- **Retention timers on live** before the backfill is switched on (his 2026-10-12 values, set on dev only).
 - **GitHub Support purge** of the pre-S-W1 commits (optional, his ruling): they are still served
   by SHA. `tasks.md` § release item 4 has what to name.
 - **F3's open half**: whether multi-page reading should be told pages can repeat.

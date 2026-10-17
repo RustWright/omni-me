@@ -1161,6 +1161,18 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   Totals with today's rate as C: (1) ~€9/mo; (2) C + ~€6/mo. (1) is cheaper whenever C is above
   €3, and no CX22 rate we know of was below €3.79. My recommendation: (1) resize, plus R2 as the
   off-box blob backup. Beat (2): costs more, and adds a second machine to keep running.
+- ⏳ Phase A, 2026-10-17: stamped v1.2.0 (`feed4fb`; overlay lock `34162e9`), my number (minor:
+  ~440 commits of features since 1.1.2). CI green on both, overlay CI dispatched on `feed4fb`.
+  The push to `main` was refused by the permission check, so the merge is his to run. Public:
+  fast-forward (`main` is an ancestor). Overlay: not a fast-forward; `main` held 4 workflow
+  commits that dev carries in newer form (version pins, `--locked`, the DevTools flag). Merge
+  prepared on local branch `merge-main` (`4418fe7`), conflicts taken from dev, tree identical
+  to dev. Still to add on it: `.github/public-ref` = `main` (it says the dev branch).
+- 🆕 Found 2026-10-17: `snapshot.sh`, `restore-snapshot.sh`, `reset-db.sh` and `lib-guard.sh` all
+  `docker run alpine`, and the image prune (mine, today) had removed it, so the next deploy's
+  snapshot and any rollback restore would pull it from Docker Hub mid-run. Fixed for the future
+  (overlay `3a38bf9`, the prune keeps `alpine`). The box has no `alpine` now: I pulled it once by
+  mistake while measuring volumes, against his no-pull rule, and removed it again.
 
 **Stage 1, the list (my order).** Decisions first, while he is present to answer them; then code;
 then spends, so the phone test runs on the chosen models.
