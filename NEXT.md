@@ -5,22 +5,19 @@ findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
 ## ▶ NEXT ACTION — his turn: the autonomous queue is exhausted (2026-10-17)
-Done and green: B-b older-mail backfill, the recurring-cost comparison, the v1.2.0 stamp. All in
-`tasks.md` § release, "Stage 4: the go-live sequence" (Phase B list and the entries under it).
-Ask him, one at a time, in this order (my proposal):
-1. **Merge to `main`.** The permission check refused my push. Public is a fast-forward to
-   `feed4fb`; overlay merge is ready on local branch `merge-main`, still needing
-   `.github/public-ref` = `main`. Then overlay `ci.yml` with `-f public_ref=<main SHA>`.
-2. **May the box pull `alpine`?** B4's read-only clone of live runs `snapshot.sh`, which runs in
+Done and green: B-b older-mail backfill, the recurring-cost comparison, Phase A (v1.2.0 on both
+`main`s). All in `tasks.md` § release, "Stage 4: the go-live sequence" (the Phase B list and the
+entries under it). Ask him, one at a time, in this order (my proposal):
+1. **May the box pull `alpine`?** B4's read-only clone of live runs `snapshot.sh`, which runs in
    `alpine`, and the box has none (`tasks.md` § the alpine finding). Then B4 itself, on dev.
-3. **The cost decision**: resize to CX33 + R2 as off-box blob backup (mine) vs a separate agent
+2. **The cost decision**: resize to CX33 + R2 as off-box blob backup (mine) vs a separate agent
    host. Write-up in `tasks.md`; the LLM spend figure is his billing page.
 ⛔ Live is the pause: every Phase C to F step on live waits for his go, one at a time.
 
 ⛔ **Never `cargo build`/`test` on this box** — `check`/`fmt`/`clippy` only; anything that links
 goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/devsrv.py`.
-Dev workflows: `--ref dev/untested-overlay`. Before any overlay build, dispatch overlay `ci.yml`
-with `-f public_ref=<full public SHA>` (`project-overlay-ci-blind-spot`).
+Overlay workflows: dispatch from the overlay branch that pairs with the public ref, and before any
+overlay build run overlay `ci.yml` with `-f public_ref=<full public SHA>` (`project-overlay-ci-blind-spot`).
 
 ## ⛔ Waiting on him
 - **September statements** for the paisa importers (go-live E2). Nothing in Phase E starts without them.

@@ -1161,7 +1161,9 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   Totals with today's rate as C: (1) ~€9/mo; (2) C + ~€6/mo. (1) is cheaper whenever C is above
   €3, and no CX22 rate we know of was below €3.79. My recommendation: (1) resize, plus R2 as the
   off-box blob backup. Beat (2): costs more, and adds a second machine to keep running.
-- ⏳ Phase A, 2026-10-17: stamped v1.2.0 (`feed4fb`; overlay lock `34162e9`), my number (minor:
+- ✅ Phase A DONE 2026-10-17: he pushed both `main`s (public `75508c9`, overlay `7e882d8`, with
+  `public-ref` = `main`); overlay CI from `main` on public `75508c9` green (run `39059580313`).
+  History: stamped v1.2.0 (`feed4fb`; overlay lock `34162e9`), my number (minor:
   ~440 commits of features since 1.1.2). CI green on both, overlay CI dispatched on `feed4fb`.
   The push to `main` was refused by the permission check, so the merge is his to run. Public:
   fast-forward (`main` is an ancestor). Overlay: not a fast-forward; `main` held 4 workflow
