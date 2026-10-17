@@ -1351,6 +1351,17 @@ pub async fn archived_document_with_sha(
     }))
 }
 
+/// Whether any document, purged ones included, ever held exactly these bytes.
+/// Purged ones count so that re-reading old mail cannot bring back what he deleted.
+pub async fn ever_archived_sha(db: &Database, sha256: &str) -> Result<bool, DbError> {
+    let mut resp = db
+        .query("SELECT VALUE document_id FROM documents WHERE sha256 = $h LIMIT 1")
+        .bind(("h", sha256.to_string()))
+        .await?;
+    let rows: Vec<String> = resp.take(0)?;
+    Ok(!rows.is_empty())
+}
+
 /// [`blob_reference_counts`] for one blob.
 #[cfg(test)]
 pub async fn blob_reference_count(db: &Database, sha256: &str) -> Result<usize, DbError> {

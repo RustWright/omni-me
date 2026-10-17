@@ -64,7 +64,22 @@ impl ImapFetcher for AsyncImapFetcher {
     }
 
     async fn fetch_new(&self, cursor: &FetchCursor) -> Result<FetchOutcome, ImportError> {
-        fetch(&self.creds, cursor).await
+        fetch(&self.creds, cursor, None, MAX_UIDS_PER_TICK).await
+    }
+
+    async fn fetch_window(
+        &self,
+        cursor: &FetchCursor,
+        upto: u32,
+        limit: usize,
+    ) -> Result<FetchOutcome, ImportError> {
+        fetch(
+            &self.creds,
+            cursor,
+            Some(upto),
+            limit.min(MAX_UIDS_PER_TICK),
+        )
+        .await
     }
 
     async fn first_uid_since(&self, since: NaiveDate) -> Result<DateAnchor, ImportError> {
@@ -107,6 +122,13 @@ fn uid_range(cursor: &FetchCursor) -> String {
         Some(uid) => format!("{}:*", uid + 1),
         None => "*".to_string(),
     }
+}
+
+/// The range a backfill window asks for, or `None` once it is drained. IMAP reads
+/// `9:5` as `5:9`, so a start past the end must stop here rather than be sent.
+fn window_range(cursor: &FetchCursor, upto: u32) -> Option<String> {
+    let start = cursor.last_seen_uid.unwrap_or(0) + 1;
+    (start <= upto).then(|| format!("{start}:{upto}"))
 }
 
 /// A UID means nothing without the `UIDVALIDITY` it was issued under, so a change
@@ -185,11 +207,26 @@ async fn anchor_since(
     })
 }
 
-async fn fetch(creds: &ImapCredentials, cursor: &FetchCursor) -> Result<FetchOutcome, ImportError> {
+/// `upto` set reads a backfill window (see [`ImapFetcher::fetch_window`]); unset,
+/// everything newer than the cursor.
+async fn fetch(
+    creds: &ImapCredentials,
+    cursor: &FetchCursor,
+    upto: Option<u32>,
+    limit: usize,
+) -> Result<FetchOutcome, ImportError> {
     let (mut session, mailbox) = open(creds).await?;
     let uid_validity = mailbox.uid_validity;
 
     let renumbered = mailbox_was_renumbered(cursor.uid_validity, uid_validity);
+    if renumbered && upto.is_some() {
+        let _ = session.logout().await;
+        return Err(ImportError::Upstream(format!(
+            "{}: the mailbox was renumbered (UIDVALIDITY {:?} -> {:?}), so the backfill's \
+             position is void; stopped rather than archiving the mailbox twice",
+            creds.watched_label, cursor.uid_validity, uid_validity
+        )));
+    }
     if renumbered {
         tracing::error!(
             account = %creds.account,
@@ -221,7 +258,20 @@ async fn fetch(creds: &ImapCredentials, cursor: &FetchCursor) -> Result<FetchOut
     // every later tick re-requests the same empty window forever. Enumerating first
     // keeps the range open — only the *body* fetch is bounded — so the cursor always
     // advances and a backlog simply drains over several ticks.
-    let range = uid_range(cursor);
+    let range = match upto {
+        None => uid_range(cursor),
+        Some(end) => match window_range(cursor, end) {
+            Some(range) => range,
+            None => {
+                let _ = session.logout().await;
+                return Ok(FetchOutcome {
+                    messages: Vec::new(),
+                    highest_uid: cursor.last_seen_uid,
+                    uid_validity,
+                });
+            }
+        },
+    };
 
     // ⚠️ Each `uid_fetch` stream borrows the session mutably and must be driven to
     // completion before the next command: a stream dropped early leaves an unread
@@ -252,7 +302,7 @@ async fn fetch(creds: &ImapCredentials, cursor: &FetchCursor) -> Result<FetchOut
         pending.retain(|uid| *uid > last);
     }
     let total_pending = pending.len();
-    pending.truncate(MAX_UIDS_PER_TICK);
+    pending.truncate(limit);
 
     if pending.is_empty() {
         // Every UID below the cursor while the validity held. Renumbering used to
@@ -377,7 +427,6 @@ fn parse_headers(body: &[u8]) -> (String, String, chrono::DateTime<chrono::Utc>)
 mod tests {
     use super::*;
 
-    /// The case the guard exists for: the server issued a new numbering, so the
     fn at(last_seen_uid: Option<u32>) -> FetchCursor {
         FetchCursor {
             last_seen_uid,
@@ -385,10 +434,6 @@ mod tests {
         }
     }
 
-    /// ⛔ The invariant the cursor-reset route depends on, and it is not obvious:
-    /// a rewind stores `Some(0)` precisely because deleting the row would mean
-    /// `None`, and `None` fetches only the newest message. Storing zero is what
-    /// asks for the whole mailbox.
     /// RFC 3501's grammar allows only `d-Mon-yyyy`; an ISO date is outside it.
     #[test]
     fn a_date_search_uses_the_imap_date_form() {
@@ -397,6 +442,10 @@ mod tests {
         assert_eq!(search_since(d(2026, 9, 1)), "SINCE 1-Sep-2026");
     }
 
+    /// ⛔ The invariant the cursor-reset route depends on, and it is not obvious:
+    /// a rewind stores `Some(0)` precisely because deleting the row would mean
+    /// `None`, and `None` fetches only the newest message. Storing zero is what
+    /// asks for the whole mailbox.
     #[test]
     fn a_rewound_cursor_asks_for_every_message_and_an_absent_one_does_not() {
         assert_eq!(uid_range(&at(Some(0))), "1:*", "a rewind must ask for all");
@@ -408,6 +457,23 @@ mod tests {
         assert_eq!(uid_range(&at(Some(41))), "42:*", "resume is exclusive");
     }
 
+    #[test]
+    fn a_backfill_window_stops_at_its_end_and_never_reverses() {
+        assert_eq!(window_range(&at(Some(0)), 500).as_deref(), Some("1:500"));
+        assert_eq!(window_range(&at(None), 500).as_deref(), Some("1:500"));
+        assert_eq!(
+            window_range(&at(Some(499)), 500).as_deref(),
+            Some("500:500")
+        );
+        assert_eq!(window_range(&at(Some(500)), 500), None, "drained");
+        assert_eq!(
+            window_range(&at(Some(0)), 0),
+            None,
+            "nothing before the date"
+        );
+    }
+
+    /// The case the guard exists for: the server issued a new numbering, so the
     /// stored UID is meaningless and keeping it stalls the mailbox forever.
     #[test]
     fn a_changed_validity_voids_the_cursor() {

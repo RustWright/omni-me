@@ -18,6 +18,7 @@ use crate::events::{AutoImportBatchProposedPayload, DraftTransaction, EventType,
 use chrono::Utc;
 use serde_json::Value;
 
+pub mod backfill;
 pub mod config;
 pub mod csv;
 pub mod duplicates;

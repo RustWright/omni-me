@@ -350,7 +350,10 @@ fn group_meta(group: ConfigGroup) -> (&'static str, Option<&'static str>) {
             Some(
                 "Mail from these senders is never archived or imported: a domain such \
                  as linkedin.com also covers its subdomains. Separate them with commas. \
-                 Applies from the next mail check.",
+                 Older mail, received before the date set here (2026-09-30, say), is \
+                 archived a few messages at a time and never imported as transactions; \
+                 anything its retention timer would already purge is left out. Empty \
+                 means off. Applies from the next mail check.",
             ),
         ),
         // Not "Assistant retrieval" any more: the turn budget governs the loop,

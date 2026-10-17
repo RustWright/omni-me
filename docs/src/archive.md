@@ -397,6 +397,35 @@ to go and look at.
 recognises yields two. Deriving the count from the event list instead would make the check written
 to catch a miscount produce one, and produce it only on the runs that went well.
 
+## Older mail
+
+Mail polling starts where the official import stops, so everything older would otherwise stay
+in Gmail. Setting `archive.backfill_before` to a date archives each mailbox's mail received
+before it, oldest first, `archive.backfill_batch` messages every ten minutes, on a second
+cursor beside the forward one (`<account>#backfill` in `imap_cursors`). The source is named
+`<account>-backfill`, so it can be paused on its own.
+
+Three rules decide what is kept:
+
+- **No handler sees it.** Mail older than the import's statements is already accounted for in
+  the ledger, so the backfill archives and never drafts. Nothing that reads the archive later
+  drafts from it either; a later pass that did would need the same cutoff.
+- **Retention is applied at intake, not afterwards.** The reader seat names the message's
+  category from the closed list, and a message whose category timer has already run out,
+  counted from the email's own date, is left in Gmail rather than archived and queued for
+  purge on the same day. A promotion from 2024 never enters; a receipt always does. The
+  backfill refuses to run until at least one category has a timer, since without one it would
+  keep everything. An answer off the list keeps the message. A failed call stops the tick,
+  because during an outage keeping is no longer the safe failure: it would let every message
+  through unscreened.
+- **Nothing comes in twice, or back.** A message whose exact bytes any document ever held is
+  skipped, purged ones included, so re-reading old mail cannot restore what was deleted, and
+  mail the forward poller already archived is not archived again.
+
+The window ends just below the first message on the date, which is where a date rewind of the
+forward cursor starts too: set both from the same date, and they meet with no gap or overlap.
+A renumbered mailbox voids the backfill's position, and it stops instead of starting over.
+
 ## Purging, and why a deletion has to be an append
 
 A purge is the one irreversible thing the archive does, and the only place this

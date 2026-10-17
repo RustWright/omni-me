@@ -38,6 +38,8 @@ pub enum ConfigKey {
     AssistantChatArchiveDays,
     AssistantChatDeleteDays,
     ArchiveSkipSenders,
+    ArchiveBackfillBefore,
+    ArchiveBackfillBatch,
 }
 
 /// Social notification senders: not records, and half the archive before this.
@@ -51,6 +53,12 @@ pub fn sender_domains(value: &str) -> impl Iterator<Item = String> + '_ {
         .split(|c: char| c == ',' || c.is_whitespace())
         .map(|d| d.trim().trim_start_matches('@').to_lowercase())
         .filter(|d| !d.is_empty())
+}
+
+/// The date in an `archive.backfill_before` value, or `None` when it is empty
+/// (off) or not a `YYYY-MM-DD` date.
+pub fn backfill_before(value: &str) -> Option<chrono::NaiveDate> {
+    chrono::NaiveDate::parse_from_str(value.trim(), "%Y-%m-%d").ok()
 }
 
 /// Display / persistence order, and the order the settings screen renders.
@@ -75,6 +83,8 @@ pub const ALL_KEYS: &[ConfigKey] = &[
     ConfigKey::AssistantChatArchiveDays,
     ConfigKey::AssistantChatDeleteDays,
     ConfigKey::ArchiveSkipSenders,
+    ConfigKey::ArchiveBackfillBefore,
+    ConfigKey::ArchiveBackfillBatch,
 ];
 
 /// The theme values `appearance.theme` accepts. `System` follows
@@ -143,6 +153,8 @@ impl fmt::Display for ConfigKey {
             ConfigKey::AssistantChatArchiveDays => "assistant.chat_archive_after_days",
             ConfigKey::AssistantChatDeleteDays => "assistant.chat_delete_after_days",
             ConfigKey::ArchiveSkipSenders => "archive.skip_senders",
+            ConfigKey::ArchiveBackfillBefore => "archive.backfill_before",
+            ConfigKey::ArchiveBackfillBatch => "archive.backfill_batch",
         };
         write!(f, "{s}")
     }
@@ -173,6 +185,8 @@ impl FromStr for ConfigKey {
             "assistant.chat_archive_after_days" => Ok(ConfigKey::AssistantChatArchiveDays),
             "assistant.chat_delete_after_days" => Ok(ConfigKey::AssistantChatDeleteDays),
             "archive.skip_senders" => Ok(ConfigKey::ArchiveSkipSenders),
+            "archive.backfill_before" => Ok(ConfigKey::ArchiveBackfillBefore),
+            "archive.backfill_batch" => Ok(ConfigKey::ArchiveBackfillBatch),
             other => Err(format!("unknown config key: {other}")),
         }
     }
@@ -355,6 +369,11 @@ impl ConfigKey {
             // His ruling, 2026-10-11: social notifications are not records and
             // were half the archive. A sender's domain or any subdomain of it.
             ConfigKey::ArchiveSkipSenders => ConfigValue::Text(DEFAULT_SKIP_SENDERS.to_string()),
+            // Empty is off. His ruling 2026-10-17: old mail is archived as a slow
+            // backfill, set to where the official import stops.
+            ConfigKey::ArchiveBackfillBefore => ConfigValue::Text(String::new()),
+            // My proposal: 20 every ten minutes, about 2,900 a day.
+            ConfigKey::ArchiveBackfillBatch => ConfigValue::Int(20),
         }
     }
 
@@ -375,11 +394,13 @@ impl ConfigKey {
             | ConfigKey::AssistantRerankModel
             | ConfigKey::AssistantCheckInPrompt
             | ConfigKey::AssistantCheckInTimezone
-            | ConfigKey::ArchiveSkipSenders => ValueKind::Text,
+            | ConfigKey::ArchiveSkipSenders
+            | ConfigKey::ArchiveBackfillBefore => ValueKind::Text,
             ConfigKey::AssistantCheckInHour
             | ConfigKey::AssistantMaxTurns
             | ConfigKey::AssistantChatArchiveDays
-            | ConfigKey::AssistantChatDeleteDays => ValueKind::Int,
+            | ConfigKey::AssistantChatDeleteDays
+            | ConfigKey::ArchiveBackfillBatch => ValueKind::Int,
         }
     }
 
@@ -401,7 +422,9 @@ impl ConfigKey {
             | ConfigKey::AssistantChatArchiveDays
             | ConfigKey::AssistantChatDeleteDays
             // Re-read by the importer on every pull.
-            | ConfigKey::ArchiveSkipSenders => true,
+            | ConfigKey::ArchiveSkipSenders
+            | ConfigKey::ArchiveBackfillBefore
+            | ConfigKey::ArchiveBackfillBatch => true,
             ConfigKey::FeatureJournal
             | ConfigKey::FeatureNotes
             | ConfigKey::FeatureRoutines
@@ -440,6 +463,8 @@ impl ConfigKey {
             ConfigKey::AssistantChatArchiveDays => "Archive chats untouched for (days)",
             ConfigKey::AssistantChatDeleteDays => "Delete archived chats after (days)",
             ConfigKey::ArchiveSkipSenders => "Never archive mail from",
+            ConfigKey::ArchiveBackfillBefore => "Archive older mail, received before",
+            ConfigKey::ArchiveBackfillBatch => "Older mail read per ten minutes",
         }
     }
 
@@ -472,7 +497,9 @@ impl ConfigKey {
             | ConfigKey::AssistantMaxTurns
             | ConfigKey::AssistantChatArchiveDays
             | ConfigKey::AssistantChatDeleteDays
-            | ConfigKey::ArchiveSkipSenders => None,
+            | ConfigKey::ArchiveSkipSenders
+            | ConfigKey::ArchiveBackfillBefore
+            | ConfigKey::ArchiveBackfillBatch => None,
         }
     }
 
@@ -501,7 +528,9 @@ impl ConfigKey {
             | ConfigKey::AssistantMaxTurns
             | ConfigKey::AssistantChatArchiveDays
             | ConfigKey::AssistantChatDeleteDays => ConfigGroup::Assistant,
-            ConfigKey::ArchiveSkipSenders => ConfigGroup::Archive,
+            ConfigKey::ArchiveSkipSenders
+            | ConfigKey::ArchiveBackfillBefore
+            | ConfigKey::ArchiveBackfillBatch => ConfigGroup::Archive,
         }
     }
 
@@ -543,6 +572,8 @@ impl ConfigKey {
             ConfigKey::AssistantMaxTurns => Some((3, 50)),
             ConfigKey::AssistantChatArchiveDays => Some((1, 365)),
             ConfigKey::AssistantChatDeleteDays => Some((1, 3650)),
+            // The fetcher's own per-tick ceiling is 200.
+            ConfigKey::ArchiveBackfillBatch => Some((1, 200)),
             _ => None,
         }
     }
@@ -575,6 +606,12 @@ impl ConfigKey {
             let t = value.as_text().unwrap_or_default();
             if let Some(bad) = sender_domains(t).find(|d| !d.contains('.') || d.contains('@')) {
                 return Err(format!("{self}: {bad:?} is not a domain like example.com"));
+            }
+        }
+        if self == ConfigKey::ArchiveBackfillBefore {
+            let t = value.as_text().unwrap_or_default();
+            if !t.trim().is_empty() && backfill_before(t).is_none() {
+                return Err(format!("{self} must be a date like 2026-09-30, got {t:?}"));
             }
         }
         if self == ConfigKey::AssistantCheckInTimezone {
@@ -796,11 +833,13 @@ mod tests {
                 | ConfigKey::AssistantMaxTurns
                 | ConfigKey::AssistantChatArchiveDays
                 | ConfigKey::AssistantChatDeleteDays
-                | ConfigKey::ArchiveSkipSenders => counted += 1,
+                | ConfigKey::ArchiveSkipSenders
+                | ConfigKey::ArchiveBackfillBefore
+                | ConfigKey::ArchiveBackfillBatch => counted += 1,
             }
         }
         assert_eq!(
-            counted, 20,
+            counted, 22,
             "ALL_KEYS does not list every ConfigKey variant"
         );
 

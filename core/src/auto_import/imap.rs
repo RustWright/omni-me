@@ -94,6 +94,16 @@ pub trait ImapFetcher: Send + Sync {
     /// belongs to a numbering that no longer exists.
     async fn fetch_new(&self, cursor: &FetchCursor) -> Result<FetchOutcome, ImportError>;
 
+    /// At most `limit` messages with `cursor < UID <= upto`, oldest first: the window
+    /// an archive backfill drains. A changed `UIDVALIDITY` is an error here, never a
+    /// restart, since restarting a backfill would archive the mailbox a second time.
+    async fn fetch_window(
+        &self,
+        cursor: &FetchCursor,
+        upto: u32,
+        limit: usize,
+    ) -> Result<FetchOutcome, ImportError>;
+
     /// Where `since` falls in this mailbox's numbering, so a rewind can start at a
     /// date instead of at the first message ever received.
     async fn first_uid_since(&self, since: NaiveDate) -> Result<DateAnchor, ImportError>;
@@ -528,6 +538,15 @@ pub mod mock {
                 .unwrap()
                 .pop_front()
                 .unwrap_or_default())
+        }
+        /// Same script as `fetch_new`, so a test pushes the window it expects.
+        async fn fetch_window(
+            &self,
+            cursor: &FetchCursor,
+            _upto: u32,
+            _limit: usize,
+        ) -> Result<FetchOutcome, ImportError> {
+            self.fetch_new(cursor).await
         }
         async fn first_uid_since(&self, _since: NaiveDate) -> Result<DateAnchor, ImportError> {
             Ok(*self.anchor.lock().unwrap())
