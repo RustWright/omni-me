@@ -1042,6 +1042,71 @@ Four stages, in this order. ⛔ Each stage finishes before the next starts.
    problem"), then summarise it into a portable version for the ledger expert agent. Live has no
    conventions note today; without one, grounding falls back to every account in the ledger.
 
+### ▶ Stage 4: the go-live sequence. DRAFT 2026-10-17, approved as a draft, not yet ruled step by step
+⛔ Every step marked (live) waits for his go, one at a time. Live as last recorded (§ Stage 4 dev sync
+server, not re-checked): `sha-9a0b1dd`, SurrealDB 3.0.4, no `instance` on `/health`, sources and tab
+off, no agent, `/opt/omni-ws` on ws-api 0.35.0.
+- **A. Freeze and merge.** A1 public `dev/role-split-model-seats` and overlay `dev/untested-overlay`
+  → `main`. A2 version stamp, 4 files + the overlay lock (`project-public-stamp-and-private-lock-move-
+  together`). A3 overlay `ci.yml` on the full public `main` SHA.
+- **B. Build what live lacks (dev/CI only).** B1 an agent service in `docker-compose.prod.yml` and
+  `deploy.yml` (neither knows the agent), modelled on dev's `omni-me-agent-dev`. B2 declare
+  `OMNI_INSTANCE=production` through the deploy: the wipe and cursor-reset routes refuse an
+  undeclared server, and live is one. B3 the health gate waits 30 × 5 s; if the first 3.3 boot runs
+  past it, `remote-deploy.sh` rolls back to 3.0.4 over migrated data, then restores the snapshot.
+  Raise `OMNI_HEALTH_RETRIES` for this deploy if `deploy.yml` passes it. B4 rehearse C to F on dev
+  from a fresh clone of live (open decision 4).
+- **C. Server (live).** C1 gate 1: `snapshot.sh`, verified by size and entries, copied off the box;
+  the only rollback once 3.3 migrates. C2 pause every mail source. C3 deploy; `/health` must say
+  `production`.
+- **D. App (live).** `app-release.yml` → `/updates`; phone and desktop updated and syncing. Tab off.
+- **E. Wipe and the official import (live).** E1 wipe `[Finances, AutoImport]`, preview → confirm,
+  against a `/sync/pull` tally; both devices pull the `DataWiped` record. E2 the historical ledger,
+  EXTENDED with his September statements first, then imported via `parse_journal` from a throwaway
+  device (dev: 10,582, to 2026-08-28). E3 `archive-upload.py --instance production` (1,041 docs),
+  🔴 RULED in 2026-10-17 (his pick, my recommendation), right after E2, so the archive leg ships
+  with content. Beat: uploading after go-live. E4 mail cursors set to where the import stops, so auto-import carries
+  only what comes after it.
+  🔴 RULED 2026-10-17 (his words): "at the time of import I don't want to be worrying about any
+  transactions earlier than the ones that were imported, so I will provide the september
+  statements, they can be used to extend the historical ledger we already have and that can be
+  imported, after that the auto import sources can handle any additional transactions, beyond
+  where the import stopped". Beat: rewinding mail to 2026-08-28 and reviewing the receipts.
+  🔴 RULED 2026-10-17 (his pick, my recommendation): September goes in through paisa's importers
+  (`regen_all.sh` in `~/paisa-ledger-restore/extracted/paisa-ledger/`, statements into each account
+  folder), classified per `CONVENTIONS.md`. Beat: omni-me's importer (chequing CSV only, all
+  `Unmatched`). ⏳ He provides the statements. Untested since the restore: may need Python packages.
+- **F. Agent, conventions, tab (live).** F1 agent up; its first start is the full index sweep, so
+  watch memory. F2 his conventions note, then the portable summary. F3 ws-api 0.39.3 into
+  `/opt/omni-ws`, bank sources on, then he turns the tab on.
+- **G. After.** Support purge (his, optional); dev junk (`…9G0RMD`, `zz-*` rules). R4-6's retention
+  backfill is not ordered here.
+📊 Box, measured 2026-10-17: 3.8 GB, no swap, 966 MB available (dev agent 887 MB, dev server
+940 MB, live server 469 MB uncapped); disk 81%, 6.9 GB free. The live agent's sweep peaked ~1.8 GB.
+🔴 RULED 2026-10-17 (his pick): dev is stopped while the live agent runs its first sweep (F1). Beat,
+for now: resizing one tier up. ⏳ Owed: a recurring-cost comparison, a larger box vs hosting the
+agent on a separate always-on service, set beside the LLM spend he is adding. His words: "I need to
+be aware of any other recurring costs I'm adding as well so this doesn't spiral out of control".
+Dev must keep running for parallel development after go-live. ⚠️ Disk is not solved by this: check
+backup + wipe snapshot + corpus size against free space before C1.
+🔴 RULED 2026-10-17 (his pick): old mail IS archived on live, as a slow-tick backfill, so omni-me
+can replace Gmail for old mail he cares about. Conditions, his: no financial extraction for mail
+older than the import's statements; heavy pre-filtering at intake, since archiving what retention
+purges almost at once makes no sense (extends R4-6's closed retention list and its social skip).
+Beat: starting mail at the import end only. ⏳ Needs building: a backfill mode that archives
+without proposing transactions, gated by the retention category at intake.
+🆕 His finding 2026-10-17: no way to delete ONE document. Verified: purge takes a tag group
+(`/documents/purge/preview` requires `tag`; Archive offers "Purge "<tag>"…"), so deleting one test
+email means a one-off tag, then purging that group. Wanted: delete from the document's own view,
+through the same preview and confirm. 🔴 RULED 2026-10-17 (his pick, my recommendation): built
+BEFORE go-live (Phase B). Beat: shipping with the one-off-tag workaround.
+🔴 RULED 2026-10-17 (his pick, my recommendation): B4's rehearsal happens, on a fresh clone of live,
+before Phase C. Beat: relying on dev's 3.3 proof, which tested dev's volume.
+**Phase B work list, in dependency order (my proposal):** B-a single-document delete; B-b old-mail
+backfill mode (archive-only, retention-filtered); B1 agent in prod compose; B2 instance
+declaration; B3 health-gate window; then A (merge + stamp) and B4 rehearsal. ⏳ Outside the repo,
+his: the September statements (E2), and the recurring-cost comparison (owed by me, ruled above).
+
 **Stage 1, the list (my order).** Decisions first, while he is present to answer them; then code;
 then spends, so the phone test runs on the chosen models.
 1. ✅ Belief recency, BUILT 2026-10-04 (`d137abf`). Measured: the rejected belief read 12 of ~1,370

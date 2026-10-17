@@ -4,13 +4,11 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — stage 4: draft the go-live sequence
-Stage 3 closed and S-W1 done 2026-10-14 (`tasks.md` § release, items 3 and 4). ⛔ Do not redo either.
-Draft the go-live sequence for him to approve, from his fixed points in `tasks.md` § release item 4
-and the "Moved to the go-live sequence" line under stage 2: gate 1 (live backup) first; the tab goes
-on only after server AND app are updated; the official import needs the updated live server and a
-wipe first; his conventions note comes after the re-import; the agent goes live in it too.
-⛔ Live is the pause: drafting needs no permission, every live-affecting step waits for his go.
+## ▶ NEXT ACTION — stage 4, Phase B: build what live lacks
+The go-live sequence is drafted and its four open decisions ruled 2026-10-17: `tasks.md` § release,
+"Stage 4: the go-live sequence". ⛔ Do not re-ask them. Work the "Phase B work list" there, in its
+order, starting with single-document delete. Then the merge and the rehearsal on a fresh clone of live.
+⛔ Live is the pause: every Phase C to F step waits for his go, one at a time.
 
 ⛔ **Never `cargo build`/`test` on this box** — `check`/`fmt`/`clippy` only; anything that links
 goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/devsrv.py`.
@@ -18,6 +16,7 @@ Dev workflows: `--ref dev/untested-overlay`. Before any overlay build, dispatch 
 with `-f public_ref=<full public SHA>` (`project-overlay-ci-blind-spot`).
 
 ## ⛔ Waiting on him
+- **September statements** for the paisa importers (go-live E2). Nothing in Phase E starts without them.
 - **GitHub Support purge** of the pre-S-W1 commits (optional, his ruling): they are still served
   by SHA. `tasks.md` § release item 4 has what to name.
 - **F3's open half**: whether multi-page reading should be told pages can repeat.
