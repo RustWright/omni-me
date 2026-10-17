@@ -1114,6 +1114,18 @@ before Phase C. Beat: relying on dev's 3.3 proof, which tested dev's volume.
 backfill mode (archive-only, retention-filtered); B1 agent in prod compose; B2 instance
 declaration; B3 health-gate window; then A (merge + stamp) and B4 rehearsal. ⏳ Outside the repo,
 his: the September statements (E2), and the recurring-cost comparison (owed by me, ruled above).
+- ✅ B-a BUILT 2026-10-17 (`198df77`): `purge::preview_document`, the preview route takes
+  `document_id` instead of `tag` (both or neither is 400), "Delete document…" on the document view
+  opens the same preview and confirm. 3 unit + 2 socket tests; clippy clean all crates. ⏳ CI.
+- ✅ B1–B3 BUILT 2026-10-17 (overlay `3fba131`; compose checked on the box with and without the
+  profile). B1 an `agent` service behind profile `agent`, so a server deploy never starts it;
+  `deploy.yml` input `agent_image` enables it, `remote-deploy.sh` then keeps it up and never rolls
+  the server back over it. My call: it mounts its own `/etc/omni-me/credentials-agent.toml`
+  holding only `[llm]` (+ `auth_token` if set), not the server's file with bank secrets.
+  B2 `OMNI_INSTANCE: production`. B3 input `health_retries` (default 30 × 5 s).
+  ⏳ His, before F1: create `credentials-agent.toml` (credential files are his to copy).
+  ⚠️ B4: take the clone BEFORE Phase C, while live has no marker; a later clone carries
+  `production` and refuses to boot as dev without `OMNI_INSTANCE_RESTAMP=1`.
 
 **Stage 1, the list (my order).** Decisions first, while he is present to answer them; then code;
 then spends, so the phone test runs on the chosen models.
