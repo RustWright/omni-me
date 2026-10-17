@@ -1116,7 +1116,8 @@ declaration; B3 health-gate window; then A (merge + stamp) and B4 rehearsal. ⏳
 his: the September statements (E2), and the recurring-cost comparison (owed by me, ruled above).
 - ✅ B-a BUILT 2026-10-17 (`198df77`): `purge::preview_document`, the preview route takes
   `document_id` instead of `tag` (both or neither is 400), "Delete document…" on the document view
-  opens the same preview and confirm. 3 unit + 2 socket tests; clippy clean all crates. ⏳ CI.
+  opens the same preview and confirm. 3 unit + 2 socket tests; clippy clean all crates. ✅ CI green
+  on `eb75c03` (public run `39051085147`; overlay CI on `198df77` green). Unexercised on a device.
 - ✅ B1–B3 BUILT 2026-10-17 (overlay `3fba131`; compose checked on the box with and without the
   profile). B1 an `agent` service behind profile `agent`, so a server deploy never starts it;
   `deploy.yml` input `agent_image` enables it, `remote-deploy.sh` then keeps it up and never rolls
