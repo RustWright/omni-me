@@ -490,13 +490,11 @@ mod tests {
         let db = crate::db::test_db().await;
         let store: Arc<dyn EventStore> =
             Arc::new(crate::events::SurrealEventStore::new(db.clone()));
+        // The server's own list: the backfill runs there, and a hand-picked list
+        // once hid that the server never folded the timers.
         let runner = ProjectionRunner::new(
             db.clone(),
-            vec![
-                Box::new(crate::events::DocumentsProjection),
-                Box::new(crate::events::RetentionProjection),
-                Box::new(crate::events::ConfigProjection),
-            ],
+            crate::events::registry::build_projections_server(),
         );
         runner.init_all().await.unwrap();
         for (tag, days) in rules {
