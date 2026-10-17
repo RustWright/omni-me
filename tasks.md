@@ -1161,13 +1161,39 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   Totals with today's rate as C: (1) ~€9/mo; (2) C + ~€6/mo. (1) is cheaper whenever C is above
   €3, and no CX22 rate we know of was below €3.79. My recommendation: (1) resize, plus R2 as the
   off-box blob backup. Beat (2): costs more, and adds a second machine to keep running.
-- ⏳ Phase A, 2026-10-17: stamped v1.2.0 (`feed4fb`; overlay lock `34162e9`), my number (minor:
+- ✅ Phase A DONE 2026-10-17: he pushed both `main`s (public `75508c9`, overlay `7e882d8`, with
+  `public-ref` = `main`); overlay CI from `main` on public `75508c9` green (run `39059580313`).
+  History: stamped v1.2.0 (`feed4fb`; overlay lock `34162e9`), my number (minor:
   ~440 commits of features since 1.1.2). CI green on both, overlay CI dispatched on `feed4fb`.
   The push to `main` was refused by the permission check, so the merge is his to run. Public:
   fast-forward (`main` is an ancestor). Overlay: not a fast-forward; `main` held 4 workflow
   commits that dev carries in newer form (version pins, `--locked`, the DevTools flag). Merge
   prepared on local branch `merge-main` (`4418fe7`), conflicts taken from dev, tree identical
   to dev. Still to add on it: `.github/public-ref` = `main` (it says the dev branch).
+- ⏳ B4 REHEARSAL 2026-10-17 (his go, incl. pulling `alpine`). Full log, one line per call:
+  `~/omni-dev-tools/state/b4-log.md`. Clone of live (`snapshot.sh`, KEEP raised so his 5 old
+  snapshots survive; 18 entries / 177 MB both sides) restored by hand into
+  `omni-dev-b4_omni_data`; dev's own volumes untouched (switch back = volume names in
+  `~/omni-dev/docker-compose.yml`, backup `.bak.20261017T192020Z-pre-b4`).
+  ✅ C3: 3.3 first boot healthy, 235 s (20,245 events replayed). ✅ E1: preview 10,619 = the
+  independent tally type for type; only finance types removed. ✅ E3: 1,041 seen, 984 archived,
+  57 = in-corpus duplicates (984 distinct hashes). ✅ E4: three mailboxes rewound to 2026-10-01.
+  ✅ Backfill on a real mailbox: skips, screens, keeps (sample in the log); no drafts.
+  🐞 Found and fixed: (1) `e8cfd89` the server never folded the timers, so the backfill could
+  never run there; (2) `0f40a73` a fresh agent after a wipe crash-looped (owed rebuild cleared
+  undefined tables); F1 = exactly that on live. ⏳ F1 re-run on the rebuilt agent image.
+  🔧 Overlay `09568ef`: server `mem_limit` 1500m (SurrealDB 3.3 sizes its cache from the cgroup
+  limit, else half of host RAM: dev 2.1 GB -> 288 MB; first 3.3 boot of a live clone under it
+  peaked ~480 MB); health gate default 30 -> 90 polls (every boot that adds a table replays all
+  events: 204-235 s, the old 150 s would roll back). ⚠️ Bank sources: dev's credentials hold
+  both bank sources and the new build wires them at boot, so live's would start at C3, before
+  E1 and before F3. ⚠️ Public CI stopped running on dev pushes when PR #1 merged; draft PR #4.
+- 🆕 B5, found in B4 2026-10-17: live runs NO import sources (`/auto_import/status` is `[]`), and
+  `docker-compose.prod.yml` sets neither `OMNI_ENABLE_IMAP` nor `OMNI_ENRICH_ENABLED` (dev sets
+  both). After C3 live would have no mail intake, so E4 has no cursor to rewind and the backfill
+  nothing to run on, and no reader to file documents by category. ⏳ Needs: the prod env (and the
+  enrichment rate), plus `[imap.*]` and the reader seat in live's credentials (his file), and
+  an ordering call: switch mail on at E4 rather than at C3, so nothing polls before the wipe.
 - 🆕 Found 2026-10-17: `snapshot.sh`, `restore-snapshot.sh`, `reset-db.sh` and `lib-guard.sh` all
   `docker run alpine`, and the image prune (mine, today) had removed it, so the next deploy's
   snapshot and any rollback restore would pull it from Docker Hub mid-run. Fixed for the future

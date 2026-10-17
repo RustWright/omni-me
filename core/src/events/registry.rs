@@ -180,11 +180,8 @@ pub fn build_projections_headless(config: &ResolvedConfig) -> Vec<Box<dyn Projec
 /// Devices project everything else themselves. Not feature-gated: the server folds
 /// config but serves every feature. Why `documents` is here: `docs/src/archive.md`.
 pub fn build_projections_server() -> Vec<Box<dyn Projection>> {
-    // ⚠️ `document_retention` is deliberately absent: retention is evaluated on a
-    // device, because the group it forms is confirmed by the person sitting at it.
-    // The rules still reach the server as events and fold on any device that
-    // rebuilds — ⛔ this is the line to change if evaluation ever moves here, and
-    // the server would then also need to read the rules.
+    // Retention because the older-mail backfill leaves out mail whose category
+    // timer has run out. Purge groups are still formed on a device.
     //
     // Notes and budget because receipt import runs here and holds its accounts to
     // the conventions note and the ledger. Without these tables the account list
@@ -197,6 +194,7 @@ pub fn build_projections_server() -> Vec<Box<dyn Projection>> {
         Box::new(DocumentsProjection),
         Box::new(NotesProjection),
         Box::new(BudgetProjection),
+        Box::new(RetentionProjection),
     ]
 }
 
@@ -240,6 +238,10 @@ mod tests {
         assert!(
             names.contains(&AutoImportProjection::NAME),
             "GET /auto_import/triage reads its table: {names:?}"
+        );
+        assert!(
+            names.contains(&RetentionProjection::NAME),
+            "the older-mail backfill reads the timers: {names:?}"
         );
     }
 

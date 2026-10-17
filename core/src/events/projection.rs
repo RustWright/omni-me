@@ -482,15 +482,17 @@ impl ProjectionRunner {
             .await?
             .check()?;
 
-        // Clear the selected projections' tables, then re-initialize their schemas
+        // Schema first, then clear. A rebuild owed from a pulled wipe runs before
+        // a fresh store has any table, and SurrealDB 3 refuses a DELETE on an
+        // undefined one: the agent's first start after a wipe looped on it (B4).
         let mut rebuilding: Vec<&str> = Vec::new();
         for proj in self
             .projections
             .iter()
             .filter(|p| only.is_none_or(|names| names.contains(&p.name())))
         {
-            proj.clear_tables(&self.db).await?;
             proj.init_schema(&self.db).await?;
+            proj.clear_tables(&self.db).await?;
             rebuilding.push(proj.name());
         }
         tracing::info!(
@@ -719,6 +721,28 @@ mod tests {
         seen.lock().unwrap().push("kept".into());
         runner.init_all().await.unwrap();
         assert_eq!(seen.lock().unwrap().len(), 2, "the debt was paid once");
+    }
+
+    /// B4: an agent's first start after a server wipe pulls the wipe, owes a
+    /// rebuild, and runs it before any projection table exists. Clearing first
+    /// failed on the undefined table, every start, so it never came up.
+    #[tokio::test]
+    async fn an_owed_rebuild_on_a_store_with_no_tables_yet_succeeds() {
+        let db = test_db().await;
+        ProjectionRunner::mark_rebuild_owed(&db).await.unwrap();
+        let runner = ProjectionRunner::new(
+            db.clone(),
+            vec![Box::new(crate::events::RecordTypeProjection)],
+        );
+        runner
+            .init_all()
+            .await
+            .expect("a fresh store pays an owed rebuild");
+        db.query("SELECT * FROM record_types")
+            .await
+            .unwrap()
+            .check()
+            .expect("the table exists after the rebuild");
     }
 
     /// The equivalence the whole change rests on: folding the log in pages is
