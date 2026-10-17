@@ -1089,6 +1089,11 @@ agent on a separate always-on service, set beside the LLM spend he is adding. Hi
 be aware of any other recurring costs I'm adding as well so this doesn't spiral out of control".
 Dev must keep running for parallel development after go-live. ⚠️ Disk is not solved by this: check
 backup + wipe snapshot + corpus size against free space before C1.
+📊 Disk, measured 2026-10-17: of 29 GB used, Docker images are 17.0 GB with **15.7 GB reclaimable**
+(86 images, 3 in use); all volumes 2.0 GB; `/home/deploy` 4.0 GB; `/var/omni-updates` 372 MB. The
+81% is old images, not documents. Nothing prunes them after a deploy. His question 2026-10-17: move
+blobs to object storage (R2 / S3 / Hetzner Object Storage) for the on-demand archive. Goes into the
+cost comparison above; its real gain is durability (blobs have one copy), not capacity.
 🔴 RULED 2026-10-17 (his pick): old mail IS archived on live, as a slow-tick backfill, so omni-me
 can replace Gmail for old mail he cares about. Conditions, his: no financial extraction for mail
 older than the import's statements; heavy pre-filtering at intake, since archiving what retention
