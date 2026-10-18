@@ -1218,7 +1218,11 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   sources `[]`. Independent tally 20,281 events vs the clone's 20,246: finance identical
   (10,592 transactions), +36 journal events since the clone. ⚠️ The deploy's `snapshot.sh` ran
   with the default KEEP=5 and pruned the three 2026-09-04 snapshots. Left: 09-06, 09-16, 10-17
-  (B4), 10-18 C1, 10-18 pre-deploy, all pre-3.3; C1 also on the laptop. ⏳ D next (his go).
+  (B4), 10-18 C1, 10-18 pre-deploy, all pre-3.3; C1 also on the laptop.
+  ⏳ D (his go and his dispatch, run `39146949384`, 2026-10-18 17:40Z): 1.2.0 built from
+  `a1331799`, signed and published; APK sha256 on the box = manifest (`061f08cd…`), live serves
+  both manifests, the APK (56.8 MB) and the AppImage (101.6 MB). Left: he updates phone and
+  desktop; then check both sync against live.
 - 🔴 RULED 2026-10-18 (his pick, my recommendation): intake held off by switches until its
   phase. Beat: deploy-then-pause (one real bank pull at C3), editing credentials twice by hand.
   ✅ BUILT overlay `e879560`: `OMNI_ENABLE_BANK` gates the bank sources like `OMNI_ENABLE_IMAP`
