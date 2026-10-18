@@ -1158,6 +1158,13 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   in script).
   ⚠️ Gap: the LLM spend itself. No monthly figure exists; the provider reports `estimated_cost`
   per call and we do not read it (`MODEL_BENCH.md` R4b). His provider billing page settles it.
+  ⚠️ SUPERSEDED IN PART by B4 (same day): the memory figures above predate the server
+  `mem_limit` (overlay `09568ef`). Measured after it, with dev server + dev agent + live all
+  running and the agent mid-sweep: dev server ~190 MB, agent peak 1,271 MB (steady ~800), live
+  456 MB (uncapped until its next deploy), never below 1,457 MB available. Projected with the
+  live agent added: steady ~2.2 GB in containers, ~2.7 GB at one sweep's peak, on 3.8 GB. So
+  option (0), stay on the CX22, now fits if two first-sweeps never overlap (the F1 ruling
+  already stops dev's agent then). The resize becomes margin, not need.
   Totals with today's rate as C: (1) ~€9/mo; (2) C + ~€6/mo. (1) is cheaper whenever C is above
   €3, and no CX22 rate we know of was below €3.79. My recommendation: (1) resize, plus R2 as the
   off-box blob backup. Beat (2): costs more, and adds a second machine to keep running.
@@ -1181,7 +1188,14 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   ✅ Backfill on a real mailbox: skips, screens, keeps (sample in the log); no drafts.
   🐞 Found and fixed: (1) `e8cfd89` the server never folded the timers, so the backfill could
   never run there; (2) `0f40a73` a fresh agent after a wipe crash-looped (owed rebuild cleared
-  undefined tables); F1 = exactly that on live. ⏳ F1 re-run on the rebuilt agent image.
+  undefined tables); F1 = exactly that on live. ✅ F1 re-run on the fixed agent: no crash; index
+  up to date after ~4.5 h (57 min replaying 11,436 events at ~3.4/s under the 0.75-CPU cap, then
+  3.6 h of embedding, documents 2.6 h); 2,966 scanned, 2,963 embedded, 3 empty, 0 failed. Agent
+  peak 1,271 MB, steady ~800 MB; box never below 1,457 MB available. ⏳ Open perf item: the
+  agent's replay rate (server ~95/s); my unverified hypothesis is a disk sync per projection write
+  (SurrealKV "sync every commit"). Not rehearsed: D (app on the phone), E2 (his statements).
+  Backfills paused after the sample. Dev now SERVES THE CLONE (`omni-dev-b4_*`); the dev phone
+  syncing to 3001 sees live's journal/notes, not old dev data.
   🔧 Overlay `09568ef`: server `mem_limit` 1500m (SurrealDB 3.3 sizes its cache from the cgroup
   limit, else half of host RAM: dev 2.1 GB -> 288 MB; first 3.3 boot of a live clone under it
   peaked ~480 MB); health gate default 30 -> 90 polls (every boot that adds a table replays all
