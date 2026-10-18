@@ -1241,6 +1241,9 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   overlay `6e5171b`; overlay CI from main green), he dispatched the release (run `39155070213`):
   APK sha256 = manifest (`d10f48cd…`), served whole; desktop manifest 1.2.1. ⏳ He installs
   1.2.1 on the phone once from the browser, updates the desktop in-app; then the sync check.
+  ✅ D DONE 2026-10-18: both devices on 1.2.1 (his report: sync works, Archive and Assistant
+  tabs visible on both). Live shows the phone (`01M1BBBN…`, 13 journal updates) and the
+  desktop (`01M1BFGA…`, 3) since 19:00Z, last 19:37Z; no server errors or warnings in 2 h.
 - 🔴 RULED 2026-10-18 (his pick, my recommendation): intake held off by switches until its
   phase. Beat: deploy-then-pause (one real bank pull at C3), editing credentials twice by hand.
   ✅ BUILT overlay `e879560`: `OMNI_ENABLE_BANK` gates the bank sources like `OMNI_ENABLE_IMAP`
