@@ -1235,6 +1235,18 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   Also in the report: `get_llm_config: error decoding response body` on 1.1.2 against the new
   server, not yet looked at (a JSON shape the old app cannot read is my guess, unverified).
   ⚠️ Fast-forwarding `main` closes the draft PR, so public CI stops on dev pushes; PR #5 now.
+  🔴 RULED 2026-10-18 (his pick, my recommendation): ship the fix as 1.2.1, sideload it once.
+  Beat: sideloading 1.2.0 (its next update would fail the same way). ✅ 1.2.1 stamped
+  (`0d22343`, overlay lock `0d394a8`), CI green both, he pushed both mains (public `0d22343`,
+  overlay `6e5171b`; overlay CI from main green), he dispatched the release (run `39155070213`):
+  APK sha256 = manifest (`d10f48cd…`), served whole; desktop manifest 1.2.1. ⏳ He installs
+  1.2.1 on the phone once from the browser, updates the desktop in-app; then the sync check.
+  ✅ D DONE 2026-10-18: both devices on 1.2.1 (his report: sync works, Archive and Assistant
+  tabs visible on both). Live shows the phone (`01M1BBBN…`, 13 journal updates) and the
+  desktop (`01M1BFGA…`, 3) since 19:00Z, last 19:37Z; no server errors or warnings in 2 h.
+  🔴 RULED 2026-10-18 (his pick, my recommendation): E1 runs back to back with E2, once his
+  September statements are in and the extended ledger is ready. Beat: wiping now (finances
+  empty on both devices until E2, for no gain).
 - 🔴 RULED 2026-10-18 (his pick, my recommendation): intake held off by switches until its
   phase. Beat: deploy-then-pause (one real bank pull at C3), editing credentials twice by hand.
   ✅ BUILT overlay `e879560`: `OMNI_ENABLE_BANK` gates the bank sources like `OMNI_ENABLE_IMAP`
@@ -1243,6 +1255,27 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   via `remote-deploy.sh`. Sequence: C3 both off (the default), E4 `enable_imap=on`, F3
   `enable_bank=on`; each a normal dispatch (a restart without a new table took 11 s in B4).
   ⏳ Still his for B5: `[imap.*]` and the reader seat in live's credentials file.
+- 🔍 B4 open item 1, the repeated subjects (looked into 2026-10-18, his ask). Two kinds. (a) Not
+  duplicates: different Message-IDs under one subject (recurring transfer and security notices,
+  a vendor sending twice, real reply threads). (b) Byte-identical: across 1,271 dev documents,
+  exactly 3 hashes held twice, one per mailbox, each archived at the first tick (20:25Z) and again
+  after the date rewind (20:26-20:32Z). Cause verified: a never-polled source archives its newest
+  message, and the rewind re-reads it; the forward poller does not check bytes already archived
+  (the backfill does). Same on live at E4: 1 extra document per mailbox. Larger exposure: a rewind
+  after purges re-archives purged mail. 💭 Fix (mine, not built, changes documented rewind
+  behaviour): the forward poller skips bytes any document ever held, reusing the live document's
+  id for a draft's link; the handlers still run. His call.
+- 🔍 B4 open item 2, the agent's slow replay (looked into 2026-10-18, his ask). ✅ CAUSE VERIFIED by
+  experiment, each on a fresh clone of live booting the server image: uncapped ~212 s; hard
+  `--cpus 0.75` STILL BOOTING after 2,400 s; hard 0.75 + `SURREAL_KVS_THREADPOOL_SIZE=4` still
+  booting after 3,000 s (so not thread oversubscription); `--cpu-shares 256` (a weight, no quota)
+  healthy at 194 s. The hard CFS quota, not the CPU amount, made the agent's 11,436-event catch-up
+  take 57 min. Two hypotheses dropped on the way: a disk sync per write (the agent was CPU-bound
+  at its cap) and agent-only full-text indexes (the server has the same ones). Why a quota costs
+  ~15x for 2.7x less CPU is unexplained (my guess: throttling stalls on short timed waits such as
+  the 5 ms grouped commit, unverified). ✅ Fixed overlay `feba64a`: the prod agent gets
+  `cpu_shares: 256` instead of `cpus: 0.75` (it still yields to the server under load); dev's
+  agent too (box compose), restarted clean.
 - 🆕 B5, found in B4 2026-10-17: live runs NO import sources (`/auto_import/status` is `[]`), and
   `docker-compose.prod.yml` sets neither `OMNI_ENABLE_IMAP` nor `OMNI_ENRICH_ENABLED` (dev sets
   both). After C3 live would have no mail intake, so E4 has no cursor to rewind and the backfill
