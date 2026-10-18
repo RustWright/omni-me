@@ -1206,6 +1206,11 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   events: 204-235 s, the old 150 s would roll back). ⚠️ Bank sources: dev's credentials hold
   both bank sources and the new build wires them at boot, so live's would start at C3, before
   E1 and before F3. ⚠️ Public CI stopped running on dev pushes when PR #1 merged; draft PR #4.
+- 🔴 RULED 2026-10-18 (his pick, my recommendation): C1 to C3 now, apart from E; his go each step.
+  ✅ C1 DONE 2026-10-18 14:02Z: `/var/omni-snapshots/omni-deploy_omni_data-20261018T140217Z.tgz`
+  (KEEP raised, nothing pruned), 18 entries = volume's 18, 179,919 KB vs du 179,984 KB; copied
+  off the box to `~/omni-backups/` on the laptop (dir 700, file 600), sha256 identical
+  (`e059507e…`), opens with 18 entries. It holds live's bank session file too.
 - 🔴 RULED 2026-10-18 (his pick, my recommendation): intake held off by switches until its
   phase. Beat: deploy-then-pause (one real bank pull at C3), editing credentials twice by hand.
   ✅ BUILT overlay `e879560`: `OMNI_ENABLE_BANK` gates the bank sources like `OMNI_ENABLE_IMAP`
