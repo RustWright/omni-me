@@ -1158,6 +1158,10 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   in script).
   ⚠️ Gap: the LLM spend itself. No monthly figure exists; the provider reports `estimated_cost`
   per call and we do not read it (`MODEL_BENCH.md` R4b). His provider billing page settles it.
+  🔴 RULED 2026-10-17 (his pick, my recommendation): stay on the CX22, with Cloudflare R2 (free
+  tier) as the off-box copy of the blobs. Resize only on a trigger: available memory under ~500 MB,
+  or an OOM kill. Beat: resizing to CX33 (margin, not need, ~€4-5/mo more); a separate agent host.
+  ⏳ Needs: his R2 account, bucket and a scoped API token (credentials are his), then a backup job.
   ⚠️ SUPERSEDED IN PART by B4 (same day): the memory figures above predate the server
   `mem_limit` (overlay `09568ef`). Measured after it, with dev server + dev agent + live all
   running and the agent mid-sweep: dev server ~190 MB, agent peak 1,271 MB (steady ~800), live
@@ -1202,6 +1206,14 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   events: 204-235 s, the old 150 s would roll back). ⚠️ Bank sources: dev's credentials hold
   both bank sources and the new build wires them at boot, so live's would start at C3, before
   E1 and before F3. ⚠️ Public CI stopped running on dev pushes when PR #1 merged; draft PR #4.
+- 🔴 RULED 2026-10-18 (his pick, my recommendation): intake held off by switches until its
+  phase. Beat: deploy-then-pause (one real bank pull at C3), editing credentials twice by hand.
+  ✅ BUILT overlay `e879560`: `OMNI_ENABLE_BANK` gates the bank sources like `OMNI_ENABLE_IMAP`
+  gates mail; the prod compose reads both from the env file with default 0 and turns enrichment
+  on (1/min); `deploy.yml` inputs `enable_imap` / `enable_bank` (unchanged/on/off) persist them
+  via `remote-deploy.sh`. Sequence: C3 both off (the default), E4 `enable_imap=on`, F3
+  `enable_bank=on`; each a normal dispatch (a restart without a new table took 11 s in B4).
+  ⏳ Still his for B5: `[imap.*]` and the reader seat in live's credentials file.
 - 🆕 B5, found in B4 2026-10-17: live runs NO import sources (`/auto_import/status` is `[]`), and
   `docker-compose.prod.yml` sets neither `OMNI_ENABLE_IMAP` nor `OMNI_ENRICH_ENABLED` (dev sets
   both). After C3 live would have no mail intake, so E4 has no cursor to rewind and the backfill

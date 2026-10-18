@@ -7,11 +7,8 @@ site. ⛔ If a line here could be derived from either, it does not belong here �
 ## ▶ NEXT ACTION — B4 done; ask him, one question at a time
 B4 verdict and findings: `tasks.md` § release, "B4 REHEARSAL" (log `~/omni-dev-tools/state/b4-log.md`).
 Dev now serves the live clone. Questions, in my order:
-1. **Cost**: with the server `mem_limit`, staying on the CX22 now fits (`tasks.md` § the cost
-   comparison, "SUPERSEDED IN PART"). Stay, resize for margin, or separate agent host?
-2. **B5 and the bank-source ordering** (`tasks.md` § B5 and the B4 entry): live needs mail and
-   enrichment switched on, his credentials sections, and the bank sources must not start at C3.
-3. **Fast-forward `main` again** for `e8cfd89`, `0f40a73` (draft PR #4 runs CI meanwhile).
+Ruled 2026-10-18: stay on the CX22 + R2; intake switches (built, overlay `e879560`).
+1. **Fast-forward `main` again** for `e8cfd89`, `0f40a73` (draft PR #4 runs CI meanwhile).
 ⛔ Live is the pause: every Phase C to F step on live waits for his go, one at a time.
 
 ⛔ **Never `cargo build`/`test` on this box** — `check`/`fmt`/`clippy` only; anything that links
@@ -23,6 +20,8 @@ pairs with the public ref, and before any overlay build run overlay `ci.yml` wit
 ## ⛔ Waiting on him
 - **September statements** for the paisa importers (go-live E2). Nothing in Phase E starts without them.
 - **`/etc/omni-me/credentials-agent.toml`** on the box, `[llm]` only (+ `auth_token` if set), before F1.
+- **R2**: his Cloudflare account, a bucket and a scoped API token, for the off-box blob copy.
+- **Live credentials for B5**: `[imap.*]` mailboxes and the reader seat, before E4.
 - **Retention timers on live** before the backfill is switched on (his 2026-10-12 values, set on dev only).
 - **GitHub Support purge** of the pre-S-W1 commits (optional, his ruling): they are still served
   by SHA. `tasks.md` § release item 4 has what to name.
