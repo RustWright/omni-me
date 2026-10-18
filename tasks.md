@@ -1235,6 +1235,12 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   Also in the report: `get_llm_config: error decoding response body` on 1.1.2 against the new
   server, not yet looked at (a JSON shape the old app cannot read is my guess, unverified).
   ⚠️ Fast-forwarding `main` closes the draft PR, so public CI stops on dev pushes; PR #5 now.
+  🔴 RULED 2026-10-18 (his pick, my recommendation): ship the fix as 1.2.1, sideload it once.
+  Beat: sideloading 1.2.0 (its next update would fail the same way). ✅ 1.2.1 stamped
+  (`0d22343`, overlay lock `0d394a8`), CI green both, he pushed both mains (public `0d22343`,
+  overlay `6e5171b`; overlay CI from main green), he dispatched the release (run `39155070213`):
+  APK sha256 = manifest (`d10f48cd…`), served whole; desktop manifest 1.2.1. ⏳ He installs
+  1.2.1 on the phone once from the browser, updates the desktop in-app; then the sync check.
 - 🔴 RULED 2026-10-18 (his pick, my recommendation): intake held off by switches until its
   phase. Beat: deploy-then-pause (one real bank pull at C3), editing credentials twice by hand.
   ✅ BUILT overlay `e879560`: `OMNI_ENABLE_BANK` gates the bank sources like `OMNI_ENABLE_IMAP`
