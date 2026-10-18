@@ -119,6 +119,7 @@ pub async fn download_android_update(
     let bytes = state
         .box_request(reqwest::Method::GET, &path)
         .await
+        .timeout(omni_me_core::http::DOWNLOAD_TIMEOUT)
         .send()
         .await
         .map_err(|e| format!("download failed: {e}"))?

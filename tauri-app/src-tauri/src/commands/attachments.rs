@@ -211,6 +211,7 @@ pub async fn fetch_attachment(
     let resp = state
         .box_request(reqwest::Method::GET, &path)
         .await
+        .timeout(omni_me_core::http::DOWNLOAD_TIMEOUT)
         .send()
         .await
         .map_err(|e| format!("attachment fetch: {e}"))?;
@@ -257,6 +258,7 @@ pub async fn fetch_attachment_preview(
     let resp = match state
         .box_request(reqwest::Method::GET, &format!("/blobs/{sha256}/preview"))
         .await
+        .timeout(omni_me_core::http::DOWNLOAD_TIMEOUT)
         .send()
         .await
     {

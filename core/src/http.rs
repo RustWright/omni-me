@@ -51,6 +51,12 @@ pub const LLM_TIMEOUT: Duration = Duration::from_secs(180);
 /// one receipt is bad on its own terms and wants a faster model or endpoint.
 pub const VISION_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// Per-request budget for file downloads from the box (an APK, a document's
+/// bytes), set with `RequestBuilder::timeout`, which overrides the client's.
+/// The 57 MB 1.2.0 APK took 56 s over the tailnet at ~1 MB/s, so the 30 s
+/// default failed every phone update as "error decoding response body".
+pub const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(900);
+
 /// Separate from the total budget so a dead host fails fast even on the long
 /// LLM budget: unreachable is knowable in seconds, whereas "still generating"
 /// is not.
