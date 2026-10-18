@@ -1223,6 +1223,18 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   `a1331799`, signed and published; APK sha256 on the box = manifest (`061f08cd…`), live serves
   both manifests, the APK (56.8 MB) and the AppImage (101.6 MB). Left: he updates phone and
   desktop; then check both sync against live.
+  🐞 His report 2026-10-18 (feedback `01M58319…`, phone on 1.1.2): "Download failed",
+  `download read failed: error decoding response body` x2. Cause: the APK download used the
+  shared client's 30 s total timeout; 57 MB takes 56 s over the tailnet (measured from the
+  laptop, ~1 MB/s; the phone's own link not measured), and reqwest 0.12.28's `bytes()` labels a
+  mid-body timeout a decode error (read in its source). Not compression (live sends it raw for
+  every Accept-Encoding). Same in 1.2.0, and the same exposure for document fetches (`/blobs`).
+  Desktop unaffected: the updater plugin 2.10.1 has no default timeout. ✅ Fixed `74a826e`:
+  `http::DOWNLOAD_TIMEOUT` (15 min, a per-request override) on the APK and both blob fetches.
+  ⚠️ 1.1.2 cannot fetch its own update, so the phone needs one install outside the app.
+  Also in the report: `get_llm_config: error decoding response body` on 1.1.2 against the new
+  server, not yet looked at (a JSON shape the old app cannot read is my guess, unverified).
+  ⚠️ Fast-forwarding `main` closes the draft PR, so public CI stops on dev pushes; PR #5 now.
 - 🔴 RULED 2026-10-18 (his pick, my recommendation): intake held off by switches until its
   phase. Beat: deploy-then-pause (one real bank pull at C3), editing credentials twice by hand.
   ✅ BUILT overlay `e879560`: `OMNI_ENABLE_BANK` gates the bank sources like `OMNI_ENABLE_IMAP`
