@@ -1211,6 +1211,14 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   (KEEP raised, nothing pruned), 18 entries = volume's 18, 179,919 KB vs du 179,984 KB; copied
   off the box to `~/omni-backups/` on the laptop (dir 700, file 600), sha256 identical
   (`e059507e…`), opens with 18 entries. It holds live's bank session file too.
+  ✅ C2: nothing to pause (live ran no sources; the new build starts with both switches off).
+  ✅ C3 DONE 2026-10-18 14:33Z (his dispatch, run `39134759350`; the permission check keeps
+  production deploys his): `sha-db18b66` (public `a1331799`), healthy after 41 checks (~205 s;
+  the old 30 would have rolled back), `/health` = production, 0 restarts, 417 MB under 1.5 GB,
+  sources `[]`. Independent tally 20,281 events vs the clone's 20,246: finance identical
+  (10,592 transactions), +36 journal events since the clone. ⚠️ The deploy's `snapshot.sh` ran
+  with the default KEEP=5 and pruned the three 2026-09-04 snapshots. Left: 09-06, 09-16, 10-17
+  (B4), 10-18 C1, 10-18 pre-deploy, all pre-3.3; C1 also on the laptop. ⏳ D next (his go).
 - 🔴 RULED 2026-10-18 (his pick, my recommendation): intake held off by switches until its
   phase. Beat: deploy-then-pause (one real bank pull at C3), editing credentials twice by hand.
   ✅ BUILT overlay `e879560`: `OMNI_ENABLE_BANK` gates the bank sources like `OMNI_ENABLE_IMAP`

@@ -9,7 +9,8 @@ B4 verdict and findings: `tasks.md` § release, "B4 REHEARSAL" (log `~/omni-dev-
 Dev now serves the live clone. Questions, in my order:
 Ruled 2026-10-18: stay on the CX22 + R2; intake switches (built, overlay `e879560`). Both
 `main`s carry the B4 fixes (public `a133179`, overlay `db18b66`; overlay CI from main green).
-1. **His go for Phase C** (C1 gate-1 backup first), one live step at a time.
+1. ✅ C1–C3 done 2026-10-18 (`tasks.md` § the C1 entry): live on `sha-db18b66`, SurrealDB 3.3.
+   Next: **his go for D**, the app release to `/updates` and updating phone and desktop.
 2. (done) Fast-forward `main` again for `e8cfd89`, `0f40a73` (draft PR #4 runs CI meanwhile).
 ⛔ Live is the pause: every Phase C to F step on live waits for his go, one at a time.
 
