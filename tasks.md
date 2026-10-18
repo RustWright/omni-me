@@ -1244,6 +1244,9 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   ✅ D DONE 2026-10-18: both devices on 1.2.1 (his report: sync works, Archive and Assistant
   tabs visible on both). Live shows the phone (`01M1BBBN…`, 13 journal updates) and the
   desktop (`01M1BFGA…`, 3) since 19:00Z, last 19:37Z; no server errors or warnings in 2 h.
+  🔴 RULED 2026-10-18 (his pick, my recommendation): E1 runs back to back with E2, once his
+  September statements are in and the extended ledger is ready. Beat: wiping now (finances
+  empty on both devices until E2, for no gain).
 - 🔴 RULED 2026-10-18 (his pick, my recommendation): intake held off by switches until its
   phase. Beat: deploy-then-pause (one real bank pull at C3), editing credentials twice by hand.
   ✅ BUILT overlay `e879560`: `OMNI_ENABLE_BANK` gates the bank sources like `OMNI_ENABLE_IMAP`
