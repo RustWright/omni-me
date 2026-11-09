@@ -1089,7 +1089,12 @@ mod tests {
         let mut claimed = make_message(1, "shop@example.com");
         claimed.body = eml.to_vec();
         let mut ignored = make_message(2, "nobody@elsewhere.com");
-        ignored.body = eml.to_vec();
+        // Its own bytes: identical ones are now one email (filed once, see below).
+        ignored.body = b"From: nobody@elsewhere.com\r\n\
+                         Subject: Hello\r\n\
+                         Content-Type: text/plain\r\n\r\n\
+                         nothing to record\r\n"
+            .to_vec();
         fetcher.push_response(vec![claimed, ignored], Some(2));
 
         let handlers: Vec<Box<dyn ImapHandler>> = vec![Box::new(NeedleHandler {
