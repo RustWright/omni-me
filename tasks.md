@@ -1265,6 +1265,34 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   after purges re-archives purged mail. 💭 Fix (mine, not built, changes documented rewind
   behaviour): the forward poller skips bytes any document ever held, reusing the live document's
   id for a draft's link; the handlers still run. His call.
+  🔴 RULED 2026-11-09 (his pick, my recommendation): build it before E4. Beat: accepting one
+  duplicate per mailbox and avoiding rewinds after purges by hand. Reason, his: a clean data state.
+- 🔴 RULED 2026-11-09 (his words): E2's extension is the two banks he uses most, "I don't care
+  about extending" the chequing bank "right now"; the NGN/USD bank is included too (his pick, my
+  recommendation: files already there). The chequing bank stays at 2026-07-31. Statements: his
+  cloud drive, `P:\Backups\paisa-ledger\ingest_documents`. The ledger ended 07-31 / 08-30, so this
+  is August onward, not September only: through 2026-10-31 (the NGN/USD bank to 08-31 / 09-30).
+  Missing at intake: one October chequing CSV (PDF only), asked for. Work in
+  `~/paisa-ledger-restore`; 🔴 RULED (his pick, my recommendation): once every account reconciles,
+  copy back to P: with the old P: copy kept as a dated folder. Beat: local only (the two copies
+  diverge; P: is the only off-machine copy).
+  ✅ EXTENDED 2026-11-09 (backup `~/paisa-ledger-restore/paisa-ledger.pre-extend.2026-11-09-*.tgz`;
+  paths via symlinks `~/Documents/paisa` and `~/.cache/paisa/ledger` → apt `ledger` 3.3.2, scripts
+  unedited). Baseline regen byte-identical (785 files). 50 statements filed by a scratch script, since
+  one bank renamed its PDFs and `file_ingest.py` no longer matches them (crypto's PDF is that
+  account's only source). Deleted two overlapping half-August CSVs. Result: `bal -B` 0, 0 parse
+  errors, 0 uncategorized, CST unchanged, InTransit −88.00 = the missing CSV only; 807 files, the
+  only earlier change three 07-31 rows that first appear in the August CSV. Every account reconciles
+  to its statement's own closing balance (one chequing account's 07/08 month-ends differ only by
+  purchases dated in the month and posted the next; exact at 09-30). Rules added to the importer
+  tables, all his calls 2026-11-09: 26 new merchants from his move, 5 e-transfers, a storage locker
+  and a campus card → `Services`, and a family member's repayment contras the expense it covers
+  instead of `Income:Gift` (CONVENTIONS §10). ⏳ The October CSV, then copy back to P:.
+- 🔴 RULED 2026-11-09 (his pick, my recommendation): one fresh design session for (1) notification
+  criticality, finance first, "so I don't get inundated with notifications and basically tune
+  everything out or start missing the important ones hidden in the noise", then (2) an agentic
+  framework for the app, "our current method seems a lot haphazard". No implementation. I write a
+  local pre-read beforehand. Beat: discussing it in the import session; two separate sessions.
 - 🔍 B4 open item 2, the agent's slow replay (looked into 2026-10-18, his ask). ✅ CAUSE VERIFIED by
   experiment, each on a fresh clone of live booting the server image: uncapped ~212 s; hard
   `--cpus 0.75` STILL BOOTING after 2,400 s; hard 0.75 + `SURREAL_KVS_THREADPOOL_SIZE=4` still
