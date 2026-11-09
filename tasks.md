@@ -1267,6 +1267,12 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   id for a draft's link; the handlers still run. His call.
   🔴 RULED 2026-11-09 (his pick, my recommendation): build it before E4. Beat: accepting one
   duplicate per mailbox and avoiding rewinds after purges by hand. Reason, his: a clean data state.
+  ✅ BUILT `c8ca27c` + `600a0d5`: `ArchiveIndex` passed to `poll_once_skipping`; live bytes reuse
+  that document's id for the draft link, purged bytes file nothing, both still dispatch; identical
+  bytes twice in one pass file once; a failed lookup archives as before (a duplicate beats a lost
+  copy). `PollOutcome::already_archived` logged by `ImapSource`. 5 tests (4 mocked, 1 on a real DB:
+  live → purged → new). One old fixture gave two different senders identical bytes; fixed. Docs:
+  `features.md` rewind paragraph. Overlay CI green on `c8ca27c`. Unexercised on dev's mailboxes.
 - 🔴 RULED 2026-11-09 (his words): E2's extension is the two banks he uses most, "I don't care
   about extending" the chequing bank "right now"; the NGN/USD bank is included too (his pick, my
   recommendation: files already there). The chequing bank stays at 2026-07-31. Statements: his
@@ -1287,7 +1293,19 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   purchases dated in the month and posted the next; exact at 09-30). Rules added to the importer
   tables, all his calls 2026-11-09: 26 new merchants from his move, 5 e-transfers, a storage locker
   and a campus card → `Services`, and a family member's repayment contras the expense it covers
-  instead of `Income:Gift` (CONVENTIONS §10). ⏳ The October CSV, then copy back to P:.
+  instead of `Income:Gift` (CONVENTIONS §10).
+  ✅ DONE 2026-11-09: the October CSV filed (3 more e-transfers and 6 merchants, his calls). Found
+  while finishing: the importer booked EVERY "direct deposit" as salary. That included an approved
+  employer expense reimbursement (the ledger's own handoff said it must contra the trip expenses),
+  a utility refund, and 13 older deposits. 🔴 RULED 2026-11-09 (his pick, my recommendation): fix
+  before import. Beat: importing as-is and fixing in F2. New `AFT_IN_OVERRIDE` in `ws_csv_import`:
+  reimbursement → contra by leaf from the report's CAD lines; government deposits →
+  `Income:Government:*` by program, as the earlier years are; refunds → contra the expense; two
+  verification micro-deposits → `Income:Adjustment` (my call, not his: they were never pulled back,
+  so InTransit would never clear). Salary now holds employer pay only. Final: 808 files, `bal -B` 0,
+  InTransit 0, 0 uncategorized, every account at its statement close, regen-twice identical, the
+  ledger's own NEXT.md rewritten. Copied to P: (old copy at `P:\Backups\paisa-ledger.pre-extend-
+  2026-11-09`, 1,904 files), overlapping CSVs deleted there, text files diffed equal.
 - 🔴 RULED 2026-11-09 (his pick, my recommendation): one fresh design session for (1) notification
   criticality, finance first, "so I don't get inundated with notifications and basically tune
   everything out or start missing the important ones hidden in the noise", then (2) an agentic
