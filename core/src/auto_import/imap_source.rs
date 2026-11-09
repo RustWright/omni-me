@@ -26,8 +26,33 @@ use crate::events::{EventStore, ProjectionRunner};
 use surrealdb::types::SurrealValue;
 
 use super::imap::{
-    ArchiveTarget, FetchCursor, ImapFetcher, ImapHandler, cursor_for_anchor, poll_once_skipping,
+    ArchiveIndex, ArchiveTarget, ArchivedBytes, FetchCursor, ImapFetcher, ImapHandler,
+    cursor_for_anchor, poll_once_skipping,
 };
+
+/// The archive as projected: a live document's id first, then any purged one.
+pub struct DbArchiveIndex<'a>(pub &'a Database);
+
+#[async_trait]
+impl ArchiveIndex for DbArchiveIndex<'_> {
+    async fn lookup(&self, sha256: &str) -> Result<ArchivedBytes, String> {
+        use crate::db::queries;
+        let live = queries::archived_document_with_sha(self.0, sha256)
+            .await
+            .map_err(|e| e.to_string())?;
+        if let Some((document_id, _)) = live {
+            return Ok(ArchivedBytes::Live(document_id));
+        }
+        let ever = queries::ever_archived_sha(self.0, sha256)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(if ever {
+            ArchivedBytes::Purged
+        } else {
+            ArchivedBytes::New
+        })
+    }
+}
 
 #[async_trait]
 pub trait CursorStore: Send + Sync {
@@ -229,10 +254,18 @@ impl AutoImportSource for ImapSource {
             &self.handlers,
             &cursor_snapshot,
             target.as_ref(),
+            &DbArchiveIndex(self.projections.db()),
             &skip,
         )
         .await?;
         let next_cursor = outcome.next_cursor.clone();
+        if !outcome.already_archived.is_empty() {
+            tracing::info!(
+                source = %self.name,
+                uids = ?outcome.already_archived,
+                "imap: bytes already archived, not filed again",
+            );
+        }
 
         // The accounting unit here is the **message**, not the event: one
         // statement email can yield many transactions, so counting events would
@@ -664,6 +697,62 @@ mod tests {
                 uid: 99,
                 uid_validity: None
             })
+        );
+    }
+
+    #[tokio::test]
+    async fn the_index_tells_live_bytes_from_purged_ones() {
+        let db = crate::db::test_db().await;
+        let store: Arc<dyn EventStore> =
+            Arc::new(crate::events::SurrealEventStore::new(db.clone()));
+        let runner = ProjectionRunner::new(
+            db.clone(),
+            vec![Box::new(crate::events::DocumentsProjection)],
+        );
+        runner.init_all().await.unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let passwords = crate::credentials::PdfPasswords::default();
+        let target = ArchiveTarget {
+            blob_dir: dir.path(),
+            device_id: "dev",
+            passwords: &passwords,
+        };
+        let raw = b"From: shop@example.com\r\nSubject: Receipt\r\n\r\nTotal 9.99\r\n";
+        let parsed = crate::mime::parse_eml(raw).unwrap();
+        let filed = crate::archive::ingest_email(&target, raw, &parsed)
+            .await
+            .unwrap();
+        let appended = store.append_batch(filed.events).await.unwrap();
+        runner.apply_events(&appended).await.unwrap();
+
+        let index = DbArchiveIndex(&db);
+        let sha = crate::blob::hash(raw);
+        assert_eq!(
+            index.lookup(&sha).await.unwrap(),
+            ArchivedBytes::Live(filed.email_document_id.clone())
+        );
+
+        let payload = crate::events::DocumentPurgedPayload {
+            document_id: filed.email_document_id,
+            purged_at: Utc::now().to_rfc3339(),
+            reason: None,
+        };
+        let purged = store
+            .append(crate::events::NewEvent::document_purged("dev", &payload).unwrap())
+            .await
+            .unwrap();
+        runner.apply_events(&[purged]).await.unwrap();
+        assert_eq!(
+            index.lookup(&sha).await.unwrap(),
+            ArchivedBytes::Purged,
+            "a rewind after a purge must not bring the mail back"
+        );
+        assert_eq!(
+            index
+                .lookup(&crate::blob::hash(b"never seen"))
+                .await
+                .unwrap(),
+            ArchivedBytes::New
         );
     }
 }

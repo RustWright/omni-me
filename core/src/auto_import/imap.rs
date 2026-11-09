@@ -225,6 +225,33 @@ fn stamp_email_document(event: &mut NewEvent, document_id: &str) {
 /// until the PDF passwords made the two identical.
 pub type ArchiveTarget<'a> = crate::archive::IngestContext<'a>;
 
+/// What the archive already holds for one message's exact bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ArchivedBytes {
+    New,
+    /// An unpurged document holds them, and its id links the draft instead.
+    Live(String),
+    /// Only purged documents ever did. Filing them again would undo the purge.
+    Purged,
+}
+
+/// Bytes already archived, looked up so that a rewound cursor files nothing twice.
+/// A trait so the poll stays testable without a database.
+#[async_trait]
+pub trait ArchiveIndex: Send + Sync {
+    async fn lookup(&self, sha256: &str) -> Result<ArchivedBytes, String>;
+}
+
+/// An index that holds nothing: every message is new.
+pub struct EmptyArchive;
+
+#[async_trait]
+impl ArchiveIndex for EmptyArchive {
+    async fn lookup(&self, _sha256: &str) -> Result<ArchivedBytes, String> {
+        Ok(ArchivedBytes::New)
+    }
+}
+
 /// [`poll_once_skipping`] with nothing skipped.
 #[cfg(test)]
 pub async fn poll_once(
@@ -233,7 +260,7 @@ pub async fn poll_once(
     cursor: &FetchCursor,
     archive: Option<&ArchiveTarget<'_>>,
 ) -> Result<PollOutcome, ImportError> {
-    poll_once_skipping(fetcher, handlers, cursor, archive, &[]).await
+    poll_once_skipping(fetcher, handlers, cursor, archive, &EmptyArchive, &[]).await
 }
 
 /// The sender's domain from a `From` header, lowercased: `a@b.com` or
@@ -272,11 +299,15 @@ pub fn is_skipped_sender(from: &str, skip: &[String]) -> bool {
 /// Mail from the senders in `skip` is left out: not archived and not offered to
 /// any handler (his ruling, 2026-10-11: social notifications are not records).
 /// Counted in [`PollOutcome::skipped`], never dropped silently.
+///
+/// Bytes `known` already holds are not filed again, purged ones included, but
+/// the message is still dispatched (his ruling, 2026-11-09).
 pub async fn poll_once_skipping(
     fetcher: &dyn ImapFetcher,
     handlers: &[Box<dyn ImapHandler>],
     cursor: &FetchCursor,
     archive: Option<&ArchiveTarget<'_>>,
+    known: &dyn ArchiveIndex,
     skip: &[String],
 ) -> Result<PollOutcome, ImportError> {
     let FetchOutcome {
@@ -298,6 +329,8 @@ pub async fn poll_once_skipping(
     let mut unrouted: Vec<u32> = Vec::new();
     let mut failed: Vec<(u32, String)> = Vec::new();
     let mut skipped: Vec<u32> = Vec::new();
+    let mut already_archived: Vec<u32> = Vec::new();
+    let mut filed_this_pass: std::collections::HashMap<String, String> = Default::default();
 
     for msg in &messages {
         // A listed sender is offered to the handlers first, and skipped only if
@@ -327,12 +360,41 @@ pub async fn poll_once_skipping(
         // on, and a blob-store error is recoverable by re-fetching later, while
         // an aborted pass pins the cursor (see the `failed` arm below).
         let mut email_document_id: Option<String> = None;
-        if let Some(target) = archive {
+        let sha = crate::blob::hash(&msg.body);
+        let held = match (archive, filed_this_pass.get(&sha)) {
+            (None, _) => ArchivedBytes::New,
+            // Not projected until the pass ends, so `known` cannot see it yet.
+            (Some(_), Some(id)) => ArchivedBytes::Live(id.clone()),
+            (Some(_), None) => known.lookup(&sha).await.unwrap_or_else(|e| {
+                // Archiving anyway risks a duplicate, which can be deleted; skipping
+                // risks a message that is never archived at all.
+                tracing::warn!(
+                    account = fetcher.name(),
+                    uid = msg.uid,
+                    error = %e,
+                    "imap: could not check the archive — archiving as new",
+                );
+                ArchivedBytes::New
+            }),
+        };
+        let is_new = match held {
+            ArchivedBytes::Live(id) => {
+                email_document_id = Some(id);
+                false
+            }
+            ArchivedBytes::Purged => false,
+            ArchivedBytes::New => true,
+        };
+        if !is_new {
+            already_archived.push(msg.uid);
+        }
+        if let Some(target) = archive.filter(|_| is_new) {
             match crate::mime::parse_eml(&msg.body) {
                 Ok(parsed) => {
                     match crate::archive::ingest_email(target, &msg.body, &parsed).await {
                         Ok(mut archived) => {
                             email_document_id = Some(archived.email_document_id.clone());
+                            filed_this_pass.insert(sha, archived.email_document_id.clone());
                             events.append(&mut archived.events);
                         }
                         Err(e) => tracing::warn!(
@@ -448,6 +510,7 @@ pub async fn poll_once_skipping(
         unrouted,
         failed,
         skipped,
+        already_archived,
         next_cursor,
     })
 }
@@ -474,6 +537,8 @@ pub struct PollOutcome {
     pub failed: Vec<(u32, String)>,
     /// UIDs left out by the sender skip list: not archived, not dispatched.
     pub skipped: Vec<u32>,
+    /// UIDs whose bytes the archive already held: dispatched, not filed again.
+    pub already_archived: Vec<u32>,
     pub next_cursor: FetchCursor,
 }
 
@@ -727,7 +792,7 @@ mod tests {
             ..Default::default()
         };
         let skip = vec!["facebookmail.com".to_string()];
-        let outcome = poll_once_skipping(&fetcher, &handlers, &cursor, None, &skip)
+        let outcome = poll_once_skipping(&fetcher, &handlers, &cursor, None, &EmptyArchive, &skip)
             .await
             .unwrap();
         assert_eq!(outcome.skipped, vec![101]);
@@ -754,7 +819,7 @@ mod tests {
             ..Default::default()
         };
         let skip = vec!["linkedin.com".to_string()];
-        let outcome = poll_once_skipping(&fetcher, &handlers, &cursor, None, &skip)
+        let outcome = poll_once_skipping(&fetcher, &handlers, &cursor, None, &EmptyArchive, &skip)
             .await
             .unwrap();
         assert!(outcome.skipped.is_empty());
@@ -1155,5 +1220,144 @@ mod tests {
             .count();
         assert_eq!(archived, 1, "a newer uid is archived as before");
         assert_eq!(outcome.next_cursor.last_seen_uid, Some(14836));
+    }
+
+    /// Answers every lookup the same way, or fails every one.
+    struct FixedIndex(Result<ArchivedBytes, String>);
+
+    #[async_trait]
+    impl ArchiveIndex for FixedIndex {
+        async fn lookup(&self, _sha256: &str) -> Result<ArchivedBytes, String> {
+            self.0.clone()
+        }
+    }
+
+    /// Proposes one batch per message, the shape a receipt handler returns.
+    struct Proposer;
+
+    #[async_trait]
+    impl ImapHandler for Proposer {
+        fn name(&self) -> &str {
+            "proposer"
+        }
+        fn accepts(&self, _message: &ImapMessage) -> bool {
+            true
+        }
+        async fn handle(&self, message: &ImapMessage) -> Result<Vec<NewEvent>, ImportError> {
+            Ok(vec![NewEvent {
+                id: None,
+                event_type: EventType::AutoImportBatchProposed.to_string(),
+                aggregate_id: format!("batch-{}", message.uid),
+                timestamp: message.date,
+                device_id: "test".into(),
+                payload: serde_json::json!({ "source_metadata": {} }),
+            }])
+        }
+    }
+
+    /// One poll of `bodies` (uids 1..) with archiving on, against `known`.
+    async fn poll_archiving(bodies: &[&[u8]], known: &dyn ArchiveIndex) -> PollOutcome {
+        let dir = tempfile::tempdir().unwrap();
+        let fetcher = MockFetcher::new("gmail");
+        let messages = bodies
+            .iter()
+            .enumerate()
+            .map(|(i, body)| {
+                let mut msg = make_message(i as u32 + 1, "shop@example.com");
+                msg.body = body.to_vec();
+                msg
+            })
+            .collect();
+        fetcher.push_response(messages, Some(bodies.len() as u32));
+        let handlers: Vec<Box<dyn ImapHandler>> = vec![Box::new(Proposer)];
+        let target = ArchiveTarget {
+            blob_dir: dir.path(),
+            device_id: "dev",
+            passwords: &crate::credentials::PdfPasswords::default(),
+        };
+        poll_once_skipping(
+            &fetcher,
+            &handlers,
+            &FetchCursor::default(),
+            Some(&target),
+            known,
+            &[],
+        )
+        .await
+        .unwrap()
+    }
+
+    fn archived_ids(outcome: &PollOutcome) -> Vec<String> {
+        outcome
+            .events
+            .iter()
+            .filter(|e| e.event_type == "document_archived")
+            .map(|e| e.aggregate_id.clone())
+            .collect()
+    }
+
+    fn draft_links(outcome: &PollOutcome) -> Vec<serde_json::Value> {
+        outcome
+            .events
+            .iter()
+            .filter(|e| e.event_type == EventType::AutoImportBatchProposed.to_string())
+            .map(|e| e.payload["source_metadata"][EMAIL_DOCUMENT_ID_KEY].clone())
+            .collect()
+    }
+
+    const RECEIPT: &[u8] = b"From: shop@example.com\r\nSubject: Receipt\r\n\r\nTotal 9.99\r\n";
+
+    #[tokio::test]
+    async fn bytes_a_live_document_holds_link_the_draft_to_it_and_file_nothing() {
+        let known = FixedIndex(Ok(ArchivedBytes::Live("doc-held".into())));
+        let outcome = poll_archiving(&[RECEIPT], &known).await;
+
+        assert!(
+            archived_ids(&outcome).is_empty(),
+            "a rewind files no second copy"
+        );
+        assert_eq!(draft_links(&outcome), vec![serde_json::json!("doc-held")]);
+        assert_eq!(outcome.already_archived, vec![1]);
+    }
+
+    #[tokio::test]
+    async fn purged_bytes_are_not_filed_again_but_still_dispatched() {
+        let known = FixedIndex(Ok(ArchivedBytes::Purged));
+        let outcome = poll_archiving(&[RECEIPT], &known).await;
+
+        assert!(
+            archived_ids(&outcome).is_empty(),
+            "a rewind must not undo a purge"
+        );
+        assert_eq!(
+            draft_links(&outcome),
+            vec![serde_json::Value::Null],
+            "the transaction is still proposed, with no document to link"
+        );
+        assert_eq!(outcome.already_archived, vec![1]);
+    }
+
+    #[tokio::test]
+    async fn identical_bytes_twice_in_one_pass_are_filed_once() {
+        let outcome = poll_archiving(&[RECEIPT, RECEIPT], &EmptyArchive).await;
+
+        let ids = archived_ids(&outcome);
+        assert_eq!(ids.len(), 1, "the second copy is not filed");
+        let link = serde_json::json!(ids[0]);
+        assert_eq!(draft_links(&outcome), vec![link.clone(), link]);
+        assert_eq!(outcome.already_archived, vec![2]);
+    }
+
+    #[tokio::test]
+    async fn a_failed_lookup_archives_as_before() {
+        let known = FixedIndex(Err("db down".into()));
+        let outcome = poll_archiving(&[RECEIPT], &known).await;
+
+        assert_eq!(
+            archived_ids(&outcome).len(),
+            1,
+            "a duplicate beats a lost copy"
+        );
+        assert!(outcome.already_archived.is_empty());
     }
 }

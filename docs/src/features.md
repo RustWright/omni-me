@@ -186,10 +186,10 @@ statements over again and the ledger comes back. For a mailbox it is the differe
 between "wipe and re-import" and "wipe and lose", because there is no second copy to
 re-feed — the messages are still in the mailbox, but nothing will go back for them.
 
-Rewinding a cursor is therefore its own operation rather than part of the wipe, and it
-is deliberately separate for a reason that only shows up when you run it: a re-fetch
-re-archives every message it pulls, and archived documents are not what a finance wipe
-takes. Each message picks up a second document record. The bytes are not duplicated —
-blobs are addressed by content, so both records name one file — but the archive now
-lists the same receipt twice. That is a fair price when you want the batches back and a
-silly one to pay by accident, which is what folding it into the wipe would have meant.
+Rewinding a cursor is therefore its own operation rather than part of the wipe: it
+proposes every batch in the window again, which you want only when you mean to.
+
+A rewind never files a message twice. A message whose exact bytes any document ever
+held is not archived again, and the batch drafted from it links to the document already
+there. That includes documents you purged: a rewind after a purge proposes the
+transactions again, but the mail itself stays deleted.
