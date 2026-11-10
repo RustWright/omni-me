@@ -1380,15 +1380,16 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   `sha-db18b66` (2026-10-18); every fix E4 relies on is in `main` (`c8ca27c`, `600a0d5`, `4a0f43a`).
   Noticed: live's two bank-source sections carry a `_disabled` suffix, so F3 needs them renamed
   back (headers only seen).
-- 🔴 RULED 2026-11-10 (his words): E4's cursor date is "single date for all three 2026-10-31", so
-  the backfill date is 2026-10-31 too (ruled 10-17: the two meet). `since` means mail received on
-  or after it, so 10-31's own mail is re-read; anything it proposes lands in review, not the
-  ledger. Mail before it is never auto-imported: the chequing bank (ledger to 07-31) and the
-  NGN/USD account ending 08-31 keep their gaps unless filed by hand, as he chose.
+- 🔴 RULED 2026-11-10 (his words): E4's cursor date is one date for all three mailboxes,
+  2026-11-01, "since I don't want mail from Oct 31 reprocessed as transactions" (`since` is on or
+  after; he first said 10-31). The backfill date is 2026-11-01 too (ruled 10-17: the two meet), so
+  10-31's mail is archived by the backfill, which runs no handlers. Mail before it is never
+  auto-imported: the chequing bank (ledger to 07-31) and the NGN/USD account ending 08-31 keep
+  their gaps unless filed by hand, as he chose.
   Sequence: he dispatches `deploy.yml` (overlay `main`, `public_ref` = public `main` `fed4668`,
   `enable_imap=on`; overlay CI on `main` green, run `42756971925`); boot replays and rebuilds
   `budget`/`auto_import` once; each source's first tick archives its newest message; then I pause
-  all, rewind each `since 2026-10-31`, resume, and check the re-read log line.
+  all, rewind each `since 2026-11-01`, resume, and check the re-read log line.
 - 🔴 RULED 2026-11-09 (his pick, my recommendation): one fresh design session for (1) notification
   criticality, finance first, "so I don't get inundated with notifications and basically tune
   everything out or start missing the important ones hidden in the noise", then (2) an agentic

@@ -7,8 +7,8 @@ site. ⛔ If a line here could be derived from either, it does not belong here �
 ## ▶ NEXT ACTION — B5's credentials edit on live, then E4
 E2 and E3 are done (`tasks.md` § Stage 4, "✅ E3 DONE" and its ruling). Then:
 B5 is done too (`tasks.md` § Stage 4, "✅ B5 DONE"). Then:
-1. E4: he dispatches `deploy.yml` (`tasks.md` § Stage 4, "RULED 2026-11-10 … 2026-10-31" holds the
-   sequence); then I pause, rewind all three `since 2026-10-31`, resume; check the re-read:
+1. E4: he dispatches `deploy.yml` (`tasks.md` § Stage 4, "RULED 2026-11-10 … 2026-11-01" holds the
+   sequence); then I pause, rewind all three `since 2026-11-01`, resume; check the re-read:
    139 encrypted statements read, `still_locked=0`.
 ⚠️ E4: the import stops at different dates per account, so re-ask "where it stops" per mailbox.
 ⛔ Live is the pause: every live step waits for his go, one at a time. Production deploys and
