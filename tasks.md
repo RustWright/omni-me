@@ -1412,7 +1412,17 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   personal, other; banking_notice 365, policy_notice 90, security_alert 30, delivery_update 30,
   promo 7, social 7, dev_notification 7, login_code 1. No UI sets the backfill date:
   `set_config.py <live> production archive.backfill_before text 2026-11-01`.
-  ⏳ Next: the backfill date on his go; then F1.
+- ✅ BACKFILL ON LIVE 2026-11-10 ~15:12Z (his go): `archive.backfill_before = 2026-11-01` via
+  `set_config.py`. Skip list on live = the built-in default (no `config_set` for it; he found it in
+  Settings). One manual tick per source: 60 fetched; 20 documents archived (19 messages + 1
+  attachment); 20 left in Gmail past their timer (promo, social, login_code, security_alert,
+  policy_notice); 21 skip-list; 0 failed, 0 drafts, no warnings. Then on its own 10-min schedule.
+  His question, answered from source: skipped and expired mail is passed for good, since the
+  cursor saves past each batch (`backfill.rs`); recovering it means a rewind, safe now that
+  archived bytes are skipped. Unverified: whether the reset route takes a `-backfill` source.
+  Noticed, not chased: yahoo's batch lists uids descending (gmail's ascend), against "oldest
+  first" in `docs/src/archive.md`.
+  ⏳ Next: F1, once `/etc/omni-me/credentials-agent.toml` exists (his).
 - 🔴 RULED 2026-11-09 (his pick, my recommendation): one fresh design session for (1) notification
   criticality, finance first, "so I don't get inundated with notifications and basically tune
   everything out or start missing the important ones hidden in the noise", then (2) an agentic
