@@ -124,6 +124,12 @@ rebuilds what it shows. Events after the record in the log, such as a re-import,
 the device authored after the wipe both survive. A device's own wipe-everything names no
 features and stays local to it.
 
+That holds when the feature is off on the device, too. Its tables are not maintained while
+it is off, so they still hold what the wipe took; the next launch with the feature on
+rebuilds them from the log before showing anything. Each table records the wipes it has been
+rebuilt past, so this happens once per wipe. A device's wipe-everything clears every table,
+on or off.
+
 **Every wipe snapshots the database first.** Before anything is deleted the server exports
 its whole database to `wipe-snapshots/` beside the data, and refuses the wipe if the export
 fails or is too small to hold the events about to go. That file is how a mistaken wipe is

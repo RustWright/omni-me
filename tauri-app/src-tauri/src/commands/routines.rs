@@ -324,6 +324,14 @@ pub async fn wipe_all_data(state: State<'_, AppState>, confirmation: String) -> 
     )
     .await?;
 
+    // Every table, not only the registered ones: a feature that is off would
+    // otherwise come back on still holding what the purge removed.
+    omni_me_core::events::registry::clear_every_projection(
+        &state.db,
+        state.app_data_dir.join(crate::JOURNAL_FILE),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
     state
         .projections
         .rebuild()

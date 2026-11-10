@@ -150,6 +150,22 @@ pub fn build_projections(
         .collect()
 }
 
+/// Empty every production projection's tables, registered or not.
+///
+/// For a wipe of the whole local log. Rebuilding only the registered set leaves a
+/// disabled feature's tables holding rows the log no longer has, and re-enabling it
+/// later replays on top of them.
+pub async fn clear_every_projection(
+    db: &crate::db::Database,
+    journal_path: PathBuf,
+) -> Result<(), super::EventError> {
+    for proj in all_projections(journal_path) {
+        proj.init_schema(db).await?;
+        proj.clear_tables(db).await?;
+    }
+    Ok(())
+}
+
 /// Projections a host with no filesystem of its own must never register.
 ///
 /// `JournalFile` writes an hledger file through `tokio::fs`. It is owned only by

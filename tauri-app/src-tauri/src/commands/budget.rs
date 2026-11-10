@@ -849,7 +849,7 @@ pub async fn net_worth_history(
     let file_roster = state.roster.read().await.clone();
     let roster = effective_roster(&artifacts, &declared, &file_roster);
 
-    let path = state.app_data_dir.join("budget.journal");
+    let path = state.app_data_dir.join(crate::JOURNAL_FILE);
     let content = match tokio::fs::read_to_string(&path).await {
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),

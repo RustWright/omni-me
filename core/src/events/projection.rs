@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use async_trait::async_trait;
 
 use crate::db::Database;
@@ -169,10 +171,25 @@ impl ProjectionRunner {
                 .check()?;
         }
 
+        // After the version loop, so a projection seen for the first time has its
+        // schema and row before it is rebuilt.
+        let wiped = self.stale_after_wipes().await?;
+        if !wiped.is_empty() {
+            tracing::info!(
+                projections = ?wiped,
+                "a wipe landed while these were not maintained — rebuilding them"
+            );
+        }
+        for name in wiped {
+            if !stale.contains(&name) {
+                stale.push(name);
+            }
+        }
+
         if !stale.is_empty() {
             tracing::info!(
                 projections = ?stale,
-                "projection version changed — rebuilding from the event log"
+                "rebuilding stale projections from the event log"
             );
             // ⛔ Only the stale ones. This called `rebuild()` and so wiped every
             // registered projection over one version bump.
@@ -515,7 +532,87 @@ impl ProjectionRunner {
         }
         tracing::info!(events = seen, failed, "rebuild complete");
 
+        let rebuilt: Vec<String> = rebuilding.iter().map(|n| n.to_string()).collect();
+        self.mark_rebuilt_after_wipes(&rebuilt).await
+    }
+
+    /// Feature wipes in this store's log, each with the projections it touched.
+    ///
+    /// A wipe with no named feature (a device's local wipe of everything) touches
+    /// nothing here: `wipe_all_data` clears every table itself.
+    async fn wipes_in_log(&self) -> Result<Vec<(String, BTreeSet<&'static str>)>, EventError> {
+        let mut resp = self
+            .db
+            .query(
+                "SELECT meta::id(id) AS eid, payload FROM events WHERE event_type = 'data_wiped'",
+            )
+            .await?;
+        let rows: Vec<surrealdb::types::Value> = resp.take(0)?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| {
+                let row = row.into_json_value();
+                let id = row["eid"].as_str()?.to_string();
+                let wipe: super::DataWipedPayload =
+                    serde_json::from_value(row["payload"].clone()).ok()?;
+                let touched: BTreeSet<&'static str> = wipe
+                    .known_features()
+                    .into_iter()
+                    .flat_map(|f| super::registry::owned_projections(f).iter().copied())
+                    .collect();
+                (!touched.is_empty()).then_some((id, touched))
+            })
+            .collect())
+    }
+
+    /// Record that `names` were rebuilt over a log holding every wipe now in it.
+    async fn mark_rebuilt_after_wipes(&self, names: &[String]) -> Result<(), EventError> {
+        for (wipe, _) in self.wipes_in_log().await? {
+            for name in names {
+                self.db
+                    .query(
+                        "DEFINE TABLE IF NOT EXISTS wipe_rebuilt SCHEMALESS;
+                         UPSERT type::record('wipe_rebuilt', $key) SET wipe = $wipe, projection = $name",
+                    )
+                    .bind(("key", format!("{wipe}/{name}")))
+                    .bind(("wipe", wipe.clone()))
+                    .bind(("name", name.clone()))
+                    .await?
+                    .check()?;
+            }
+        }
         Ok(())
+    }
+
+    /// Registered projections a wipe in the log touched that have not been rebuilt
+    /// since. A projection registered only after the wipe, because its feature was
+    /// off, still holds the rows the wipe removed from the log.
+    async fn stale_after_wipes(&self) -> Result<Vec<String>, EventError> {
+        let wipes = self.wipes_in_log().await?;
+        if wipes.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut resp = self
+            .db
+            .query(
+                "DEFINE TABLE IF NOT EXISTS wipe_rebuilt SCHEMALESS;
+                 SELECT VALUE meta::id(id) FROM wipe_rebuilt",
+            )
+            .await?;
+        let done: BTreeSet<String> = resp.take::<Vec<String>>(1)?.into_iter().collect();
+        let mut stale = BTreeSet::new();
+        for (wipe, touched) in &wipes {
+            for proj in self
+                .projections
+                .iter()
+                .filter(|p| touched.contains(p.name()))
+            {
+                if !done.contains(&format!("{wipe}/{}", proj.name())) {
+                    stale.insert(proj.name().to_string());
+                }
+            }
+        }
+        Ok(stale.into_iter().collect())
     }
 }
 
@@ -1353,5 +1450,157 @@ mod tests {
             .unwrap();
         let last_id: Option<String> = resp.take("last_event_id").unwrap();
         assert_eq!(last_id.as_deref(), Some("g2"));
+    }
+
+    /// Stands in for `budget`: one row per transaction in `fake_budget`, so a test
+    /// can see whether rows outlived the events they came from.
+    struct FakeBudget {
+        clears: Arc<AtomicU32>,
+    }
+
+    #[async_trait]
+    impl Projection for FakeBudget {
+        fn name(&self) -> &str {
+            crate::events::BudgetProjection::NAME
+        }
+
+        fn version(&self) -> u32 {
+            1
+        }
+
+        async fn apply(&self, event: &Event, db: &Database) -> Result<(), EventError> {
+            if event.event_type == "transaction_recorded" {
+                db.query("UPSERT type::record('fake_budget', $id) SET seen = true")
+                    .bind(("id", event.aggregate_id.clone()))
+                    .await?
+                    .check()?;
+            }
+            Ok(())
+        }
+
+        async fn init_schema(&self, db: &Database) -> Result<(), EventError> {
+            db.query("DEFINE TABLE IF NOT EXISTS fake_budget SCHEMALESS")
+                .await?
+                .check()?;
+            Ok(())
+        }
+
+        async fn clear_tables(&self, db: &Database) -> Result<(), EventError> {
+            self.clears.fetch_add(1, Ordering::SeqCst);
+            db.query("DELETE fake_budget").await?.check()?;
+            Ok(())
+        }
+    }
+
+    fn budget_on(db: &Database, clears: &Arc<AtomicU32>) -> ProjectionRunner {
+        let fake: Box<dyn Projection> = Box::new(FakeBudget {
+            clears: clears.clone(),
+        });
+        ProjectionRunner::new(db.clone(), vec![fake])
+    }
+
+    async fn fake_rows(db: &Database) -> usize {
+        let mut resp = db.query("SELECT VALUE id FROM fake_budget").await.unwrap();
+        let ids: Vec<surrealdb::types::RecordId> = resp.take(0).unwrap();
+        ids.len()
+    }
+
+    fn new_event(event_type: &str, aggregate: &str, payload: serde_json::Value) -> NewEvent {
+        NewEvent {
+            id: None,
+            event_type: event_type.into(),
+            aggregate_id: aggregate.into(),
+            timestamp: Utc::now(),
+            device_id: "d".into(),
+            payload,
+        }
+    }
+
+    /// A finance wipe as the server writes it.
+    async fn pull_finance_wipe(store: &SurrealEventStore) {
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        let at = Utc::now();
+        store
+            .purge_features_before(&[crate::config::Feature::Finances], Some(at))
+            .await
+            .unwrap();
+        store
+            .append(new_event(
+                "data_wiped",
+                "w1",
+                serde_json::json!({
+                    "initiated_at": at.to_rfc3339(),
+                    "device_id": "server",
+                    "features": ["finances"],
+                }),
+            ))
+            .await
+            .unwrap();
+    }
+
+    /// His desktop, 2026-11-09: a wipe pulled while finances was off left `budget`'s
+    /// rows behind, and turning finances on showed them. Registered again, it must
+    /// be rebuilt from the log, once.
+    #[tokio::test]
+    async fn a_wipe_pulled_while_a_projection_was_off_rebuilds_it_when_it_returns() {
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db.clone());
+        let clears = Arc::new(AtomicU32::new(0));
+
+        let on = budget_on(&db, &clears);
+        on.init_all().await.unwrap();
+        let tx = store
+            .append(new_event(
+                "transaction_recorded",
+                "t1",
+                serde_json::json!({}),
+            ))
+            .await
+            .unwrap();
+        on.apply_events(&[tx]).await.unwrap();
+        assert_eq!(fake_rows(&db).await, 1);
+
+        // Finances off: the puller's rebuild covers what is registered, which is nothing.
+        pull_finance_wipe(&store).await;
+        let off = ProjectionRunner::new(db.clone(), vec![]);
+        off.init_all().await.unwrap();
+        off.rebuild().await.unwrap();
+        assert_eq!(
+            fake_rows(&db).await,
+            1,
+            "precondition: rows outlived their events"
+        );
+
+        let before = clears.load(Ordering::SeqCst);
+        budget_on(&db, &clears).init_all().await.unwrap();
+        assert_eq!(
+            fake_rows(&db).await,
+            0,
+            "rebuilt from a log with no transactions"
+        );
+        assert_eq!(clears.load(Ordering::SeqCst), before + 1);
+
+        budget_on(&db, &clears).init_all().await.unwrap();
+        assert_eq!(clears.load(Ordering::SeqCst), before + 1, "and only once");
+    }
+
+    #[tokio::test]
+    async fn a_projection_rebuilt_by_the_wipe_is_not_rebuilt_again() {
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db.clone());
+        let clears = Arc::new(AtomicU32::new(0));
+
+        let on = budget_on(&db, &clears);
+        on.init_all().await.unwrap();
+        pull_finance_wipe(&store).await;
+        on.rebuild().await.unwrap();
+
+        let before = clears.load(Ordering::SeqCst);
+        budget_on(&db, &clears).init_all().await.unwrap();
+        assert_eq!(
+            clears.load(Ordering::SeqCst),
+            before,
+            "already clean after the wipe"
+        );
     }
 }

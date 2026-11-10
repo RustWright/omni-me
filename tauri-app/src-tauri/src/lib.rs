@@ -21,6 +21,8 @@ use omni_me_core::sync::{
 };
 
 const DB_NAME: &str = "local.db";
+/// The hledger journal cache, one name for every reader and for `wipe_all_data`.
+pub(crate) const JOURNAL_FILE: &str = "budget.journal";
 const DEVICE_ID_FILE: &str = "device_id";
 const SERVER_URL_FILE: &str = "server_url";
 /// Bearer token for the box, entered once per device in Settings. Stored
@@ -305,7 +307,7 @@ impl AppState {
     /// the fresher content is merely cached under the older stamp and the next
     /// call re-parses — an extra parse, never a stale read.
     pub async fn journal_artifacts(&self) -> Result<Arc<JournalArtifacts>, String> {
-        let path = self.app_data_dir.join("budget.journal");
+        let path = self.app_data_dir.join(JOURNAL_FILE);
         let stamp = tokio::fs::metadata(&path)
             .await
             .ok()
@@ -548,7 +550,7 @@ pub fn run() {
                 // The hledger journal file lives in the app data dir alongside
                 // the SurrealDB file. It's a regenerable cache; if it's deleted
                 // the rebuild() path replays all events to reconstruct it.
-                let journal_path = app_data.join("budget.journal");
+                let journal_path = app_data.join(JOURNAL_FILE);
 
                 // Feature gating on the projection side happens in `registry` and
                 // nowhere else — including the list itself, so this cannot drift
