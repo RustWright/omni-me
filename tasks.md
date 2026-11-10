@@ -1422,7 +1422,13 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   archived bytes are skipped. Unverified: whether the reset route takes a `-backfill` source.
   Noticed, not chased: yahoo's batch lists uids descending (gmail's ascend), against "oldest
   first" in `docs/src/archive.md`.
-  ⏳ Next: F1, once `/etc/omni-me/credentials-agent.toml` exists (his).
+- ▶ F1 STARTED 2026-11-10 (his go). ✅ `/etc/omni-me/credentials-agent.toml` created by his run of
+  `~/omni-dev-tools/f1_agent_credentials.py` (live's 8 `[llm*]` sections verbatim, nothing else,
+  10001:10001 600, 1,134 bytes). Agent image building: `build-agent-image.yml` from overlay `main`,
+  public `fed4668`, run `42843024641`. Then: stop dev (server + agent, ruled 10-17), he dispatches
+  `deploy.yml` with `agent_image`, I watch memory through the first sweep (~4.5 h in B4).
+  Noticed: the dev agent runs on `omni-dev-b4_agent_data` with `credentials-dev.toml`, so dev's
+  compose may still point at B4's volumes (`~/omni-dev/docker-compose.yml`); not checked.
 - 🔴 RULED 2026-11-09 (his pick, my recommendation): one fresh design session for (1) notification
   criticality, finance first, "so I don't get inundated with notifications and basically tune
   everything out or start missing the important ones hidden in the noise", then (2) an agentic
