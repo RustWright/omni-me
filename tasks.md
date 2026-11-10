@@ -1343,7 +1343,11 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   `txn_id`s, 2019-05-29 → 2026-10-31; every other type +0 except `journal_entry_updated` +13, all
   from the phone at 13:11–13:14Z (him journaling during the push). Backup of the import dir before
   the push: `~/reimport-live-20261109.pre-push-20261110T081149`. Counts: `state/live/counts-*-e2.json`.
-  ⏳ Devices show the history; then E3 on his go.
+  ✅ DEVICES 2026-11-10 (his report): phone and desktop both pulled it and show transactions
+  through 2026-10-31, no Apply needed (an inbound `sync:applied` refetches the Ledger).
+  E3 dry run on live (`--instance production` accepted): 1,090 files (792 PDF, 298 CSV), 1,034
+  distinct sha256, 56 in-corpus duplicates. Rehearsal was 1,041 / 984 / 57; +49 files = the
+  extension's statements and October CSV minus the two deleted overlapping CSVs. ⏳ E3 on his go.
 - 🔴 RULED 2026-11-09 (his pick, my recommendation): one fresh design session for (1) notification
   criticality, finance first, "so I don't get inundated with notifications and basically tune
   everything out or start missing the important ones hidden in the noise", then (2) an agentic

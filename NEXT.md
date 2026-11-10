@@ -4,12 +4,12 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — devices show the history, then E3 on his go
-E2 is done and verified on live (`tasks.md` § Stage 4, "✅ E2 DONE"). Then:
-1. He confirms both devices show the imported transactions (Ledger may need one Apply, filed
-   nitpick in § Open).
-2. Ask his go for E3: `archive-upload.py --instance production` (1,041 docs), ruled right after E2
-   (`tasks.md` § Stage 4, E). Re-verify the script and the count live before asking.
+## ▶ NEXT ACTION — E3 on his go
+E2 is done, on live and on both devices; E3's dry run is done (`tasks.md` § Stage 4, "✅ E2 DONE"
+and the lines under it). Then:
+1. His go for E3: `scripts/archive-upload.py ~/paisa-ledger-restore/extracted/paisa-ledger
+   --server <live, as in livesrv.py> --instance production`. Expect 1,090 seen, 1,034
+   archived, 56 already archived; tally `document_archived` before and after.
 ⚠️ E4: the import stops at different dates per account, so re-ask "where it stops" per mailbox.
 ⛔ Live is the pause: every live step waits for his go, one at a time. Production deploys and
 releases are his to dispatch (the permission check refuses mine); hand him the exact command.
@@ -22,7 +22,7 @@ pairs with the public ref, and before any overlay build run overlay `ci.yml` wit
 `-f public_ref=<full public SHA>` (`project-overlay-ci-blind-spot`).
 
 ## ⛔ Waiting on him
-- **The device check after E2**, then **his go for E3** (live).
+- **His go for E3** (live).
 - **The design session's decisions**: `DESIGN_PREREAD.md` § Decisions, Parts 1 and 2 (read first).
 - **Live credentials for B5**: `[imap.*]` mailboxes and a reader seat, before E4 (live has no `[llm]` at all).
 - **Retention timers on live**, set from the phone, before the backfill is switched on.
