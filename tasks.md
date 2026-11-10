@@ -1306,6 +1306,23 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   InTransit 0, 0 uncategorized, every account at its statement close, regen-twice identical, the
   ledger's own NEXT.md rewritten. Copied to P: (old copy at `P:\Backups\paisa-ledger.pre-extend-
   2026-11-09`, 1,904 files), overlapping CSVs deleted there, text files diffed equal.
+- ✅ E1 DONE 2026-11-09 16:48Z (his go; the confirm was his `!` command, the permission check
+  refuses mine): tally 22,738 → 12,121, exactly the 4 finance types (10,618) gone, +1 `data_wiped`,
+  all else +0. Server snapshot `/data/wipe-snapshots/20261109T164831.600Z-…surql` (reported; my
+  listing was refused). Tooling: `~/omni-dev-tools/livesrv.py` (devsrv pointed at live, own state
+  dir). E2 prepared: import tools rebuilt at public `0d22343` (run `42659524501`; the ONNX copy in
+  `build-import-tools.yml` failed silently, `|| true`, and the tools ran without it), 11,048 txns
+  into `~/reimport-live-20261109/local.db` under `reimport-live-20261109`, = `ledger print` count,
+  2019-05-29 → 2026-10-31. NOT pushed.
+- 🐞 FOUND 2026-11-09 (his desktop test, his idea to turn the tab on): a device that pulls a feature
+  wipe while that feature is OFF keeps the feature's projection rows forever. Verified from source
+  (`registry::build_projections` registers only enabled features; `pull_only` purges the events and
+  the puller's `rebuild()` covers registered projections only, then clears `rebuild_owed`); matches
+  the observation (desktop 1.2.1 on live, 0 down, transactions still shown), not reproduced on the
+  device's DB. Both devices had Finances off. The integration test checked the event log only.
+  Contradicts the Features note in Settings ("turning it back on rebuilds from your history").
+  🔴 RULED 2026-11-09 (his pick, my recommendation): fix + release 1.2.2 first, devices heal on
+  update, verify both, then E2. Beat: Danger Zone wipe + Sync Now by hand on both devices.
 - 🔴 RULED 2026-11-09 (his pick, my recommendation): one fresh design session for (1) notification
   criticality, finance first, "so I don't get inundated with notifications and basically tune
   everything out or start missing the important ones hidden in the noise", then (2) an agentic
