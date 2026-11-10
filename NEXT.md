@@ -4,15 +4,12 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — release 1.2.2, verify both devices, then E2
-E1 is done; E2 is held for the stale-table bug and its fix (`tasks.md` § Stage 4, "✅ E1 DONE" and
-"🐞 FOUND 2026-11-09"; ruling there). Stamped and green: public `4e10d95`, overlay lock `fa85d82`;
-the overlay release merge `7fd23c6` is prepared on LOCAL overlay `main`, not pushed. Then:
-1. He pushes both mains; overlay CI on `main` (pairs with public `main`) must be green.
-2. He dispatches `app-release.yml` (version 1.2.2); both devices update.
-3. Desktop (Finances on) must show NO transactions after its first 1.2.2 launch; phone heals when
-   Finances is next switched on there.
-4. Ask his go for E2: `push_local` from `~/reimport-live-20261109/local.db`, device id
+## ▶ NEXT ACTION — verify the phone on 1.2.2, then E2
+1.2.2 is released and the desktop is verified (`tasks.md` § Stage 4, "🐞 FOUND 2026-11-09" and the
+✅ lines under it; its two nitpicks are filed in § Open, his call not to chase them now). Then:
+1. Phone: on 1.2.2, switch Finances on; Overview AND Ledger must show no transactions (the Ledger
+   may need one Apply, the filed nitpick).
+2. Ask his go for E2: `push_local` from `~/reimport-live-20261109/local.db`, device id
    `reimport-live-20261109`, tools in `~/omni-dev-tools/import-tools-0d22343/`. Verify on live as
    data: +11,048 `transaction_recorded`, all else +0, distinct ids, 2019-05-29 → 2026-10-31.
 ⚠️ E4: the import stops at different dates per account, so re-ask "where it stops" per mailbox.
@@ -27,7 +24,7 @@ pairs with the public ref, and before any overlay build run overlay `ci.yml` wit
 `-f public_ref=<full public SHA>` (`project-overlay-ci-blind-spot`).
 
 ## ⛔ Waiting on him
-- **Push both mains, dispatch 1.2.2**, update both devices; then **his go for E2** (live).
+- **The phone check on 1.2.2**, then **his go for E2** (live).
 - **The design session's decisions**: `DESIGN_PREREAD.md` § Decisions, Parts 1 and 2 (read first).
 - **Live credentials for B5**: `[imap.*]` mailboxes and a reader seat, before E4 (live has no `[llm]` at all).
 - **Retention timers on live**, set from the phone, before the backfill is switched on.

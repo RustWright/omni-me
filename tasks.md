@@ -1332,7 +1332,10 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   once (harmless, slower boot). ✅ 1.2.2 RELEASED 2026-11-10 (stamp `4e10d95`, overlay lock `fa85d82`,
   merge `7fd23c6`; CI green on all; he pushed both mains and dispatched run `42758525364`):
   manifests 1.2.2 both, APK served whole, sha256 = manifest (`66ec1a8b…`), ~6 min to download.
-  ⏳ Both devices update; the desktop must show no transactions, then E2 on his go.
+  ✅ DESKTOP VERIFIED 2026-11-10 (his report): updated, Finances shows the wipe, no transactions.
+  Two nitpicks, his call not to chase them now, filed under § Open: the post-update splash hang
+  came back (Platform and onboarding), and the Ledger showed pre-wipe rows until Apply (Finances).
+  ⏳ Phone: heals when Finances is next switched on there. Then E2 on his go.
 - 🔴 RULED 2026-11-09 (his pick, my recommendation): one fresh design session for (1) notification
   criticality, finance first, "so I don't get inundated with notifications and basically tune
   everything out or start missing the important ones hidden in the noise", then (2) an agentic
@@ -4787,8 +4790,23 @@ Playwright, and Chromium is not the renderer that was broken. It rides the on-de
   transaction not refreshing the ledger until a manual Apply — was fixed in `638d709`
   (`sync_refresh.rs` + `finances.rs`). What remains is the general 20s poll latency and the
   open-view live-refresh gap.
+- [ ] **The Ledger restores pre-wipe rows across a restart** (his desktop, 1.2.2 first launch,
+  2026-11-10; nitpick, not chasing now). Overview was empty; Ledger listed transactions until he
+  pressed Apply. Mechanism verified from source, incident inferred: `LedgerView` rehydrates the
+  non-empty list in `PersistedWorkspace.lists` and skips its first fetch (`restored_pending`); the
+  boot rebuild in `init_all` emits no `sync:applied`, so nothing invalidates it. Sibling of the
+  empty-list poisoning fix in the same function. Likely to repeat on the phone when Finances is
+  switched on. Fix direction (not chosen): revalidate a restored list in the background on mount,
+  or drop `lists` entries for features a wipe or rebuild touched. [S, frontend]
 
 ### Platform and onboarding
+- [ ] **The desktop post-update splash hang is back** (his desktop, 1.2.1 → 1.2.2 via the updater's
+  auto-restart, 2026-11-10; nitpick, not chasing now). Same symptom as the 1.1.2 variant below:
+  stuck on the splash after the auto-restart, a manual close and reopen launched fine. Cause NOT
+  diagnosed. Inferred contributors: a boot invoke added since 1.1.2 that is not `invoke_timed`, or
+  the one-time `budget`/`auto_import` rebuild `4a0f43a` runs in `init_all` lengthening setup. Not
+  known: how long he waited (the 1.1.2 path fails open at 15s). What would settle it: the
+  desktop's log and ring buffer from that launch. [S–M]
 - [x] **Cold-start race: startup invokes fire before `AppState` is managed, and the feature set
   never re-derives.** **FIXED + VERIFIED ON DEVICE 2026-09-07 (v1.1.1 + v1.1.2).** The phone's own
   problem report on 1.1.2 shows all seven commands *recovering* rather than failing —
