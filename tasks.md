@@ -1361,9 +1361,19 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   in the go-live plan: the rehearsal on dev hid it.
   🔴 RULED 2026-11-10 (his pick, my recommendation): the password goes in with the B5 credentials
   edit; E4's dispatch restart runs the re-read. Beat: now, with its own restart (text sooner, but
-  nothing reads documents on live before F1). Script ready, not run: `~/omni-dev-tools/
-  live_pdf_password.py` (his, as root on the box; backup first, names only). After E4's boot: expect
-  139 re-read, `still_locked=0`.
+  nothing reads documents on live before F1). After E4's boot: expect 139 re-read, `still_locked=0`.
+- B5, found 2026-11-10: live already has all three `[imap.*]` and both NGN/USD bank accounts (headers
+  only listed; app passwords unverified against dev's until E4 connects); it lacks `[llm]` and
+  `[secrets]`; its `[gemini]` is ignored by the code. A lone reader seat is impossible: roles inherit
+  `[llm]`, so any `[llm]` turns every role on, and prod enrichment reads 1 doc/min from E4's boot.
+  🔴 RULED 2026-11-10 (his pick, my recommendation): copy dev's whole `[llm]` block to live, the
+  benchmarked slate. Beat: base + `[llm.reader]` only, which runs every other role on the reader's
+  model. Spend of the reading pass unestimated; goes in the owed cost comparison.
+  Script: `~/omni-dev-tools/b5_live_credentials.py`, on the box at `/home/deploy/` (his, as root):
+  one backup, dev's `[llm*]` verbatim + derived `pdf_password_sc_*`, validated (parses, `[llm]` =
+  dev's, nothing else moved) before an atomic replace; names only. Tested on fake files.
+  ⚠️ The boot re-read and the enrichment scheduler start concurrently; if fewer than 139 read, check
+  whether enrichment's transcriber took any first.
 - 🔴 RULED 2026-11-09 (his pick, my recommendation): one fresh design session for (1) notification
   criticality, finance first, "so I don't get inundated with notifications and basically tune
   everything out or start missing the important ones hidden in the noise", then (2) an agentic
