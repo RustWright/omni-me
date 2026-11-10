@@ -1336,7 +1336,14 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   Two nitpicks, his call not to chase them now, filed under § Open: the post-update splash hang
   came back (Platform and onboarding), and the Ledger showed pre-wipe rows until Apply (Finances).
   ✅ PHONE VERIFIED 2026-11-10 (his report): updated cleanly, Finances on, Overview blank; Ledger
-  showed pre-wipe rows until Apply, the same filed nitpick. ⏳ E2 on his go.
+  showed pre-wipe rows until Apply, the same filed nitpick.
+- ✅ E2 DONE 2026-11-10 ~13:12Z (his go): `push_local` (tools `0d22343`) from
+  `~/reimport-live-20261109/local.db` as `reimport-live-20261109`, `pushed=11048`. Tally 12,199 →
+  23,260: `transaction_recorded` 0 → 11,048, all from that device, 11,048 distinct event ids and
+  `txn_id`s, 2019-05-29 → 2026-10-31; every other type +0 except `journal_entry_updated` +13, all
+  from the phone at 13:11–13:14Z (him journaling during the push). Backup of the import dir before
+  the push: `~/reimport-live-20261109.pre-push-20261110T081149`. Counts: `state/live/counts-*-e2.json`.
+  ⏳ Devices show the history; then E3 on his go.
 - 🔴 RULED 2026-11-09 (his pick, my recommendation): one fresh design session for (1) notification
   criticality, finance first, "so I don't get inundated with notifications and basically tune
   everything out or start missing the important ones hidden in the noise", then (2) an agentic

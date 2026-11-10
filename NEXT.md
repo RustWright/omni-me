@@ -4,12 +4,12 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — E2, on his go
-1.2.2 is released and verified on both devices (`tasks.md` § Stage 4, "🐞 FOUND 2026-11-09" and the
-✅ lines under it; two nitpicks filed in § Open, his call not to chase them now). Then:
-1. Ask his go for E2: `push_local` from `~/reimport-live-20261109/local.db`, device id
-   `reimport-live-20261109`, tools in `~/omni-dev-tools/import-tools-0d22343/`. Verify on live as
-   data: +11,048 `transaction_recorded`, all else +0, distinct ids, 2019-05-29 → 2026-10-31.
+## ▶ NEXT ACTION — devices show the history, then E3 on his go
+E2 is done and verified on live (`tasks.md` § Stage 4, "✅ E2 DONE"). Then:
+1. He confirms both devices show the imported transactions (Ledger may need one Apply, filed
+   nitpick in § Open).
+2. Ask his go for E3: `archive-upload.py --instance production` (1,041 docs), ruled right after E2
+   (`tasks.md` § Stage 4, E). Re-verify the script and the count live before asking.
 ⚠️ E4: the import stops at different dates per account, so re-ask "where it stops" per mailbox.
 ⛔ Live is the pause: every live step waits for his go, one at a time. Production deploys and
 releases are his to dispatch (the permission check refuses mine); hand him the exact command.
@@ -22,7 +22,7 @@ pairs with the public ref, and before any overlay build run overlay `ci.yml` wit
 `-f public_ref=<full public SHA>` (`project-overlay-ci-blind-spot`).
 
 ## ⛔ Waiting on him
-- **His go for E2** (live).
+- **The device check after E2**, then **his go for E3** (live).
 - **The design session's decisions**: `DESIGN_PREREAD.md` § Decisions, Parts 1 and 2 (read first).
 - **Live credentials for B5**: `[imap.*]` mailboxes and a reader seat, before E4 (live has no `[llm]` at all).
 - **Retention timers on live**, set from the phone, before the backfill is switched on.
