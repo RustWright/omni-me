@@ -245,13 +245,15 @@ filed the same way every time, and a model left to itself files a lunch under
 whatever account sounds right. Three things hold it to your conventions:
 
 - **A money request goes to the ledger specialist.** One small model call routes each
-  request first; a request about money gets your conventions in its instructions —
-  the note you title "Ledger conventions", or, without one, the accounts the ledger
-  already uses — and the rule to follow how the same payee was recorded before.
+  request first; a request about money gets the accounts the ledger already uses, your
+  note titled "Ledger conventions" if you have one, and the rule to follow how the same
+  payee was recorded before.
 - **An account the ledger does not have is refused.** The refusal names the closest
   real accounts and goes back to the model on the same turn, so it can fix the entry
-  rather than hand you a wrong one. With a conventions note, "the ledger has it" means
-  your note names it: accounts the importers invented do not count.
+  rather than hand you a wrong one. "The ledger has it" means a past entry uses it or
+  your note names it, so an account you open by hand is usable at once. Only your own
+  entries add accounts: the assistant cannot, and a receipt's unknown account is
+  mapped to a known one or left for review. The note's job is when to use each account.
 - **A payee's past account is a warning.** If the same payee was recorded before under a
   different spending account, the proposal still goes through, and its card ends with
   "Check: past entries used ..." so you decide. It was a refusal until "Uber Eats" under

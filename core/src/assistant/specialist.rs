@@ -81,19 +81,19 @@ pub async fn brief(db: &Database, specialist: Specialist) -> String {
     match specialist {
         Specialist::General => String::new(),
         Specialist::Ledger => {
-            let context = match ledger_grounding::conventions_note(db).await {
-                Some(note) => format!(
+            // The list is what a proposal is checked against, so it is always sent;
+            // the note then only has to say when each account applies.
+            let accounts = ledger_grounding::known_accounts(db).await;
+            let mut context = format!(
+                "\n\n### Accounts in this ledger\n{}",
+                accounts.into_iter().collect::<Vec<_>>().join("\n")
+            );
+            if let Some(note) = ledger_grounding::conventions_note(db).await {
+                context.push_str(&format!(
                     "\n\n### The user's conventions (their note \"{}\")\n{}",
                     note.title, note.raw_text
-                ),
-                None => {
-                    let accounts = ledger_grounding::known_accounts(db).await;
-                    format!(
-                        "\n\n### Accounts in this ledger\n{}",
-                        accounts.into_iter().collect::<Vec<_>>().join("\n")
-                    )
-                }
-            };
+                ));
+            }
             format!("{LEDGER_RULES}{context}")
         }
     }

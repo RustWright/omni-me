@@ -52,20 +52,21 @@ pub fn accounts_named_in(text: &str) -> BTreeSet<String> {
         .collect()
 }
 
-/// The accounts a proposal may name.
+/// The accounts a proposal may name: every account the ledger uses, the declared
+/// ones, and any the conventions note names.
 ///
-/// With a conventions note, its accounts plus the declared ones: the ledger
-/// itself may hold names the importers invented, which are not his convention.
-/// Without one, every account the ledger already uses.
+/// The ledger counts even with a note, so an account the user opens by manual
+/// entry is usable at once (his ruling, 2026-11-10). Neither a proposal nor a
+/// grounded receipt can add an account, so only the user's own writes grow this.
 pub async fn known_accounts(db: &Database) -> BTreeSet<String> {
     let mut known: BTreeSet<String> = queries::list_accounts(db)
         .await
         .map(|rows| rows.into_iter().map(|a| a.id).collect())
         .unwrap_or_default();
     known.insert(UNMATCHED_ACCOUNT.to_string());
-    match conventions_note(db).await {
-        Some(note) => known.extend(accounts_named_in(&note.raw_text)),
-        None => known.extend(ledger_accounts(db).await),
+    known.extend(ledger_accounts(db).await);
+    if let Some(note) = conventions_note(db).await {
+        known.extend(accounts_named_in(&note.raw_text));
     }
     known
 }
@@ -556,6 +557,41 @@ mod tests {
             !known.contains("Expenses:Removed"),
             "a removed entry's account: {known:?}"
         );
+    }
+
+    /// An account opened by manual entry is usable before anyone adds it to the
+    /// note, and an invented one is still refused.
+    #[tokio::test]
+    async fn with_a_note_the_ledgers_accounts_stay_known() {
+        let db = crate::db::test_db().await;
+        use crate::events::Projection;
+        crate::events::BudgetProjection
+            .init_schema(&db)
+            .await
+            .unwrap();
+        crate::events::NotesProjection
+            .init_schema(&db)
+            .await
+            .unwrap();
+        db.query(
+            "CREATE generic_notes:conv SET title = 'Ledger conventions', \
+             raw_text = 'Meals: Expenses:Food:Dining. Cash: Assets:Cash.', \
+             tags = [], created_at = time::now(), updated_at = time::now();
+             CREATE transactions:v CONTENT { removed: false, superseded_by: NONE, \
+             date: '2026-11-01', description: 'Vet visit', cleared: false, \
+             postings: [{ account: 'Expenses:Pets', amount: '80.00', commodity: 'CAD' }, \
+             { account: 'Assets:Cash', amount: '-80.00', commodity: 'CAD' }], \
+             tags_top: [], merged_ids: [], created_at: time::now(), updated_at: time::now() };",
+        )
+        .await
+        .unwrap();
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 11, 10).unwrap();
+        let pets = "2026-11-09 Pet food\n    Expenses:Pets  30.00 CAD\n    \
+                    Assets:Cash  -30.00 CAD\n";
+        assert!(check_record(&db, pets, today).await.is_ok());
+        let invented = "2026-11-09 Pet food\n    Expenses:Animals  30.00 CAD\n    \
+                        Assets:Cash  -30.00 CAD\n";
+        assert!(check_record(&db, invented, today).await.is_err());
     }
 
     /// L-W10: past "Uber" rides were transport, and "Uber Eats" is food. The

@@ -1429,6 +1429,20 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   `deploy.yml` with `agent_image`, I watch memory through the first sweep (~4.5 h in B4).
   Noticed: the dev agent runs on `omni-dev-b4_agent_data` with `credentials-dev.toml`, so dev's
   compose may still point at B4's volumes (`~/omni-dev/docker-compose.yml`); not checked.
+- F2 (his redirect 2026-11-10): the conventions note is DRAFTED BY ME from the paisa ledger
+  (`CONVENTIONS.md` + the ledger's own data), and he reviews it; not written by him from scratch.
+  Size matters: the note's whole text rides every money call (the 44 KB dev note cost 2.3x tokens).
+  My proposal, not yet ruled: one note of classification rules only (no importer engineering, no
+  merchant table, which the payee check over his 11,048 transactions now covers), plus a list of
+  doc-vs-data inconsistencies for his ruling; it replaces the separate "portable summary".
+  🔴 RULED 2026-11-10 (his pick, my recommendation): known accounts = the ledger's accounts + the
+  declared ones + any the note names, so an account he opens by manual entry is usable at once
+  ("more sustainable and robust"). Beat: the note as the only gatekeeper (as built 10-11; its
+  reason, importer-invented names, does not hold on live, whose ledger is his paisa ledger).
+  ✅ BUILT: `known_accounts` always unions the ledger; the ledger brief always lists the accounts
+  and adds the note after, so the note need not list them. Test `with_a_note_the_ledgers_accounts_
+  stay_known`. `docs/src/assistant.md` updated. fmt + clippy clean; tests run in CI. Not released:
+  ships with the next release, which must land before the note goes on live.
 - 🔴 RULED 2026-11-09 (his pick, my recommendation): one fresh design session for (1) notification
   criticality, finance first, "so I don't get inundated with notifications and basically tune
   everything out or start missing the important ones hidden in the noise", then (2) an agentic
