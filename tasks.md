@@ -1359,6 +1359,11 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   had one derived for the rehearsal, which is why it read all 984. Recoverable, not lost: the boot
   re-read (`reread_textless_pdfs`, once per server boot) reads them once live has the password. Gap
   in the go-live plan: the rehearsal on dev hid it.
+  🔴 RULED 2026-11-10 (his pick, my recommendation): the password goes in with the B5 credentials
+  edit; E4's dispatch restart runs the re-read. Beat: now, with its own restart (text sooner, but
+  nothing reads documents on live before F1). Script ready, not run: `~/omni-dev-tools/
+  live_pdf_password.py` (his, as root on the box; backup first, names only). After E4's boot: expect
+  139 re-read, `still_locked=0`.
 - 🔴 RULED 2026-11-09 (his pick, my recommendation): one fresh design session for (1) notification
   criticality, finance first, "so I don't get inundated with notifications and basically tune
   everything out or start missing the important ones hidden in the noise", then (2) an agentic

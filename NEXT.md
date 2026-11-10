@@ -4,13 +4,10 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — his ruling on the PDF password for live, then E4
-E2 and E3 are done (`tasks.md` § Stage 4, "✅ E3 DONE"). 139 encrypted statements of the NGN/USD
-bank are archived without text until live has a `pdf_password*` secret and its server reboots.
-1. Ask him: fold the password into the B5 credentials edit (the E4 dispatch's restart runs the
-   re-read), or add it now with its own restart. Live credentials are his to edit (`!` command;
-   `dev_pdf_password.py` is the dev-side precedent, and it writes DEV, not live).
-2. E4 needs B5's credentials first (below).
+## ▶ NEXT ACTION — B5's credentials edit on live, then E4
+E2 and E3 are done (`tasks.md` § Stage 4, "✅ E3 DONE" and its ruling). Then:
+1. He edits live's credentials for B5, and runs `~/omni-dev-tools/live_pdf_password.py` with it.
+2. E4 on his go; after its boot, check the re-read: 139 encrypted statements read, `still_locked=0`.
 ⚠️ E4: the import stops at different dates per account, so re-ask "where it stops" per mailbox.
 ⛔ Live is the pause: every live step waits for his go, one at a time. Production deploys and
 releases are his to dispatch (the permission check refuses mine); hand him the exact command.
@@ -23,7 +20,6 @@ pairs with the public ref, and before any overlay build run overlay `ci.yml` wit
 `-f public_ref=<full public SHA>` (`project-overlay-ci-blind-spot`).
 
 ## ⛔ Waiting on him
-- **The PDF password on live**: with B5's edit, or now with its own restart.
 - **The design session's decisions**: `DESIGN_PREREAD.md` § Decisions, Parts 1 and 2 (read first).
 - **Live credentials for B5**: `[imap.*]` mailboxes and a reader seat, before E4 (live has no `[llm]` at all).
 - **Retention timers on live**, set from the phone, before the backfill is switched on.
