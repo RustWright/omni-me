@@ -1390,6 +1390,23 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   `enable_imap=on`; overlay CI on `main` green, run `42756971925`); boot replays and rebuilds
   `budget`/`auto_import` once; each source's first tick archives its newest message; then I pause
   all, rewind each `since 2026-11-01`, resume, and check the re-read log line.
+- ✅ E4 DONE 2026-11-10 (his dispatch, run `42831611590`: build 22m53s, deploy 4m6s, healthy; live
+  now 1.2.2's server). Boot: `budget`/`auto_import` rebuilt once (24,568 events, failed=0); re-read
+  `candidates=139 read=139 still_locked=0`. ⚠️ The predicted race happened once: enrichment's
+  transcriber (DeepSeek-V4.1-Flash) read one of the 139 at 14:38:35, 20 s before the re-read; that
+  document holds both readings, extracted outranks transcribed, cost one call. Mail on with live's
+  existing app passwords (all `auth=active`); first ticks archived 1 newest message each. Paused
+  all six, rewound to 2026-11-01 (uids 15043→14997, 3690→3668, 418296→418292), resumed all six.
+  First pass: 46 + 21 + 4 fetched; 67 `document_archived`, 88 `document_fields_extracted`, 17
+  `auto_import_batch_proposed` (all `receipts`), no commit. One message failed and was skipped (a
+  tax-slip notice with no extractable text); one shadow triage call hit a network error.
+  Drafts are dated 10-30 → 11-08; two are pre-November, both his to dismiss in review: a rent
+  e-transfer 10-30 (795.00, a Nov reply to an Oct transfer, likely already in the ledger) and a
+  Walmart 10-31 "add more items" mail.
+  🐞 Filed: that Walmart draft carries a single `Unmatched -0` posting, though the receipt handler
+  refuses "no non-zero amount" elsewhere in the same pass, so a zero draft got past that check.
+  Not chased. ⏳ Next: retention timers on live (his, from the phone), then
+  `archive.backfill_before = 2026-11-01`; then F1.
 - 🔴 RULED 2026-11-09 (his pick, my recommendation): one fresh design session for (1) notification
   criticality, finance first, "so I don't get inundated with notifications and basically tune
   everything out or start missing the important ones hidden in the noise", then (2) an agentic
