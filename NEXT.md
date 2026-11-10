@@ -6,9 +6,10 @@ site. ⛔ If a line here could be derived from either, it does not belong here �
 
 ## ▶ NEXT ACTION — B5's credentials edit on live, then E4
 E2 and E3 are done (`tasks.md` § Stage 4, "✅ E3 DONE" and its ruling). Then:
-1. He runs `/home/deploy/b5_live_credentials.py` as root on the box (`tasks.md` § Stage 4, "B5,
-   found 2026-11-10"): dev's `[llm]` block + the PDF password into live's credentials.
-2. E4 on his go; after its boot, check the re-read: 139 encrypted statements read, `still_locked=0`.
+B5 is done too (`tasks.md` § Stage 4, "✅ B5 DONE"). Then:
+1. Ask him the cursor date per mailbox (the import stops at different dates per account).
+2. E4 on his go: he dispatches `deploy.yml` (`enable_imap=on`, public `main`); then pause, rewind,
+   resume; after its boot, check the re-read: 139 encrypted statements read, `still_locked=0`.
 ⚠️ E4: the import stops at different dates per account, so re-ask "where it stops" per mailbox.
 ⛔ Live is the pause: every live step waits for his go, one at a time. Production deploys and
 releases are his to dispatch (the permission check refuses mine); hand him the exact command.
@@ -22,7 +23,7 @@ pairs with the public ref, and before any overlay build run overlay `ci.yml` wit
 
 ## ⛔ Waiting on him
 - **The design session's decisions**: `DESIGN_PREREAD.md` § Decisions, Parts 1 and 2 (read first).
-- **B5**: his run of `b5_live_credentials.py` on the box, before E4.
+- **E4**: the cursor date per mailbox, then his deploy dispatch.
 - **Retention timers on live**, set from the phone, before the backfill is switched on.
 - **`/etc/omni-me/credentials-agent.toml`** on the box, `[llm]` only (+ `auth_token` if set), before F1.
 - **R2**: his Cloudflare account, a bucket and a scoped API token, for the off-box blob copy.

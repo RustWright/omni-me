@@ -1374,6 +1374,12 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   dev's, nothing else moved) before an atomic replace; names only. Tested on fake files.
   ⚠️ The boot re-read and the enrichment scheduler start concurrently; if fewer than 139 read, check
   whether enrichment's transcriber took any first.
+  ✅ B5 DONE 2026-11-10 14:03Z (his run): 8 `[llm*]` sections copied, 2 passwords, backup
+  `/etc/omni-me/credentials.toml.bak-20261110T140332-pre-b5`; owner 10001 (container `app`), 600,
+  as dev's. Not live until E4's boot. E4's deploy builds public `main` (1.2.2) over live's
+  `sha-db18b66` (2026-10-18); every fix E4 relies on is in `main` (`c8ca27c`, `600a0d5`, `4a0f43a`).
+  Noticed: live's two bank-source sections carry a `_disabled` suffix, so F3 needs them renamed
+  back (headers only seen).
 - 🔴 RULED 2026-11-09 (his pick, my recommendation): one fresh design session for (1) notification
   criticality, finance first, "so I don't get inundated with notifications and basically tune
   everything out or start missing the important ones hidden in the noise", then (2) an agentic
