@@ -1405,8 +1405,14 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   Walmart 10-31 "add more items" mail.
   🐞 Filed: that Walmart draft carries a single `Unmatched -0` posting, though the receipt handler
   refuses "no non-zero amount" elsewhere in the same pass, so a zero draft got past that check.
-  Not chased. ⏳ Next: retention timers on live (his, from the phone), then
-  `archive.backfill_before = 2026-11-01`; then F1.
+  Not chased.
+- ✅ RETENTION TIMERS ON LIVE 2026-11-10 ~15:03–15:10Z (his, from the phone, all 12 verified on live
+  as `document_retention_set` from the phone): his 10-12 values except `promo` 14 → 7 days, his
+  change today ("I don't need them to be kept for that long"). Forever: receipt, statement,
+  personal, other; banking_notice 365, policy_notice 90, security_alert 30, delivery_update 30,
+  promo 7, social 7, dev_notification 7, login_code 1. No UI sets the backfill date:
+  `set_config.py <live> production archive.backfill_before text 2026-11-01`.
+  ⏳ Next: the backfill date on his go; then F1.
 - 🔴 RULED 2026-11-09 (his pick, my recommendation): one fresh design session for (1) notification
   criticality, finance first, "so I don't get inundated with notifications and basically tune
   everything out or start missing the important ones hidden in the noise", then (2) an agentic

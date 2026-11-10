@@ -6,8 +6,8 @@ site. ⛔ If a line here could be derived from either, it does not belong here �
 
 ## ▶ NEXT ACTION — the backfill on live, then F1
 E1–E4 and B5 are done; mail intake runs on live from 2026-11-01 (`tasks.md` § Stage 4, "✅ E4 DONE").
-1. He sets the retention timers on live from the phone; then I set `archive.backfill_before =
-   2026-11-01` (ruled: it meets E4's date) and watch the first backfill ticks.
+1. Timers are set (`tasks.md`, "✅ RETENTION TIMERS ON LIVE"). On his go, I set
+   `archive.backfill_before = 2026-11-01` (ruled: it meets E4's date) and watch the first ticks.
 2. F1: `/etc/omni-me/credentials-agent.toml` (his), dev stopped during the first sweep (ruled).
 ⚠️ Two pre-November drafts sit in his review queue (`tasks.md`, same entry): his to dismiss.
 ⛔ Live is the pause: every live step waits for his go, one at a time. Production deploys and
@@ -21,7 +21,7 @@ branch that pairs with the public ref, and before any overlay build run overlay 
 `-f public_ref=<full public SHA>` (`project-overlay-ci-blind-spot`).
 
 ## ⛔ Waiting on him
-- **Retention timers on live**, set from the phone, before the backfill is switched on.
+- **His go for the backfill date** on live.
 - **`/etc/omni-me/credentials-agent.toml`** on the box, `[llm]` only (+ `auth_token` if set), before F1.
 - **The two pre-November drafts** in review: dismiss or keep.
 - **The design session's decisions**: `DESIGN_PREREAD.md` § Decisions, Parts 1 and 2 (read first).
