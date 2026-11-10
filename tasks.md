@@ -1335,7 +1335,8 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   ✅ DESKTOP VERIFIED 2026-11-10 (his report): updated, Finances shows the wipe, no transactions.
   Two nitpicks, his call not to chase them now, filed under § Open: the post-update splash hang
   came back (Platform and onboarding), and the Ledger showed pre-wipe rows until Apply (Finances).
-  ⏳ Phone: heals when Finances is next switched on there. Then E2 on his go.
+  ✅ PHONE VERIFIED 2026-11-10 (his report): updated cleanly, Finances on, Overview blank; Ledger
+  showed pre-wipe rows until Apply, the same filed nitpick. ⏳ E2 on his go.
 - 🔴 RULED 2026-11-09 (his pick, my recommendation): one fresh design session for (1) notification
   criticality, finance first, "so I don't get inundated with notifications and basically tune
   everything out or start missing the important ones hidden in the noise", then (2) an agentic
@@ -4795,8 +4796,8 @@ Playwright, and Chromium is not the renderer that was broken. It rides the on-de
   pressed Apply. Mechanism verified from source, incident inferred: `LedgerView` rehydrates the
   non-empty list in `PersistedWorkspace.lists` and skips its first fetch (`restored_pending`); the
   boot rebuild in `init_all` emits no `sync:applied`, so nothing invalidates it. Sibling of the
-  empty-list poisoning fix in the same function. Likely to repeat on the phone when Finances is
-  switched on. Fix direction (not chosen): revalidate a restored list in the background on mount,
+  empty-list poisoning fix in the same function. Repeated on the phone the same day when Finances
+  was switched on. Fix direction (not chosen): revalidate a restored list in the background on mount,
   or drop `lists` entries for features a wipe or rebuild touched. [S, frontend]
 
 ### Platform and onboarding
