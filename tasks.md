@@ -1347,7 +1347,18 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   through 2026-10-31, no Apply needed (an inbound `sync:applied` refetches the Ledger).
   E3 dry run on live (`--instance production` accepted): 1,090 files (792 PDF, 298 CSV), 1,034
   distinct sha256, 56 in-corpus duplicates. Rehearsal was 1,041 / 984 / 57; +49 files = the
-  extension's statements and October CSV minus the two deleted overlapping CSVs. ⏳ E3 on his go.
+  extension's statements and October CSV minus the two deleted overlapping CSVs.
+- ✅ E3 DONE 2026-11-10 13:29–13:45Z (his go), under a memory watcher (`~/omni-dev-tools/e3_guarded.py`,
+  logs `state/live/e3/`; dev agent stopped for the run and restarted after). 1,090 seen, 1,034
+  archived, 56 already archived, 0 failed. Tally 23,260 → 24,568: `document_archived` +1,034 (1,034
+  distinct sha256), `document_fields_extracted` +265 (deterministic `parser:*`, device
+  `server-auto-import`, no model), `journal_entry_updated` +9 (phone, him), all else +0. Live server
+  peak 1,187 MiB of 1,500m; box never below 2,002 MB free. The rehearsal's 1.77 GiB was uncapped dev.
+  🐞 139 documents have NO text: every PDF of the NGN/USD bank (its USD folder 85 + NGN folder 54), which
+  encrypts all its statements. Live has no `pdf_password*` secret (F5 gap 1, still open there); dev
+  had one derived for the rehearsal, which is why it read all 984. Recoverable, not lost: the boot
+  re-read (`reread_textless_pdfs`, once per server boot) reads them once live has the password. Gap
+  in the go-live plan: the rehearsal on dev hid it.
 - 🔴 RULED 2026-11-09 (his pick, my recommendation): one fresh design session for (1) notification
   criticality, finance first, "so I don't get inundated with notifications and basically tune
   everything out or start missing the important ones hidden in the noise", then (2) an agentic
