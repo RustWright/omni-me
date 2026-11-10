@@ -1323,6 +1323,16 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   Contradicts the Features note in Settings ("turning it back on rebuilds from your history").
   🔴 RULED 2026-11-09 (his pick, my recommendation): fix + release 1.2.2 first, devices heal on
   update, verify both, then E2. Beat: Danger Zone wipe + Sync Now by hand on both devices.
+  ✅ BUILT `4a0f43a`: `ProjectionRunner` records `wipe_rebuilt` (wipe id × projection) after every
+  rebuild; `init_all` rebuilds any registered projection a feature wipe in the log touched
+  (`registry::owned_projections`) without that record. Siblings: `wipe_all_data` now clears every
+  projection, registered or not (`registry::clear_every_projection`); `budget.journal` is one const
+  (`JOURNAL_FILE`) at all three app sites. 2 tests (the desktop's exact sequence; no second rebuild).
+  ⚠️ Live's server has no record for E1's wipe, so its next boot rebuilds `budget` and `auto_import`
+  once (harmless, slower boot). ✅ 1.2.2 RELEASED 2026-11-10 (stamp `4e10d95`, overlay lock `fa85d82`,
+  merge `7fd23c6`; CI green on all; he pushed both mains and dispatched run `42758525364`):
+  manifests 1.2.2 both, APK served whole, sha256 = manifest (`66ec1a8b…`), ~6 min to download.
+  ⏳ Both devices update; the desktop must show no transactions, then E2 on his go.
 - 🔴 RULED 2026-11-09 (his pick, my recommendation): one fresh design session for (1) notification
   criticality, finance first, "so I don't get inundated with notifications and basically tune
   everything out or start missing the important ones hidden in the noise", then (2) an agentic
