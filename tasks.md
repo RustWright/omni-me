@@ -1453,6 +1453,11 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   reproduces it byte for byte (the WS importer learns it from the journal), `bal -B` 0; copied to P:
   and read back equal. ⏳ Live: his run of `~/omni-dev-tools/refile_live.py` (generic: exact
   description, from/to account, tags, refuses unless the expected count matches).
+- F2 Q3 🔴 RULED 2026-11-11 (his words): "let convenience just go to food:dining, typically I'm not
+  buying groceries from there". ✅ Paisa ledger: Handy Mart (06-25) and Quick Trip Variety (09-03)
+  moved to `Food:Dining`, `kind: convenience` dropped, and their two `WS_MERCH` rules changed to
+  match; regen identical, `bal -B` 0; P: copied and read back equal. Draft note's Dining line says
+  so. ⏳ Live: his `refile_live.py` run for the two.
 - F2 (his redirect 2026-11-10): the conventions note is DRAFTED BY ME from the paisa ledger
   (`CONVENTIONS.md` + the ledger's own data), and he reviews it; not written by him from scratch.
   Size matters: the note's whole text rides every money call (the 44 KB dev note cost 2.3x tokens).
