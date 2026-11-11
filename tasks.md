@@ -1528,8 +1528,11 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   `public-ref` stays `main`). CI green: public `43018680721`, overlay push `43018673844`, overlay
   dispatch `43018695474` built against `70cfb33`. Ordering trap re-verified: the server's receipt
   extraction (`spending_accounts`/`ground_hints`) calls `known_accounts` too, so live's agent
-  running `ff94381` is not enough; the note waits for the server deploy. ⏳ His: push both mains,
-  dispatch deploy (server), then App release `version=1.2.3`.
+  running `ff94381` is not enough; the note waits for the server deploy. ✅ He pushed both mains
+  (public `fe6a299`, overlay `6b466bd`); overlay CI on `main` `43020619601` green (the push run
+  `43020486906` cancelled, his call: it ran before public `main` moved). ✅ SERVER LIVE 12:58Z: his
+  deploy `43021671571`, image `sha-6b466bd` (public `fe6a299`, core/server 1.2.3) over `sha-7fd23c6`,
+  healthy after 2 checks; agent untouched (`dev-0b0bccf`). ⏳ His: App release `version=1.2.3`.
 - F2 (his redirect 2026-11-10): the conventions note is DRAFTED BY ME from the paisa ledger
   (`CONVENTIONS.md` + the ledger's own data), and he reviews it; not written by him from scratch.
   Size matters: the note's whole text rides every money call (the 44 KB dev note cost 2.3x tokens).
