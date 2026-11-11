@@ -1572,8 +1572,15 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   (Wise CAD/USD/EUR full accounts, it had none, the 09-07 "none mapped"; the WS six from 09-04).
   Every other section asserted unchanged; in place, inode 260607 kept; backup
   `credentials.toml.bak-20261111T161534Z-pre-f3`. Read only at boot, so inert until step 3.
-  ⏳ Step 3: overlay CI green on `7a97995` (first two runs died on the runner's apt mirror), merge
-  to overlay `main`, his deploy with `enable_bank=on`; then watch both feeds' first ticks.
+  ✅ F3 DONE 2026-11-11 17:34Z. Overlay CI `43052114956` green on `7a97995` at the 4th attempt
+  (three died before building: the runners could not resolve `azure.archive.ubuntu.com`,
+  15:51-16:22Z, no GitHub incident posted); 49 passed incl. the 3 new. Merge `816e821`, he pushed
+  it and ran deploy `43064407831` (`enable_bank=on`, image `sha-816e821` over `sha-6b466bd`,
+  snapshot `omni-deploy_omni_data-20261111T173237Z.tgz`, healthy). First ticks: Wise fetched 7,
+  proposed 7 (from_date 11-01; 11-01 ×3, 11-07 ×3, 11-10); WS fetched 281, proposed 62 rows as 50
+  drafts (12 paired transfers), 219 out of window, batch 11-01..11-11; the September session
+  refreshed with no login. Both batches await his review in Finances. Overlay `NEXT.md` and
+  `ACCOUNT_MAPPING.md` no longer say the feeds are held off (`329413e`, dev branch).
 - F2 (his redirect 2026-11-10): the conventions note is DRAFTED BY ME from the paisa ledger
   (`CONVENTIONS.md` + the ledger's own data), and he reviews it; not written by him from scratch.
   Size matters: the note's whole text rides every money call (the 44 KB dev note cost 2.3x tokens).
