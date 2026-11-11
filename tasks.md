@@ -1443,6 +1443,16 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   and adds the note after, so the note need not list them. Test `with_a_note_the_ledgers_accounts_
   stay_known`. `docs/src/assistant.md` updated. fmt + clippy clean; tests run in CI. Not released:
   ships with the next release, which must land before the note goes on live.
+  ⛔ Ordering trap: on today's live build a note makes ONLY the accounts it names in full known,
+  and the draft names few in full (it relies on the always-sent list), so posting it before that
+  release would refuse nearly every proposal.
+  ✅ DRAFT 2026-11-11: `~/omni-dev-tools/f2/ledger-conventions.md` (5.3 KB, ~1,300 tokens vs the
+  44 KB dev note), built from `CONVENTIONS.md` §2-6, §10 and live's 11,060 transactions (per-leaf
+  payees and tags: `f2/profile.txt`). No merchant table, no importer engineering, no account list.
+  Seven questions for him: `f2/questions.md` (two misfilings: shawarma ×4 under Internet from the
+  importer's `shaw` rule, an MPI payment under Travel; four rule conflicts: convenience stores,
+  loans vs `Assets:Receivable:CAD`, the new `Expenses:Tips`, flat PromptBase income; and the doc's
+  pre-June names in §6/§10).
 - 🔴 RULED 2026-11-09 (his pick, my recommendation): one fresh design session for (1) notification
   criticality, finance first, "so I don't get inundated with notifications and basically tune
   everything out or start missing the important ones hidden in the noise", then (2) an agentic
