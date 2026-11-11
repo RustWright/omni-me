@@ -25,7 +25,6 @@ overlay branch that pairs with the public ref, and before any overlay build run 
 with `-f public_ref=<full public SHA>` (`project-overlay-ci-blind-spot`).
 
 ## ⛔ Waiting on him
-- **Three live refiles** (MPI 1, convenience 2, tips 2): `python3 ~/omni-dev-tools/refile_pending.py`.
 - **The two pre-November drafts** in review: dismiss or keep.
 - **The design session's decisions**: `DESIGN_PREREAD.md` § Decisions, Parts 1 and 2 (read first).
 - **R2**: his Cloudflare account, a bucket and a scoped API token, for the off-box blob copy.

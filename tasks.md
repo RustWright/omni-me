@@ -1509,7 +1509,8 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   ✅ F2 REVIEW DONE: all eight answered; draft `~/omni-dev-tools/f2/ledger-conventions.md` (5.9 KB).
   Live refiles sent so far: shawarma 4, business 19. ⏳ Not yet run (his): MPI 1, convenience 2,
   tips 2, wrapped as `~/omni-dev-tools/refile_pending.py` (he asked why the chained command was
-  so long). ⏳ Then the note goes on live only after a release carrying `ff94381` (ordering trap above).
+  so long). ✅ His run 2026-11-11: all three sent (1 + 2 + 2); both tips read back as
+  `Food:Groceries ; kind: tip`. Live now matches every F2 ruling. ⏳ Then the note goes on live only after a release carrying `ff94381` (ordering trap above).
 - ✅ Correction (his, 2026-11-11): the Finances tab has been ON since he switched it on for the
   1.2.2 phone check (live `config_set feature.finances true` from the phone, 2026-11-10 13:05Z).
   Stage 4's "then he turns the tab on" at the end of F3 is therefore already done; I had kept
