@@ -1446,8 +1446,11 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   fresh `omni-dev-b4_agent_data` (B4's live clone, which holds a wipe): same path as live (owed
   rebuild, then `budget`/`auto_import` stale-rebuilt), then "replayed events the projections had
   missed events=13051" and journal rows=1400 (live's broken agent: 0). Dev stopped again after.
-  ⏳ Live: removing the agent container and `omni-deploy_agent_data` was refused by the permission
-  check (his to run), then his `deploy.yml` with `agent_image` `dev-0b0bccf`, `public_ref` `fed4668`.
+  ✅ LIVE HEALED 2026-11-11 07:14Z: his removal of the agent container and `omni-deploy_agent_data`
+  (refused for me), his deploy run `42976915961` (agent `dev-0b0bccf`, server unchanged
+  `sha-7fd23c6`); cold start replayed 27,568 events into every projection, journal rows=1424.
+  ⏳ Sweep under `f1_watch.py` (log `state/live/f1/memory.log`). ⚠️ Live's agent now runs dev-branch
+  code (`0b0bccf` + `ff94381`) ahead of any release, by his ruling with the dev proof as the gate.
 - F2 Q1 🔴 RULED 2026-11-11 (his yes): the four shawarma entries go to `Food:Dining`, and the
   importer rule is tightened. ✅ Paisa ledger: entries edited, `util_lookup` and the WS importer's
   copy match whole words, the merchant table key is `shaw cable`; `regen_all.sh` reproduces exactly
