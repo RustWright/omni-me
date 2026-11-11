@@ -1487,7 +1487,7 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   COT and tagged 3 PromptBase, 15 files, nothing else; `bal -B` 0; 17 changed files on P: read back
   equal (two scratch dotfiles, `.last-backup` and `importers/.merge_check.csv`, refused with access
   denied on P:; not ledger content). `refile_live.py` now takes `--desc-contains` or no description.
-  ⏳ Live: his three `refile_live.py` runs (Amazon 15 ✅ and COT 1 ✅ sent; PromptBase 3 running).
+  ✅ Live: his three `refile_live.py` runs, all sent (Amazon 15, COT 1, PromptBase 3).
 - F2 Q7 🔴 RULED 2026-11-11 (his yes): refresh `CONVENTIONS.md`. ✅ §6 rewritten to current names
   (the precedence list from the chequing bank importer's `classify()`, money-in, the Wise maps, the merchant table
   as written to the ledger via `XLATE`, today's rulings), §10 and the §2 asset exceptions likewise;
