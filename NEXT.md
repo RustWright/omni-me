@@ -4,11 +4,10 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — devices onto 1.2.3, then F3
-1.2.3 is out and F2's note is on live (`tasks.md` § Stage 4, "1.2.3 🔴 GO", "✅ F2 NOTE LIVE"). Then:
-1. His: update desktop and phone, report how it went.
-2. Watch the first money proposal or receipt on live: it is the note's first real use.
-3. F3 after: ws-api into `/opt/omni-ws`, live's two `_disabled` bank sections renamed, bank sources
+## ▶ NEXT ACTION — F3
+1.2.3 is out on server and both devices, and F2's note is on live (`tasks.md` § Stage 4, "1.2.3 🔴
+GO", "✅ F2 NOTE LIVE"). Watch the first money proposal or receipt on live: the note's first use.
+1. F3: ws-api into `/opt/omni-ws`, live's two `_disabled` bank sections renamed, bank sources
    on. The Finances tab is ALREADY on (his, since the 1.2.2 check, 2026-11-10); no tab step remains.
 ⚠️ Two pre-November drafts sit in his review queue (`tasks.md`, "✅ E4 DONE"): his to dismiss.
 ⛔ Live is the pause: every live step waits for his go, one at a time. Production deploys, releases

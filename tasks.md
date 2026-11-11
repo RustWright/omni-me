@@ -1534,7 +1534,8 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   deploy `43021671571`, image `sha-6b466bd` (public `fe6a299`, core/server 1.2.3) over `sha-7fd23c6`,
   healthy after 2 checks; agent untouched (`dev-0b0bccf`). ✅ 1.2.3 RELEASED 13:52Z: his App release
   `43025995731` (47 min, all three jobs green); manifests 1.2.3 both, APK served whole (56.8 MB,
-  57 s), sha256 = manifest (`9d37599e…`), AppImage served. ⏳ His: update desktop and phone.
+  57 s), sha256 = manifest (`9d37599e…`), AppImage served. ✅ Both devices updated (his report,
+  2026-11-11): desktop restart did not hang; Ledger looked fine (see § Open for both items).
 - ✅ F2 NOTE LIVE 2026-11-11 ~14:12Z (his go, his pick of a script over pasting in the app): his run
   of `~/omni-dev-tools/post_conventions_live.py` sent one `generic_note_created` (device
   `dev-tools-conventions`), note `01M75F9KKN7RNZ363G6RP4XWDT`, title "Ledger conventions", the
@@ -5032,6 +5033,8 @@ Playwright, and Chromium is not the renderer that was broken. It rides the on-de
   empty-list poisoning fix in the same function. Repeated on the phone the same day when Finances
   was switched on. Fix direction (not chosen): revalidate a restored list in the background on mount,
   or drop `lists` entries for features a wipe or rebuild touched. [S, frontend]
+  1.2.3 update (his, 2026-11-11): "can't say", looked fine. Not evidence either way: 1.2.3 carried
+  no wipe and no boot rebuild on devices, which is the trigger. Still open.
 
 ### Platform and onboarding
 - [ ] **The desktop post-update splash hang is back** (his desktop, 1.2.1 → 1.2.2 via the updater's
@@ -5041,6 +5044,8 @@ Playwright, and Chromium is not the renderer that was broken. It rides the on-de
   the one-time `budget`/`auto_import` rebuild `4a0f43a` runs in `init_all` lengthening setup. Not
   known: how long he waited (the 1.1.2 path fails open at 15s). What would settle it: the
   desktop's log and ring buffer from that launch. [S–M]
+  1.2.2 → 1.2.3 (his, 2026-11-11): the auto-restart did NOT hang, so it is intermittent. That run
+  had no one-time rebuild, which fits that contributor without proving it.
 - [x] **Cold-start race: startup invokes fire before `AppState` is managed, and the feature set
   never re-derives.** **FIXED + VERIFIED ON DEVICE 2026-09-07 (v1.1.1 + v1.1.2).** The phone's own
   problem report on 1.1.2 shows all seven commands *recovering* rather than failing —
