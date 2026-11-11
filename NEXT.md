@@ -12,7 +12,7 @@ The live agent is healed and sweeping (`tasks.md` § Stage 4, "✅ LIVE HEALED")
 2. A release (1.2.3) carrying `ff94381` + `0b0bccf`: the note must not reach live before it
    (`tasks.md`, "⛔ Ordering trap"). Then the note goes on live as "Ledger conventions", his go.
 3. F3 after: ws-api into `/opt/omni-ws`, live's two `_disabled` bank sections renamed, bank sources
-   on, then he turns the tab on.
+   on. The Finances tab is ALREADY on (his, since the 1.2.2 check, 2026-11-10); no tab step remains.
 ⚠️ Two pre-November drafts sit in his review queue (`tasks.md`, "✅ E4 DONE"): his to dismiss.
 ⛔ Live is the pause: every live step waits for his go, one at a time. Production deploys, releases
 and writes to live data are his to run (the permission check refuses mine); hand him the command.
@@ -25,7 +25,7 @@ overlay branch that pairs with the public ref, and before any overlay build run 
 with `-f public_ref=<full public SHA>` (`project-overlay-ci-blind-spot`).
 
 ## ⛔ Waiting on him
-- **Three live refiles** (MPI 1, convenience 2, tips 2): `refile_live.py`, commands in `tasks.md` F2.
+- **Three live refiles** (MPI 1, convenience 2, tips 2): `python3 ~/omni-dev-tools/refile_pending.py`.
 - **The two pre-November drafts** in review: dismiss or keep.
 - **The design session's decisions**: `DESIGN_PREREAD.md` § Decisions, Parts 1 and 2 (read first).
 - **R2**: his Cloudflare account, a bucket and a scoped API token, for the off-box blob copy.
