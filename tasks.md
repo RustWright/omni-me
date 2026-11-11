@@ -1448,6 +1448,11 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   his run of `~/omni-dev-tools/fix_shawarma_live.py` sent four `transaction_updated` (device
   `dev-tools-ledger-fix`), read back on live as `Food:Dining` with the `provider:` tag gone.
   CI on the catch-up fix `0b0bccf`: run `42970178444` green, new test included.
+- F2 Q2 🔴 RULED 2026-11-11 (his words): the 2025-01-14 MPI payment goes "with all the other mpi
+  entries": `Insurance:Auto`, `provider: MPI`, `channel: direct`. ✅ Paisa ledger edited; regen
+  reproduces it byte for byte (the WS importer learns it from the journal), `bal -B` 0; copied to P:
+  and read back equal. ⏳ Live: his run of `~/omni-dev-tools/refile_live.py` (generic: exact
+  description, from/to account, tags, refuses unless the expected count matches).
 - F2 (his redirect 2026-11-10): the conventions note is DRAFTED BY ME from the paisa ledger
   (`CONVENTIONS.md` + the ledger's own data), and he reviews it; not written by him from scratch.
   Size matters: the note's whole text rides every money call (the 44 KB dev note cost 2.3x tokens).
