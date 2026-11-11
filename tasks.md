@@ -1467,6 +1467,10 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   moved to `Food:Dining`, `kind: convenience` dropped, and their two `WS_MERCH` rules changed to
   match; regen identical, `bal -B` 0; P: copied and read back equal. Draft note's Dining line says
   so. ⏳ Live: his `refile_live.py` run for the two.
+- F2 Q4 🔴 RULED 2026-11-11 (his words): money owed to him is `Assets:Receivable:CAD` with a
+  `counterparty:` tag, "it prevents the number of leaf accounts from blowing up if I do" start
+  lending. Beat: `Assets:Loans:<person>` (the doc's §10, never used in the ledger). No data moves;
+  the draft note says so. `CONVENTIONS.md` §10 still says Loans (Q7, the doc refresh).
 - F2 (his redirect 2026-11-10): the conventions note is DRAFTED BY ME from the paisa ledger
   (`CONVENTIONS.md` + the ledger's own data), and he reviews it; not written by him from scratch.
   Size matters: the note's whole text rides every money call (the 44 KB dev note cost 2.3x tokens).
