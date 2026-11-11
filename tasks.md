@@ -1498,6 +1498,17 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   🆕 Found, for his ruling (Q8): the chequing bank's importer books merchant refunds and corrections to
   `Income:Adjustment`, while the draft note says a refund goes against the expense it refunds
   (from the 11-09 WS `AFT_IN_OVERRIDE`). The note must not claim either until he rules.
+- F2 Q8 🔴 RULED 2026-11-11 (his pick, my recommendation; he noted it was an eighth question, which
+  I had not flagged as added): a refund goes against the account of the purchase it refunds;
+  `Income:Adjustment` only for bank corrections with no purchase behind them. Beat: every refund to
+  Adjustment. His bar: "a logical way that leads to the ledger balancing". ✅ Chequing importer:
+  a known merchant's refund, by text or by the money-in merchant match, now returns that
+  merchant's account. Regen identical: nothing existing moves (all 21 Adjustment entries are bank
+  corrections, verification deposits or zero-cash share reorganizations). Doc §6 and the draft
+  note updated; doc + importer on P:, read back equal.
+  ✅ F2 REVIEW DONE: all eight answered; draft `~/omni-dev-tools/f2/ledger-conventions.md` (5.9 KB).
+  Live refiles sent so far: shawarma 4, business 19. ⏳ Not yet run (his): MPI 1, convenience 2,
+  tips 2. ⏳ Then the note goes on live only after a release carrying `ff94381` (ordering trap above).
 - F2 (his redirect 2026-11-10): the conventions note is DRAFTED BY ME from the paisa ledger
   (`CONVENTIONS.md` + the ledger's own data), and he reviews it; not written by him from scratch.
   Size matters: the note's whole text rides every money call (the 44 KB dev note cost 2.3x tokens).
