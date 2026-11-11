@@ -1429,6 +1429,23 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   `deploy.yml` with `agent_image`, I watch memory through the first sweep (~4.5 h in B4).
   Noticed: the dev agent runs on `omni-dev-b4_agent_data` with `credentials-dev.toml`, so dev's
   compose may still point at B4's volumes (`~/omni-dev/docker-compose.yml`); not checked.
+  Deploy run `42968516020` (2026-11-11 05:52Z, server image cached): agent `dev-fed4668` up, swept
+  in 8 min, peak 654 MiB. 🐞 FOUND: it indexed 11,060 transactions and 0 journal, notes or
+  documents. Verified from source + its log: a cold agent pulls, then registers its projections;
+  `4a0f43a` (mine, 11-09) made `init_all` return right after rebuilding wipe-stale projections,
+  skipping `catch_up`, so every projection first seen that launch stayed empty. A restart did NOT
+  heal it (my inference, wrong): later auto-pulls had moved those watermarks to now. Devices and
+  the server hold their tables, so for them the skip only delays missed events one launch.
+  ✅ FIXED `0b0bccf` (no early return; test `a_cold_start_with_a_wipe_in_the_log_still_fills_new_
+  projections`), fmt + clippy clean, CI run `42970178444`. Healing live needs the fixed agent image
+  AND a fresh `agent_data` volume (all re-derivable from the server).
+- F2 Q1 🔴 RULED 2026-11-11 (his yes): the four shawarma entries go to `Food:Dining`, and the
+  importer rule is tightened. ✅ Paisa ledger: entries edited, `util_lookup` and the WS importer's
+  copy match whole words, the merchant table key is `shaw cable`; `regen_all.sh` reproduces exactly
+  the four corrected entries, everything else byte-identical, `bal -B` 0, 0 parse errors. Backup
+  `~/paisa-ledger-restore/paisa-ledger.pre-shawarma.2026-11-11-005759.tgz`. Four files copied to
+  P: and read back equal. ⏳ Live: my push was refused by the permission check; his to run
+  `~/omni-dev-tools/fix_shawarma_live.py` (four `transaction_updated`, refuses unless exactly 4).
 - F2 (his redirect 2026-11-10): the conventions note is DRAFTED BY ME from the paisa ledger
   (`CONVENTIONS.md` + the ledger's own data), and he reviews it; not written by him from scratch.
   Size matters: the note's whole text rides every money call (the 44 KB dev note cost 2.3x tokens).
