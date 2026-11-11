@@ -1478,7 +1478,16 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   tagged `kind: tip` ("it's basically the tip to the shopper/delivery person"). Beat: a separate
   `Expenses:Tips`. His account of how Tips appeared: he created it while reviewing the 11-07
   Walmart receipt because the proposal put the tip under Dining, which made no sense for a
-  grocery delivery. The note's tip rule is aimed at exactly that. ⏳ Live: refile the 4.56.
+  grocery delivery. The note's tip rule is aimed at exactly that. ⏳ Live: refile the 4.56 and the
+  11-01 Walmart's 3.45 (he had edited that one into Tips too), one `refile_live.py` run, expect 2.
+- F2 Q6 🔴 RULED 2026-11-11 (his words): the reverse of my question, "switch them all to income
+  business with tags to differentiate": one `Income:Business`, payer as `counterparty:` (my key
+  choice, reusing the ledger's existing "other party" tag rather than a new `payer:`). ✅ Paisa
+  ledger: the three rules changed (Wise `amazon` and PromptBase, WS COT), regen moved 15 Amazon + 1
+  COT and tagged 3 PromptBase, 15 files, nothing else; `bal -B` 0; 17 changed files on P: read back
+  equal (two scratch dotfiles, `.last-backup` and `importers/.merge_check.csv`, refused with access
+  denied on P:; not ledger content). `refile_live.py` now takes `--desc-contains` or no description.
+  ⏳ Live: his three `refile_live.py` runs (Amazon 15, COT 1, PromptBase 3).
 - F2 (his redirect 2026-11-10): the conventions note is DRAFTED BY ME from the paisa ledger
   (`CONVENTIONS.md` + the ledger's own data), and he reviews it; not written by him from scratch.
   Size matters: the note's whole text rides every money call (the 44 KB dev note cost 2.3x tokens).
