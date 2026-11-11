@@ -195,7 +195,8 @@ impl ProjectionRunner {
             // registered projection over one version bump.
             let stale_names: Vec<&str> = stale.iter().map(String::as_str).collect();
             self.rebuild_only(&stale_names).await?;
-            return Ok(());
+            // No early return: a projection first seen this launch still needs the
+            // catch-up below, and returning here left a cold agent's notes empty.
         }
 
         let caught_up = self.catch_up().await?;
@@ -1601,6 +1602,80 @@ mod tests {
             clears.load(Ordering::SeqCst),
             before,
             "already clean after the wipe"
+        );
+    }
+
+    /// Stands in for any projection a cold agent registers only after its pull.
+    struct FakeNotes;
+
+    #[async_trait]
+    impl Projection for FakeNotes {
+        fn name(&self) -> &str {
+            "fake_notes"
+        }
+
+        fn version(&self) -> u32 {
+            1
+        }
+
+        async fn apply(&self, event: &Event, db: &Database) -> Result<(), EventError> {
+            if event.event_type == "generic_note_created" {
+                db.query("UPSERT type::record('fake_notes', $id) SET seen = true")
+                    .bind(("id", event.aggregate_id.clone()))
+                    .await?
+                    .check()?;
+            }
+            Ok(())
+        }
+
+        async fn init_schema(&self, db: &Database) -> Result<(), EventError> {
+            db.query("DEFINE TABLE IF NOT EXISTS fake_notes SCHEMALESS")
+                .await?
+                .check()?;
+            Ok(())
+        }
+
+        async fn clear_tables(&self, db: &Database) -> Result<(), EventError> {
+            db.query("DELETE fake_notes").await?.check()?;
+            Ok(())
+        }
+    }
+
+    /// The live agent, 2026-11-11: it pulled a log holding a finance wipe, then
+    /// registered its projections. Rebuilding the wipe-stale `budget` returned
+    /// before the catch-up, so every other new projection stayed empty.
+    #[tokio::test]
+    async fn a_cold_start_with_a_wipe_in_the_log_still_fills_new_projections() {
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db.clone());
+        let clears = Arc::new(AtomicU32::new(0));
+        store
+            .append(new_event(
+                "generic_note_created",
+                "n1",
+                serde_json::json!({}),
+            ))
+            .await
+            .unwrap();
+        pull_finance_wipe(&store).await;
+
+        let budget: Box<dyn Projection> = Box::new(FakeBudget {
+            clears: clears.clone(),
+        });
+        let runner = ProjectionRunner::new(db.clone(), vec![budget, Box::new(FakeNotes)]);
+        runner.init_all().await.unwrap();
+
+        assert_eq!(
+            clears.load(Ordering::SeqCst),
+            1,
+            "budget rebuilt for the wipe"
+        );
+        let mut resp = db.query("SELECT VALUE id FROM fake_notes").await.unwrap();
+        let notes: Vec<surrealdb::types::RecordId> = resp.take(0).unwrap();
+        assert_eq!(
+            notes.len(),
+            1,
+            "the note was replayed into the new projection"
         );
     }
 }
