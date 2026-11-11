@@ -1523,6 +1523,13 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   1.2.2 phone check (live `config_set feature.finances true` from the phone, 2026-11-10 13:05Z).
   Stage 4's "then he turns the tab on" at the end of F3 is therefore already done; I had kept
   reading it from the plan instead of from live's config.
+- 1.2.3 🔴 GO 2026-11-11 (his yes). ✅ STAGED: public stamp `70cfb33` (pushed to the dev branch),
+  overlay lock `12c690c` (pushed), overlay `main` merge `6b466bd` LOCAL only (lock only,
+  `public-ref` stays `main`). CI green: public `43018680721`, overlay push `43018673844`, overlay
+  dispatch `43018695474` built against `70cfb33`. Ordering trap re-verified: the server's receipt
+  extraction (`spending_accounts`/`ground_hints`) calls `known_accounts` too, so live's agent
+  running `ff94381` is not enough; the note waits for the server deploy. ⏳ His: push both mains,
+  dispatch deploy (server), then App release `version=1.2.3`.
 - F2 (his redirect 2026-11-10): the conventions note is DRAFTED BY ME from the paisa ledger
   (`CONVENTIONS.md` + the ledger's own data), and he reviews it; not written by him from scratch.
   Size matters: the note's whole text rides every money call (the 44 KB dev note cost 2.3x tokens).

@@ -4,14 +4,14 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — a release so F2's note can go live
-F1 is done (`tasks.md` § Stage 4, "✅ F1 DONE"; dev's agent left stopped for memory, see there);
-F2's review is done and live matches it ("✅ F2 REVIEW DONE"). Then:
-1. Ask his go for 1.2.3; and whether dev's agent may run beside live's (the box cannot hold both
-   sweeping; the owed cost comparison feeds this).
-2. A release (1.2.3) carrying `ff94381` + `0b0bccf`: the note must not reach live before it
-   (`tasks.md`, "⛔ Ordering trap"). Then the note goes on live as "Ledger conventions", his go.
-3. F3 after: ws-api into `/opt/omni-ws`, live's two `_disabled` bank sections renamed, bank sources
+## ▶ NEXT ACTION — he ships 1.2.3, then F2's note goes live
+1.2.3 is staged and CI-green (`tasks.md` § Stage 4, "1.2.3 🔴 GO"). Then:
+1. His: push both mains, dispatch the server deploy, then the App release. Verify both after.
+2. Open a new draft PR (the fast-forward closes #7).
+3. The note on live as "Ledger conventions", his go (`tasks.md`, "⛔ Ordering trap").
+4. Ask whether dev's agent may run beside live's (the box cannot hold both sweeping; the owed
+   cost comparison feeds this, `tasks.md`, "✅ F1 DONE").
+5. F3 after: ws-api into `/opt/omni-ws`, live's two `_disabled` bank sections renamed, bank sources
    on. The Finances tab is ALREADY on (his, since the 1.2.2 check, 2026-11-10); no tab step remains.
 ⚠️ Two pre-November drafts sit in his review queue (`tasks.md`, "✅ E4 DONE"): his to dismiss.
 ⛔ Live is the pause: every live step waits for his go, one at a time. Production deploys, releases
