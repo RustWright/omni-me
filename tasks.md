@@ -1547,6 +1547,24 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   is idle. Beat, for now: resize to CX33 (my recommendation, ~€9/mo total, one box) and a separate
   CX23 agent box. Cost: agent testing on dev is blocked meanwhile; nothing enforces the "only when
   idle" rule, so check live's agent is not sweeping before any dev agent start.
+- F3 prep 2026-11-11. Live's ledger ends 2026-10-31 (statements: WS chequing 10-31, Wise CAD 10-27,
+  USD 10-28), so both feeds start 2026-11-01. WS: no per-row id, so `import_since = 2026-11-01` is
+  the only guard; live's WS account map was left off 09-04 (150 unreviewable drafts), a reason the
+  floor removes. Wise: a FIXED 7-day lookback (`wise.rs`) would have started at 11-04 and never
+  fetched his three 11-01 transactions (his check in the Wise app; next is 11-07).
+  🔴 RULED (his pick, my recommendation): Wise remembers its last pull. Beat: a configurable
+  lookback (two credential edits, the gap returns on the next outage over 7 days); typing the
+  three by hand (no Wise id, class unfixed). ✅ BUILT overlay `7a97995`: `window_start` reaches back
+  to the day before the last successful pull (`wise_cursors`, one row per profile), or to
+  the Wise section's `import_since` before the first; `import_since` floors it; past Wise's 469-day statement
+  limit the tick fails loudly. Cursor saved only after a pull succeeds. 3 tests (pure cases, the
+  request's real `intervalStart`, a failed pull leaves the cursor). Also fixed: `build_draft`'s doc
+  had drifted onto `known_reference_numbers`. clippy clean; tests in CI.
+  ⚠️ Trap for the credentials edit: `import_since` must sit ABOVE `[wise.accounts]`; below it, TOML
+  reads it as a currency mapping and the floor is silently absent.
+  ws-api on the box: live `/opt/omni-ws` 0.35.0 + old driver; `/opt/omni-ws-dev` 0.39.3 + `curl_cffi`
+  + the push-approval driver, byte-equal to the overlay's driver example script. The
+  install is a backup then an exact copy of dev's.
 - F2 (his redirect 2026-11-10): the conventions note is DRAFTED BY ME from the paisa ledger
   (`CONVENTIONS.md` + the ledger's own data), and he reviews it; not written by him from scratch.
   Size matters: the note's whole text rides every money call (the 44 KB dev note cost 2.3x tokens).
