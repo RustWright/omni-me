@@ -4,11 +4,11 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — finish F1's sweep, then a release so F2's note can go live
-The live agent is healed and sweeping (`tasks.md` § Stage 4, "✅ LIVE HEALED"); F2's review is done
-("✅ F2 REVIEW DONE"). Then:
-1. F1: `f1_watch.py` reports the sweep done; check journal, notes and documents were all indexed;
-   restart dev (stopped for the sweep, ruled).
+## ▶ NEXT ACTION — a release so F2's note can go live
+F1 is done (`tasks.md` § Stage 4, "✅ F1 DONE"; dev's agent left stopped for memory, see there);
+F2's review is done and live matches it ("✅ F2 REVIEW DONE"). Then:
+1. Ask his go for 1.2.3; and whether dev's agent may run beside live's (the box cannot hold both
+   sweeping; the owed cost comparison feeds this).
 2. A release (1.2.3) carrying `ff94381` + `0b0bccf`: the note must not reach live before it
    (`tasks.md`, "⛔ Ordering trap"). Then the note goes on live as "Ledger conventions", his go.
 3. F3 after: ws-api into `/opt/omni-ws`, live's two `_disabled` bank sections renamed, bank sources

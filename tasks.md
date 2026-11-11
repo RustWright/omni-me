@@ -1449,8 +1449,16 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   ✅ LIVE HEALED 2026-11-11 07:14Z: his removal of the agent container and `omni-deploy_agent_data`
   (refused for me), his deploy run `42976915961` (agent `dev-0b0bccf`, server unchanged
   `sha-7fd23c6`); cold start replayed 27,568 events into every projection, journal rows=1424.
-  ⏳ Sweep under `f1_watch.py` (log `state/live/f1/memory.log`). ⚠️ Live's agent now runs dev-branch
-  code (`0b0bccf` + `ff94381`) ahead of any release, by his ruling with the dev proof as the gate.
+  ⚠️ Live's agent now runs dev-branch code (`0b0bccf` + `ff94381`) ahead of any release, by his
+  ruling with the dev proof as the gate.
+  ✅ F1 DONE 2026-11-11 09:03Z: index up to date in 1.8 h; journal 1,424, notes 344, documents
+  2,007, transactions 11,060; 14,835 scanned, 14,830 embedded, 3 empty, 2 hidden, 0 failed. Agent
+  peak 1,591 MiB (B4: 1,271; more documents now), box never below 1,398 MiB free. Routines and
+  beliefs 0: live has none. Dev server restarted; dev AGENT left stopped (my call, protective): with
+  all four up the box had 1,323 MiB free and dev's agent was about to resume its half-done proof
+  sweep (+~1.2 GB), which would have left live exposed to an OOM kill. Steady state: live agent
+  1.1 GiB, live server 0.35 GiB, dev server 0.17 GiB. The owed cost comparison (bigger box vs the
+  agent elsewhere) now decides whether dev's agent can run at all beside live's.
 - F2 Q1 🔴 RULED 2026-11-11 (his yes): the four shawarma entries go to `Food:Dining`, and the
   importer rule is tightened. ✅ Paisa ledger: entries edited, `util_lookup` and the WS importer's
   copy match whole words, the merchant table key is `shaw cable`; `regen_all.sh` reproduces exactly
