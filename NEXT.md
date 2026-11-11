@@ -7,8 +7,8 @@ site. ⛔ If a line here could be derived from either, it does not belong here �
 ## ▶ NEXT ACTION — F3
 1.2.3 is out on server and both devices, and F2's note is on live (`tasks.md` § Stage 4, "1.2.3 🔴
 GO", "✅ F2 NOTE LIVE"). Watch the first money proposal or receipt on live: the note's first use.
-1. F3: ws-api into `/opt/omni-ws`, live's two `_disabled` bank sections renamed, bank sources
-   on. The Finances tab is ALREADY on (his, since the 1.2.2 check, 2026-11-10); no tab step remains.
+1. F3 steps 1-2 done (`tasks.md`, "F3 prep"). Step 3: overlay CI on `7a97995`, merge to overlay
+   `main`, his deploy `enable_bank=on`, then watch both feeds' first ticks (Wise from 11-01).
 ⚠️ Two pre-November drafts sit in his review queue (`tasks.md`, "✅ E4 DONE"): his to dismiss.
 ⛔ Live is the pause: every live step waits for his go, one at a time. Production deploys, releases
 and writes to live data are his to run (the permission check refuses mine); hand him the command.

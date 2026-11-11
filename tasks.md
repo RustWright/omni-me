@@ -1565,6 +1565,15 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   ws-api on the box: live `/opt/omni-ws` 0.35.0 + old driver; `/opt/omni-ws-dev` 0.39.3 + `curl_cffi`
   + the push-approval driver, byte-equal to the overlay's driver example script. The
   install is a backup then an exact copy of dev's.
+  ✅ F3 step 1 2026-11-11 16:13Z (his run): live `/opt/omni-ws` = dev's copy, 0.39.3, driver
+  `f44bb9a6…`; backup `/opt/omni-ws.bak-20261111T161301Z-pre-f3`.
+  ✅ F3 step 2 16:15Z (his runs, dry then apply, `~/omni-dev-tools/f3_creds_edit.py` on stdin):
+  both sections renamed back, each with `import_since = "2026-11-01"` above a new account map
+  (Wise CAD/USD/EUR full accounts, it had none, the 09-07 "none mapped"; the WS six from 09-04).
+  Every other section asserted unchanged; in place, inode 260607 kept; backup
+  `credentials.toml.bak-20261111T161534Z-pre-f3`. Read only at boot, so inert until step 3.
+  ⏳ Step 3: overlay CI green on `7a97995` (first two runs died on the runner's apt mirror), merge
+  to overlay `main`, his deploy with `enable_bank=on`; then watch both feeds' first ticks.
 - F2 (his redirect 2026-11-10): the conventions note is DRAFTED BY ME from the paisa ledger
   (`CONVENTIONS.md` + the ledger's own data), and he reviews it; not written by him from scratch.
   Size matters: the note's whole text rides every money call (the 44 KB dev note cost 2.3x tokens).
