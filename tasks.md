@@ -1535,6 +1535,13 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   healthy after 2 checks; agent untouched (`dev-0b0bccf`). ✅ 1.2.3 RELEASED 13:52Z: his App release
   `43025995731` (47 min, all three jobs green); manifests 1.2.3 both, APK served whole (56.8 MB,
   57 s), sha256 = manifest (`9d37599e…`), AppImage served. ⏳ His: update desktop and phone.
+- ✅ F2 NOTE LIVE 2026-11-11 ~14:12Z (his go, his pick of a script over pasting in the app): his run
+  of `~/omni-dev-tools/post_conventions_live.py` sent one `generic_note_created` (device
+  `dev-tools-conventions`), note `01M75F9KKN7RNZ363G6RP4XWDT`, title "Ledger conventions", the
+  reviewed draft byte for byte (5,943 B, sha256 `ba970e43…`); push count 1, read back. Live had no
+  note of that title (the script refuses otherwise). The server registers `NotesProjection`, so
+  receipt grounding sees it as well as the agent. Not yet seen in use: the first money proposal
+  or receipt after this is the check. The script takes ~2 min (it pulls the whole log twice).
 - F2 (his redirect 2026-11-10): the conventions note is DRAFTED BY ME from the paisa ledger
   (`CONVENTIONS.md` + the ledger's own data), and he reviews it; not written by him from scratch.
   Size matters: the note's whole text rides every money call (the 44 KB dev note cost 2.3x tokens).

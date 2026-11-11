@@ -4,10 +4,10 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — he ships 1.2.3, then F2's note goes live
-1.2.3 is staged and CI-green (`tasks.md` § Stage 4, "1.2.3 🔴 GO"). Then:
-1. 1.2.3 is out (server and both apps). His: update desktop and phone, report how it went.
-2. The note on live as "Ledger conventions", his go (`tasks.md`, "⛔ Ordering trap").
+## ▶ NEXT ACTION — devices onto 1.2.3, then F3
+1.2.3 is out and F2's note is on live (`tasks.md` § Stage 4, "1.2.3 🔴 GO", "✅ F2 NOTE LIVE"). Then:
+1. His: update desktop and phone, report how it went.
+2. Watch the first money proposal or receipt on live: it is the note's first real use.
 3. Ask whether dev's agent may run beside live's (the box cannot hold both sweeping; the owed
    cost comparison feeds this, `tasks.md`, "✅ F1 DONE").
 4. F3 after: ws-api into `/opt/omni-ws`, live's two `_disabled` bank sections renamed, bank sources
