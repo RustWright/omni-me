@@ -1439,6 +1439,15 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   ✅ FIXED `0b0bccf` (no early return; test `a_cold_start_with_a_wipe_in_the_log_still_fills_new_
   projections`), fmt + clippy clean, CI run `42970178444`. Healing live needs the fixed agent image
   AND a fresh `agent_data` volume (all re-derivable from the server).
+  🔴 RULED 2026-11-11 (his yes, my recommendation): stop the live agent, prove the fix on dev, then
+  live. Beat: straight to live once CI was green. ✅ Live agent stopped 06:17Z. Overlay CI on
+  public `0b0bccf` green (run `42971645608`); agent image `dev-0b0bccf` (run `42971648523`, pulled by
+  him). ✅ DEV PROOF 06:40Z: dev `.env` → `dev-0b0bccf` (backup `.env.bak.20261111T063736-pre-f1fix`),
+  fresh `omni-dev-b4_agent_data` (B4's live clone, which holds a wipe): same path as live (owed
+  rebuild, then `budget`/`auto_import` stale-rebuilt), then "replayed events the projections had
+  missed events=13051" and journal rows=1400 (live's broken agent: 0). Dev stopped again after.
+  ⏳ Live: removing the agent container and `omni-deploy_agent_data` was refused by the permission
+  check (his to run), then his `deploy.yml` with `agent_image` `dev-0b0bccf`, `public_ref` `fed4668`.
 - F2 Q1 🔴 RULED 2026-11-11 (his yes): the four shawarma entries go to `Food:Dining`, and the
   importer rule is tightened. ✅ Paisa ledger: entries edited, `util_lookup` and the WS importer's
   copy match whole words, the merchant table key is `shaw cable`; `regen_all.sh` reproduces exactly
