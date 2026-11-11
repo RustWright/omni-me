@@ -8,9 +8,7 @@ site. ⛔ If a line here could be derived from either, it does not belong here �
 1.2.3 is out and F2's note is on live (`tasks.md` § Stage 4, "1.2.3 🔴 GO", "✅ F2 NOTE LIVE"). Then:
 1. His: update desktop and phone, report how it went.
 2. Watch the first money proposal or receipt on live: it is the note's first real use.
-3. Ask whether dev's agent may run beside live's (the box cannot hold both sweeping; the owed
-   cost comparison feeds this, `tasks.md`, "✅ F1 DONE").
-4. F3 after: ws-api into `/opt/omni-ws`, live's two `_disabled` bank sections renamed, bank sources
+3. F3 after: ws-api into `/opt/omni-ws`, live's two `_disabled` bank sections renamed, bank sources
    on. The Finances tab is ALREADY on (his, since the 1.2.2 check, 2026-11-10); no tab step remains.
 ⚠️ Two pre-November drafts sit in his review queue (`tasks.md`, "✅ E4 DONE"): his to dismiss.
 ⛔ Live is the pause: every live step waits for his go, one at a time. Production deploys, releases

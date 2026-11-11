@@ -1542,6 +1542,10 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   note of that title (the script refuses otherwise). The server registers `NotesProjection`, so
   receipt grounding sees it as well as the agent. Not yet seen in use: the first money proposal
   or receipt after this is the check. The script takes ~2 min (it pulls the whole log twice).
+- 🔴 RULED 2026-11-11 (his pick): dev's agent STAYS STOPPED for now; it runs only while live's agent
+  is idle. Beat, for now: resize to CX33 (my recommendation, ~€9/mo total, one box) and a separate
+  CX23 agent box. Cost: agent testing on dev is blocked meanwhile; nothing enforces the "only when
+  idle" rule, so check live's agent is not sweeping before any dev agent start.
 - F2 (his redirect 2026-11-10): the conventions note is DRAFTED BY ME from the paisa ledger
   (`CONVENTIONS.md` + the ledger's own data), and he reviews it; not written by him from scratch.
   Size matters: the note's whole text rides every money call (the 44 KB dev note cost 2.3x tokens).
