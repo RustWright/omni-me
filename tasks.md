@@ -1591,6 +1591,18 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   Plan: a dev dry run printing one buy's raw field names first (the sign rule from real data),
   then the driver + `build_draft`, then a guarded refile script he runs. 12 so far: TFSA 6, RRSP 2,
   FHSA 2, BTC 2 (11-02, 11-09).
+  Dry run NOT possible on dev: no WS session in dev's volume (only live's `/data/ws-session.json`),
+  and probing through live's session could rotate live's tokens. Field names taken instead from
+  ws-api 0.39.3's own `formatters.py` (trade `type` DIY/MANAGED/CRYPTO_BUY|SELL, `securityId`,
+  `assetQuantity`, `assetSymbol`); the + sign is from live's observed output, not a raw dump.
+  ✅ BUILT overlay `0bcbc5e`: driver gives ws-api a file market-data cache beside the session
+  (`ws-securities.json`), takes cash direction from the trade type, sends `asset {symbol,
+  quantity}`; `build_draft` files units to `<prefix>:<TICKER>` and cash out of `<prefix>:CAD`, no
+  price, no Unmatched (E2's import shape). Unresolved ticker: cash-only with the right sign.
+  Python cases checked locally (5), one Rust test; clippy clean. ⚠️ The driver is NOT in the
+  image: live runs `/opt/omni-ws/ws_driver.py`, so it ships by copy, separately from the deploy.
+  Refile: `~/omni-dev-tools/refile_ws_buys_live.py` (dry run by default; tickers from live's cache,
+  each must already be a commodity of that account in the ledger; expects 12).
   (2) Three transactions that balance only together: which three, his to name.
   (3) Two 11-08 cheques, 542.81 and 16.00. Resolve proposed `Income:Business`, wrong. MPI part:
   `Insurance:Auto`, `provider: MPI` (his: "a refund from the fees I paid for my license/
