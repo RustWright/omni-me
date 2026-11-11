@@ -6,7 +6,7 @@ site. ⛔ If a line here could be derived from either, it does not belong here �
 
 ## ▶ NEXT ACTION — he ships 1.2.3, then F2's note goes live
 1.2.3 is staged and CI-green (`tasks.md` § Stage 4, "1.2.3 🔴 GO"). Then:
-1. Server is live on 1.2.3. His: the App release; then verify both devices update.
+1. 1.2.3 is out (server and both apps). His: update desktop and phone, report how it went.
 2. The note on live as "Ledger conventions", his go (`tasks.md`, "⛔ Ordering trap").
 3. Ask whether dev's agent may run beside live's (the box cannot hold both sweeping; the owed
    cost comparison feeds this, `tasks.md`, "✅ F1 DONE").
