@@ -7,11 +7,10 @@ site. ⛔ If a line here could be derived from either, it does not belong here �
 ## ▶ NEXT ACTION — he ships 1.2.3, then F2's note goes live
 1.2.3 is staged and CI-green (`tasks.md` § Stage 4, "1.2.3 🔴 GO"). Then:
 1. Server is live on 1.2.3. His: the App release; then verify both devices update.
-2. Open a new draft PR with the next commit (#7 closed; the branch equals `main` until then).
-3. The note on live as "Ledger conventions", his go (`tasks.md`, "⛔ Ordering trap").
-4. Ask whether dev's agent may run beside live's (the box cannot hold both sweeping; the owed
+2. The note on live as "Ledger conventions", his go (`tasks.md`, "⛔ Ordering trap").
+3. Ask whether dev's agent may run beside live's (the box cannot hold both sweeping; the owed
    cost comparison feeds this, `tasks.md`, "✅ F1 DONE").
-5. F3 after: ws-api into `/opt/omni-ws`, live's two `_disabled` bank sections renamed, bank sources
+4. F3 after: ws-api into `/opt/omni-ws`, live's two `_disabled` bank sections renamed, bank sources
    on. The Finances tab is ALREADY on (his, since the 1.2.2 check, 2026-11-10); no tab step remains.
 ⚠️ Two pre-November drafts sit in his review queue (`tasks.md`, "✅ E4 DONE"): his to dismiss.
 ⛔ Live is the pause: every live step waits for his go, one at a time. Production deploys, releases
