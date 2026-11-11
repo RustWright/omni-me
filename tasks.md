@@ -1581,6 +1581,30 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   drafts (12 paired transfers), 219 out of window, batch 11-01..11-11; the September session
   refreshed with no login. Both batches await his review in Finances. Overlay `NEXT.md` and
   `ACCOUNT_MAPPING.md` no longer say the feeds are held off (`329413e`, dev branch).
+- First live review 2026-11-11 (his): most cleared; three findings.
+  (1) 🔴 RULED (his pick, my recommendation): WS buys fixed at the source, then the 12 on live
+  refiled. The feed records a buy as one cash leg against `Unmatched`, signed +5.00, where his
+  ledger has `Assets:TFSA:XQQ 0.0662 XQQ @@ 5.00 CAD` / `Assets:TFSA:CAD -5.00`. Cause: the driver
+  emits cash fields only and reads a missing `amountSign` as inflow; ws-api's
+  `security_id_to_symbol` returns the bare `[sec-…]` id without a market-data cache. Beat: weekly
+  hand resolution or an auto-rule (neither can add the security leg; the cash drifts +10/week).
+  Plan: a dev dry run printing one buy's raw field names first (the sign rule from real data),
+  then the driver + `build_draft`, then a guarded refile script he runs. 12 so far: TFSA 6, RRSP 2,
+  FHSA 2, BTC 2 (11-02, 11-09).
+  (2) Three transactions that balance only together: which three, his to name.
+  (3) Two 11-08 cheques, 542.81 and 16.00. Resolve proposed `Income:Business`, wrong. MPI part:
+  `Insurance:Auto`, `provider: MPI` (his: "a refund from the fees I paid for my license/
+  insurance"; F2 Q2 + Q8). 🔴 RULED (his): 542.81 is the Fort Garry deposit (paid ~Aug 2022) with
+  interest: 500.00 to `Equity:CashWithdrawn`, 42.81 to `Income:Investment:Interest`. Basis: no
+  deposit payment exists in the ledger; the likeliest source is the two 2022-07-12 teller
+  withdrawals of 531.50 to the cash wallet, which the ledger sweeps to `Equity:CashWithdrawn`;
+  500 is Manitoba's maximum at his 1,000 rent (inferred, not on a document). ⏳ His run of
+  `~/omni-dev-tools/refile_cheques_live.py` (by txn_id, refuses unless still Unmatched).
+  🔍 Found: Resolve's suggestion is NOT the assistant and never reads the note. It is
+  `reconciliation.rs` `suggest()`, a token-majority over past descriptions, so "DEPOSIT: CHEQUE"
+  inherits whatever past cheques were (mostly `Income:Business`). Resolve applies ONE account; a
+  split needs the posting editor (batch review or Save changes). Optional, not ruled: suggest
+  nothing for payer-less descriptions.
 - F2 (his redirect 2026-11-10): the conventions note is DRAFTED BY ME from the paisa ledger
   (`CONVENTIONS.md` + the ledger's own data), and he reviews it; not written by him from scratch.
   Size matters: the note's whole text rides every money call (the 44 KB dev note cost 2.3x tokens).
