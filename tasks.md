@@ -1598,8 +1598,15 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   interest: 500.00 to `Equity:CashWithdrawn`, 42.81 to `Income:Investment:Interest`. Basis: no
   deposit payment exists in the ledger; the likeliest source is the two 2022-07-12 teller
   withdrawals of 531.50 to the cash wallet, which the ledger sweeps to `Equity:CashWithdrawn`;
-  500 is Manitoba's maximum at his 1,000 rent (inferred, not on a document). ⏳ His run of
-  `~/omni-dev-tools/refile_cheques_live.py` (by txn_id, refuses unless still Unmatched).
+  500 is Manitoba's maximum at his 1,000 rent (inferred, not on a document). ✅ His run of
+  `~/omni-dev-tools/refile_cheques_live.py`: both updated (count 2), descriptions renamed.
+  (2) resolved: "the flights". The Skiplagged receipt (229.07: Transport 164.64 + Fees 64.43) was
+  charged by Wise as 64.43 + 164.64; he had already deleted the AA receipt (the same 164.64, as
+  72.00 fare + 92.64 tax). ✅ His run of `~/omni-dev-tools/merge_flights_live.py`: one
+  `transactions_merged`, primary the receipt, both charges merged, balanced (count 1).
+  🆕 Gap, not ruled: the matcher pairs one receipt to one same-amount charge only
+  (`find_match_candidates`), so a booking billed as several charges always needs a hand edit.
+  N-to-1 matching (a receipt total = a set of charges, same day, same card) is the real fix.
   🔍 Found: Resolve's suggestion is NOT the assistant and never reads the note. It is
   `reconciliation.rs` `suggest()`, a token-majority over past descriptions, so "DEPOSIT: CHEQUE"
   inherits whatever past cheques were (mostly `Income:Business`). Resolve applies ONE account; a
