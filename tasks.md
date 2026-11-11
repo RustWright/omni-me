@@ -1444,8 +1444,10 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   copy match whole words, the merchant table key is `shaw cable`; `regen_all.sh` reproduces exactly
   the four corrected entries, everything else byte-identical, `bal -B` 0, 0 parse errors. Backup
   `~/paisa-ledger-restore/paisa-ledger.pre-shawarma.2026-11-11-005759.tgz`. Four files copied to
-  P: and read back equal. ⏳ Live: my push was refused by the permission check; his to run
-  `~/omni-dev-tools/fix_shawarma_live.py` (four `transaction_updated`, refuses unless exactly 4).
+  P: and read back equal. ✅ Live 2026-11-11 06:17Z: my push was refused by the permission check;
+  his run of `~/omni-dev-tools/fix_shawarma_live.py` sent four `transaction_updated` (device
+  `dev-tools-ledger-fix`), read back on live as `Food:Dining` with the `provider:` tag gone.
+  CI on the catch-up fix `0b0bccf`: run `42970178444` green, new test included.
 - F2 (his redirect 2026-11-10): the conventions note is DRAFTED BY ME from the paisa ledger
   (`CONVENTIONS.md` + the ledger's own data), and he reviews it; not written by him from scratch.
   Size matters: the note's whole text rides every money call (the 44 KB dev note cost 2.3x tokens).
