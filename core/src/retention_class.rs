@@ -31,13 +31,15 @@ pub const CLASSES: &[RetentionClass] = &[
         key: "statement",
         label: "Statements, tax, payslips, bills",
         definition: "a bank or investment statement, a tax document, a payslip, or a bill \
-                     with an amount due.",
+                     with an amount due. Anything from a tax authority (CRA, IRS) is a tax \
+                     document, including a benefit, credit or rebate notice.",
     },
     RetentionClass {
         key: "banking_notice",
         label: "Banking notices",
         definition: "a notice about money moving or an account, with no charge shown: money \
-                     received, a transfer, interest paid, a statement being ready.",
+                     received, a transfer, interest paid, a statement being ready. Never \
+                     a notice from a tax authority, even one announcing a payment.",
     },
     RetentionClass {
         key: "delivery_update",
