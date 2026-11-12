@@ -1609,6 +1609,21 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   same sha). Boot tick: fetched 281, deduped 63, 218 out of window; cache written (7 KB). My dry
   run: all 12 resolved to tickers the ledger holds (TFSA TEC/XQQ/ZQQ, RRSP+FHSA VUN, BTC). ✅ His
   `--apply`: 12 updated. Unverified until the next weekly buy (11-16): a NEW buy arriving whole.
+- Archive retention review (his, 2026-11-12): two groups due, "banking notices" and "promos",
+  whose entries he could not find in the Archive search.
+  Banking notices = 6 CRA PDFs from E3's bulk import (`cra_notices/`), NOT emails: GST/HSTC
+  credit and carbon-rebate notices, 2020-2025. The reader filed 20 of his 26 CRA notices as
+  `statement` and these 6 as `banking_notice` (365 d), reading "a payment to you" as "money
+  received". Two same-day 2020 notices are NOT duplicates (different sha, 2018/2019 folders).
+  🔴 RULED (his pick, my recommendation): refile the 6 + fix the definition. ✅ His run of
+  `~/omni-dev-tools/refile_cra_notices_live.py`: 6 human `retention: statement` corrections.
+  ✅ `63728f7`: `statement` names tax-authority benefit/credit/rebate notices; `banking_notice`
+  excludes them. Ships with the next server deploy (not yet on live).
+  Promos = 28 emails, mostly real promos; a few look misfiled (an employer exit survey, a
+  Hostinger "website is offline", two Access Storage inquiry replies): his to spare.
+  ⏳ Search miss NOT reproduced from code: the review label is title-else-filename
+  (`purge.rs`), and the Archive search matches title/filename/text lowercased, local DB, no
+  client filter. Waiting on one concrete example (device, typed text, label) to compare.
   (2) Three transactions that balance only together: which three, his to name.
   (3) Two 11-08 cheques, 542.81 and 16.00. Resolve proposed `Income:Business`, wrong. MPI part:
   `Insurance:Auto`, `provider: MPI` (his: "a refund from the fees I paid for my license/
