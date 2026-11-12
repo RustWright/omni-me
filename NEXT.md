@@ -9,8 +9,10 @@ site. ⛔ If a line here could be derived from either, it does not belong here �
 review"). Next:
 1. Check the 11-16 weekly WS buys arrive as two legs with no Unmatched (the trade fix's first
    real run; `tasks.md`, "✅ SHIPPED 2026-11-12").
-2. Ask whether N-to-1 receipt matching gets built (the flights case; `tasks.md`, "🆕 Gap").
-3. Stage G (`tasks.md` § Stage 4, "G. After"): Support purge (his, optional), dev junk.
+2. Then the batched release (1.2.4): everything in `tasks.md`'s "📦 Release queue", his go.
+   Small fixes until then go on the dev branch and onto that list, not to live.
+3. Ask whether N-to-1 receipt matching gets built (the flights case; `tasks.md`, "🆕 Gap").
+4. Stage G (`tasks.md` § Stage 4, "G. After"): Support purge (his, optional), dev junk.
 ⚠️ Two pre-November drafts sit in his review queue (`tasks.md`, "✅ E4 DONE"): his to dismiss.
 ⛔ Live is the pause: every live step waits for his go, one at a time. Production deploys, releases
 and writes to live data are his to run (the permission check refuses mine); hand him the command.

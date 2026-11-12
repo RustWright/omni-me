@@ -1631,6 +1631,11 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   `archived_at` against an older server, `#[serde(default)]`); the header shows the earliest
   member's. 1 test. clippy clean (core, server, app, frontend ×2); tests in CI. Ships: server
   half with the next deploy, the screens with the next app release.
+- 🔴 RULED 2026-11-12 (his pick, my recommendation): no release now; small fixes BATCH into the
+  next one, after the 11-16 weekly WS buys confirm the trade fix ("there would be a lot more
+  small changes and fixes to come"). Beat: shipping each fix as it lands (~1 h of his steps each).
+  📦 Release queue (public, not on live): `63728f7` tax notices file as statements (server);
+  `918a9d5` review shows the counted-from date (server + app). Add each new fix here.
   (2) Three transactions that balance only together: which three, his to name.
   (3) Two 11-08 cheques, 542.81 and 16.00. Resolve proposed `Income:Business`, wrong. MPI part:
   `Insurance:Auto`, `provider: MPI` (his: "a refund from the fees I paid for my license/
