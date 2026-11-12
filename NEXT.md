@@ -22,8 +22,6 @@ and writes to live data are his to run (the permission check refuses mine), so h
 from the paired branch, with `ci.yml -f public_ref=<full SHA>` before any build. Live tools: `~/omni-dev-tools/`.
 
 ## ⛔ Waiting on him
-- **The `tasks.md` size guard**, his pick (option A): apply the diff to
-  `~/.dotfiles/scripts/session-start.sh` (`tasks.md` [0018]; the diff is in the 2026-11-12 session log).
 - **His decisions, `tasks.md` § Waiting on his decision:** N-to-1 matching [0003] · the two
   pre-November drafts [0004] · the design session's decisions [0005] · R2 [0006] · the Support purge
   [0007] · F3's open half [0008] · tap targets [0009] · R27's account side [0010] · tab order [0011] ·

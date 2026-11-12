@@ -65,8 +65,6 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 
 - [0017] **The monthly LLM spend.** No figure exists: the provider reports `estimated_cost`
   per call and nothing reads it (`MODEL_BENCH.md` R4b). His billing page settles it today. [S]
-- [0018] **The size-guard diff for `~/.dotfiles/scripts/session-start.sh`:** a `tasks.md`
-  cap beside `NEXT.md`'s (his pick, option A). His edit, my diff. [XS]
 
 ## Design calls — mine to propose before building
 
@@ -209,7 +207,8 @@ generic IMAP config source.
 
 - [0070] **Memory prune pass.** Content-first, per note. Classifying by filename is what
   went wrong last time. `MEMORY.md` is near its cap. [M]
-- [0071] **Staleness signals for artifacts beyond `NEXT.md`.** [0018] is the first one. Too
+- [0071] **Staleness signals for artifacts beyond `NEXT.md`.** The `tasks.md` size cap
+  (dotfiles `944036d`) is the first one. Too
   many canaries and they get skimmed, so thresholds differ per artifact. [S]
 - [0072] **Scrub the private identity from this PUBLIC repo** (authorised; at the end of an
   autonomous session, never first). Known sites: `docs/src/auto-import.md:6` and the doc

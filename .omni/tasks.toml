@@ -130,7 +130,7 @@ ref    = "tasks.md § Owed to him"
 [[task]]
 id     = "omni-me-0018"
 title  = "Hand over the session-start diff adding a tasks.md size cap"
-status = "todo"
+status = "done"
 size   = "XS"
 ref    = "tasks.md § Owed to him"
 
