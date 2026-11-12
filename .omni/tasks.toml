@@ -39,9 +39,9 @@ ref    = "tasks.md § Waiting on his decision"
 [[task]]
 id     = "omni-me-0005"
 title  = "Rule on the design session decisions in DESIGN_PREREAD.md"
-status = "blocked"
+status = "done"
 size   = "USER"
-ref    = "tasks.md § Waiting on his decision"
+ref    = "project.md § Decisions in force"
 
 [[task]]
 id     = "omni-me-0006"
@@ -531,4 +531,59 @@ id     = "omni-me-0074"
 title  = "Task and project records (gates estimation calibration)"
 status = "shelved"
 ref    = "tasks.md § Later cycles"
+
+[[task]]
+id     = "omni-me-0076"
+title  = "Agent architecture study: how agentic systems are composed, ours mapped and diagrammed"
+status = "todo"
+size   = "L"
+ref    = "tasks.md § Cycle 5 sequence"
+
+[[task]]
+id     = "omni-me-0077"
+title  = "Discuss logbook backlog and per-feature page demos as proof"
+status = "blocked"
+size   = "USER"
+ref    = "tasks.md § Cycle 5 sequence"
+blocked_by = ["omni-me-0076"]
+
+[[task]]
+id     = "omni-me-0078"
+title  = "Decide the agent job contract, registry and placement rule"
+status = "blocked"
+size   = "USER"
+ref    = "tasks.md § Cycle 5 sequence"
+blocked_by = ["omni-me-0076"]
+
+[[task]]
+id     = "omni-me-0079"
+title  = "Notifications slice 1: ntfy, source-failure alerts, quiet hours"
+status = "blocked"
+size   = "M"
+ref    = "tasks.md § Cycle 5 sequence"
+blocked_by = ["omni-me-0078"]
+
+[[task]]
+id     = "omni-me-0080"
+title  = "Notifications slice 2: silent daily summary, unmatched split from review count"
+status = "blocked"
+size   = "M"
+ref    = "tasks.md § Cycle 5 sequence"
+blocked_by = ["omni-me-0079"]
+
+[[task]]
+id     = "omni-me-0081"
+title  = "Notifications slice 3: measure the critical budget"
+status = "blocked"
+size   = "S"
+ref    = "tasks.md § Cycle 5 sequence"
+blocked_by = ["omni-me-0079"]
+
+[[task]]
+id     = "omni-me-0082"
+title  = "New critical detectors: large and new-merchant charges, penalty-dated bills"
+status = "blocked"
+size   = "L"
+ref    = "tasks.md § Cycle 5 sequence"
+blocked_by = ["omni-me-0079"]
 

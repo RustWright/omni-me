@@ -326,6 +326,43 @@ These are settled. Do not re-open one without a new reason.
 - The ledger-classification rulings (F2, 2026-11-11) live in paisa's `CONVENTIONS.md` and
   live's "Ledger conventions" note, not here.
 
+**Notifications** (design session, 2026-11-12; `DESIGN_PREREAD.md` Part 1)
+- Three tiers by what happens if he never sees an item: critical interrupts, review rolls
+  into one daily summary plus the badge, ambient never notifies.
+- Critical means missing it costs money or leaves the record wrong, and waiting makes it worse.
+- Finance mapping. Critical: a source needing a code or reauth (at once); a source erroring
+  for 24 h; a statement that disagrees with the ledger; a large charge; a new-merchant charge;
+  money due with a penalty date (the day before). Review: proposed batches and transactions,
+  unmatched (its own count, apart from review), the purge queue. Ambient: duplicate flags,
+  recurring-charge detection, the check-in.
+- The large-charge threshold is a setting, and the new-merchant alert has its own on/off.
+- Critical's budget is measured, never enforced: target ~3 a week. Over it, alerts still go,
+  and the next summary asks whether to demote the noisiest kind.
+- Quiet hours (default 22:00–08:00, adjustable) hold every critical alert until morning. A
+  setting lets charge alerts through at night, off by default.
+- Review reaches him as one silent daily notification of counts, built by code (default
+  19:00, adjustable), skipped when nothing is new, tapping through to the tab. It does not
+  depend on the check-in.
+- Delivery starts with ntfy self-hosted on the box and the ntfy app on the phone, with no
+  change to omni-me's app, chosen as the prototype. UnifiedPush or Google push (FCM) into
+  omni-me's own app stays open as a later upgrade of the last mile only.
+- Build order: (1) ntfy, source alerts and quiet hours; (2) the summary, with unmatched split
+  from the review count; (3) budget measurement; (4) each new detector, ruled on its own.
+  Slices 1–2 lead Cycle 5's build work and do not wait for Part 2's contract. Building
+  starts once Part 2 has been discussed.
+
+**Agent framework** (design session, 2026-11-12; `DESIGN_PREREAD.md` Part 2)
+- The haphazardness is: no common shape across jobs, results he does not fully trust, jobs
+  in odd places, and no clear, visualisable layout of how the agents are built and composed.
+  He wants to understand how modern agentic systems (Claude Code, Codex) are composed, learn
+  from them, and write mylearnbase posts about omni-me's agent structure.
+- Part 2 splits: 2b, an architecture study (how Claude Code/Codex-style agents are composed,
+  omni-me's agents mapped and diagrammed, run as a learning thread), comes first. 2a, the job
+  contract, registry and placement rule, is decided after it. Part 1's build waits for both.
+- Right after the study: one session on logbooks and per-feature page demos as proof, then
+  the logbook backlog (mylearnbase Cycle 7 has a January deadline).
+- The owed codebase-scaling discussion (per-area "process owner" agents) runs inside the study.
+
 ## Where the history went
 
 Everything through the v1.0.0 cut — the full session log (Session 1 → the Cycle 4

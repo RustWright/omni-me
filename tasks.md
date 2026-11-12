@@ -27,6 +27,24 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
   server + app). Add each new fix here. A fast-forward of public `main` closes the draft PR
   (#8), so open a new one after. [M, USER]
 
+## Cycle 5 sequence (design session, 2026-11-12; rulings in `project.md` § Notifications, § Agent framework)
+
+- [0076] **Agent architecture study**, a learning thread: how Claude Code/Codex-style agents
+  are composed (loop, tools, context, sub-agents, memory, verification), omni-me's agents mapped
+  onto that and diagrammed, gaps marked. Output: a `docs/src/` page. Builds on `ASSISTANT_RESEARCH.md`.
+  It also hosts the owed codebase-scaling discussion (memory note `project-codebase-scaling-discussion-owed`). [L]
+- [0077] **Then: logbooks and page demos.** Whether a self-contained page demo becomes each
+  feature's proof, then the logbook backlog since 08-28 (mylearnbase Cycle 7, January deadline). [USER]
+- [0078] **Then: Part 2a.** Job contract fields, registry, device/server/agent placement
+  rule, first job to migrate, a Rig spike or not (`DESIGN_PREREAD.md` Part 2, decisions 2–5). [USER]
+- [0079] **Notifications slice 1:** ntfy on the box, a server sender, alerts for a source
+  needing a code (at once) or erroring 24 h, quiet hours. Check first: ntfy's docs, and that
+  the phone holds Tailscale. [M]
+- [0080] **Slice 2:** the silent daily summary, and unmatched counted apart from review. [M]
+- [0081] **Slice 3:** measure critical's weekly budget; over it, the summary asks to demote. [S]
+- [0082] **Slice 4, each ruled on its own:** large charge (threshold setting), new merchant
+  (on/off), penalty-dated bills (no due date is modelled yet). Statement mismatch is [0050]. [L]
+
 ## Waiting on his decision
 
 - [0003] **N-to-1 receipt matching: build it or not.** `find_match_candidates` pairs one
@@ -34,9 +52,6 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
   always needs a hand merge. [M if built]
 - [0004] **Two pre-November drafts in live review:** a 10-30 rent e-transfer (795.00) and a
   10-31 grocery "add more items" mail. Dismiss or keep. [USER]
-- [0005] **The design session's decisions:** `DESIGN_PREREAD.md` § Decisions, Parts 1–2
-  (notification criticality, finance first; then the agentic framework). Nothing is built
-  before he rules. [USER]
 - [0006] **R2 for the off-box blob copy:** his Cloudflare account, a bucket and a scoped
   API token. I build the backup job after that. Blobs have exactly one copy today. [USER, then S]
 - [0007] **GitHub Support purge of the pre-S-W1 commits** (optional). GitHub still serves
