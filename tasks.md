@@ -1621,9 +1621,16 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   excludes them. Ships with the next server deploy (not yet on live).
   Promos = 28 emails, mostly real promos; a few look misfiled (an employer exit survey, a
   Hostinger "website is offline", two Access Storage inquiry replies): his to spare.
-  ⏳ Search miss NOT reproduced from code: the review label is title-else-filename
-  (`purge.rs`), and the Archive search matches title/filename/text lowercased, local DB, no
-  client filter. Waiting on one concrete example (device, typed text, label) to compare.
+  ✅ Search miss explained (his clue: "the date on the review page says Nov 11, but the actual
+  date of the email is in August"): NOT search. The review rows showed `archived_at` (the 11-11
+  backfill) while the archive list shows `document_date` (August), so the entries he searched
+  for under Nov 11 were listed under August. And retention counts from the EARLIER of the two,
+  so review did not show the date that made an item due. Sibling: the group header showed the
+  first member's raw archive timestamp as "oldest". ✅ `918a9d5`: one rule, `retention::
+  counted_from` on top of `age_from`; candidates carry it; preview rows show it (falls back to
+  `archived_at` against an older server, `#[serde(default)]`); the header shows the earliest
+  member's. 1 test. clippy clean (core, server, app, frontend ×2); tests in CI. Ships: server
+  half with the next deploy, the screens with the next app release.
   (2) Three transactions that balance only together: which three, his to name.
   (3) Two 11-08 cheques, 542.81 and 16.00. Resolve proposed `Income:Business`, wrong. MPI part:
   `Insurance:Auto`, `provider: MPI` (his: "a refund from the fees I paid for my license/
