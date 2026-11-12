@@ -124,6 +124,9 @@ pub struct PurgeItem {
     pub document_id: String,
     pub label: String,
     pub archived_at: Option<String>,
+    /// Absent from a server built before it existed; the row then shows `archived_at`.
+    #[serde(default)]
+    pub counted_from: Option<String>,
     pub ingest_source: Option<String>,
     pub size: Option<i64>,
     /// These bytes stay regardless — something else references the same blob.
@@ -168,7 +171,8 @@ pub struct RetentionGroup {
     pub tag: String,
     pub keep_days: u32,
     pub count: usize,
-    pub oldest_archived_at: Option<String>,
+    /// The earliest day a member's timer started (`YYYY-MM-DD`).
+    pub oldest: Option<String>,
     /// ⛔ Goes to the purge preview unchanged.
     pub cutoff: String,
 }

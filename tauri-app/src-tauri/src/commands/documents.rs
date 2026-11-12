@@ -341,7 +341,7 @@ pub async fn list_retention_candidates(
                 tag,
                 keep_days,
                 count: members.len(),
-                oldest_archived_at: members.first().map(|m| m.archived_at.clone()),
+                oldest: members.iter().map(|m| m.counted_from.clone()).min(),
                 // The instant the server must filter on, computed from the same
                 // clock and rule that selected these — never re-derived there.
                 cutoff: now
@@ -383,7 +383,9 @@ pub struct RetentionGroup {
     pub tag: String,
     pub keep_days: u32,
     pub count: usize,
-    pub oldest_archived_at: Option<String>,
+    /// The earliest day any member's timer started (`YYYY-MM-DD`), the date the
+    /// preview rows show; not the earliest archive time, which for mail is the backfill.
+    pub oldest: Option<String>,
     /// RFC3339. ⛔ Hand this to the purge preview unchanged.
     pub cutoff: String,
 }

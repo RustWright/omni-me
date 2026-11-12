@@ -81,6 +81,9 @@ pub struct RetentionCandidate {
     /// Every tag on the document, so a screen can say which rule caught it.
     pub tags: Vec<String>,
     pub archived_at: String,
+    /// The day its timer started ([`counted_from`]), which screens show instead of
+    /// the archive day: for backfilled mail that is the backfill, not the mail.
+    pub counted_from: String,
     /// The rule that decided it: the longest `keep_days` among its tags.
     pub keep_days: u32,
 }
@@ -131,6 +134,17 @@ fn age_from(archived: DateTime<Utc>, document_date: Option<&str>) -> DateTime<Ut
         .and_then(|d| d.and_hms_opt(0, 0, 0))
         .map(|d| d.and_utc().min(archived))
         .unwrap_or(archived)
+}
+
+/// [`age_from`] as a day (`YYYY-MM-DD`), for the screens that show it. `None` when
+/// the archive time does not parse, which is also when [`candidate`] gives up.
+pub fn counted_from(archived_at: &str, document_date: Option<&str>) -> Option<String> {
+    let archived = DateTime::parse_from_rfc3339(archived_at).ok()?;
+    Some(
+        age_from(archived.with_timezone(&Utc), document_date)
+            .date_naive()
+            .to_string(),
+    )
 }
 
 /// Documents whose tags all have rules and which are older than the longest.
@@ -208,8 +222,8 @@ fn candidate(
     // a deletion.
     let archived_at = row.archived_at.clone()?;
     let archived = DateTime::parse_from_rfc3339(&archived_at).ok()?;
-    let due = age_from(archived.with_timezone(&Utc), row.document_date.as_deref())
-        .checked_add_signed(Duration::days(i64::from(longest)));
+    let started = age_from(archived.with_timezone(&Utc), row.document_date.as_deref());
+    let due = started.checked_add_signed(Duration::days(i64::from(longest)));
     if due.is_none_or(|due| due > now) {
         return None;
     }
@@ -222,6 +236,7 @@ fn candidate(
             .unwrap_or_else(|| row.document_id.clone()),
         tags,
         archived_at,
+        counted_from: started.date_naive().to_string(),
         keep_days: longest,
     })
 }
@@ -570,6 +585,22 @@ mod tests {
         );
     }
 
+    /// The case he hit (2026-11-12): August mail backfilled on 11-11 showed as
+    /// "Nov 11" in review while the archive list showed August.
+    #[test]
+    fn counted_from_is_the_earlier_day() {
+        let backfilled = counted_from("2026-11-11T17:02:00Z", Some("2026-08-04"));
+        assert_eq!(backfilled.as_deref(), Some("2026-08-04"));
+        // A date read off the page that is later (an expiry) never wins.
+        let expiry = counted_from("2026-09-01T00:00:00Z", Some("2027-01-31"));
+        assert_eq!(expiry.as_deref(), Some("2026-09-01"));
+        assert_eq!(
+            counted_from("2026-09-01T00:00:00Z", None).as_deref(),
+            Some("2026-09-01")
+        );
+        assert_eq!(counted_from("not a time", Some("2026-08-04")), None);
+    }
+
     #[test]
     fn a_group_is_headed_by_the_tag_that_decided_it() {
         let rules = HashMap::from([("newsletter".to_string(), 90), ("promos".to_string(), 365)]);
@@ -578,6 +609,7 @@ mod tests {
             label: "x.eml".into(),
             tags: vec!["newsletter".into(), "promos".into()],
             archived_at: "2024-01-01T00:00:00Z".into(),
+            counted_from: "2024-01-01".into(),
             keep_days: 365,
         };
         let groups = group_by_deciding_tag(std::slice::from_ref(&candidate), &rules);

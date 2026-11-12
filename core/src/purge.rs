@@ -49,6 +49,10 @@ pub struct PurgeItem {
     /// filename. ⛔ Never empty: an unlabelled row is one nobody can decide about.
     pub label: String,
     pub archived_at: Option<String>,
+    /// The day its retention timer counts from (`YYYY-MM-DD`). Shown instead of the
+    /// archive day, which for backfilled mail is the backfill and matches nothing
+    /// the archive list shows.
+    pub counted_from: Option<String>,
     pub ingest_source: Option<String>,
     pub size: Option<i64>,
     /// Whether these bytes stay regardless, because something else references
@@ -201,6 +205,9 @@ async fn summarise(
                 document_id: row.document_id.clone(),
                 label: label_for(row),
                 archived_at: row.archived_at.clone(),
+                counted_from: row.archived_at.as_deref().and_then(|at| {
+                    crate::retention::counted_from(at, row.document_date.as_deref())
+                }),
                 ingest_source: row.ingest_source.clone(),
                 size: row.size,
                 bytes_shared: shared,

@@ -5923,7 +5923,7 @@ pub async fn invoke_list_retention_candidates() -> Result<Vec<crate::types::Rete
             tag: "newsletter".into(),
             keep_days: 90,
             count: 3,
-            oldest_archived_at: Some("2025-01-04T09:12:00Z".into()),
+            oldest: Some("2025-01-04".into()),
             cutoff: "2026-06-29T00:00:00Z".into(),
         }])
     }
@@ -5957,6 +5957,7 @@ pub async fn invoke_preview_document_purge(
                 document_id: d.document_id.clone(),
                 label: d.display_name(),
                 archived_at: d.archived_at.clone(),
+                counted_from: None,
                 ingest_source: d.ingest_source.clone(),
                 size: d.size,
                 // ⚠️ One shared item in the fixture on purpose: a preview where
@@ -6016,6 +6017,7 @@ pub async fn invoke_preview_document_delete(document_id: &str) -> Result<PurgePr
                 document_id: d.document_id.clone(),
                 label: d.display_name(),
                 archived_at: d.archived_at.clone(),
+                counted_from: None,
                 ingest_source: d.ingest_source.clone(),
                 size: d.size,
                 bytes_shared: false,
