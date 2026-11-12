@@ -10,8 +10,8 @@ sources and credentials.
 finished 2026-11-11: server 1.2.3 on the box, the agent running there, both devices on
 1.2.3, the Finances tab on, the historical ledger (11,048 transactions) and the document
 corpus imported, and mail and bank feeds running from 2026-11-01. Small fixes now batch
-into 1.2.4 (`tasks.md` § Now). Cycle 4 is closing out: `tasks.md` was reset this day
-(the pre-reset file is `git show 7ef0e55:tasks.md`), and the memory prune is still owed.
+into 1.2.4 (`tasks.md` § Now). Cycle 4 is closed out: `tasks.md` was reset and memory
+pruned that day (the pre-reset file is `git show 7ef0e55:tasks.md`). Cycle 5 has begun.
 The narrative below this point is the September record and is kept as history.
 
 Work now follows a **three-item sequence set by the user 2026-09-05, taken one at a
@@ -229,7 +229,9 @@ These are settled. Do not re-open one without a new reason.
 - The journal is user-authored only. The assistant reads and cites it and can never
   propose a write to it (`NEVER_PROPOSABLE`). This is an invariant, not a phase.
 - Approval lives with the domain. The assistant inbox holds only proposals with no other
-  home. A badge routes, it never decides. Never merge review queues into the inbox.
+  home. A badge routes, it never decides. Never merge review queues into the inbox: the flows
+  share an event shape, but the review UI is the whole value (a receipt needs editable lines,
+  a re-run and a correction flow, which a generic card cannot carry).
 - Autonomy is earned per action type and only the user grants it. Irreversible actions
   (deletion, purge, `transaction.clear`) can never be granted. A purge confirms once per
   group, listing every document, each one sparable.

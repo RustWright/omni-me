@@ -4,13 +4,14 @@
 live in `project.md` § Decisions in force, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`),
 rationale in `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
-## ▶ NEXT ACTION — the memory prune, `tasks.md` [0070] (the rest of the Cycle 4 close-out)
-The `tasks.md` reset is done (2026-11-12; pre-reset file `git show 7ef0e55:tasks.md`). Left of his
-close-out pick: the memory prune. Content-first, per note. Classifying by filename is what went wrong
-last time. Many notes still point at sections of the old `tasks.md`: repoint or prune them in the same
-pass. The curiosities pass was done 2026-10-13.
+## ▶ NEXT ACTION — his pick of Cycle 5's first stretch (asked 2026-11-12)
+Cycle 4's close-out is done (the `tasks.md` reset and the memory prune, 2026-11-12). Recommended:
+rule on the design session's decisions, `tasks.md` [0005] (`DESIGN_PREREAD.md`, written, read
+first), because Part 2's agentic framework is what the owed codebase-scaling discussion
+(memory `project-codebase-scaling-discussion-owed`, now due) would build on. Until he picks, nothing
+is chosen.
 
-## ⏳ Dated, independent of the prune
+## ⏳ Dated, independent of the pick
 - **11-16:** the weekly WS buys arrive whole: `tasks.md` [0001].
 - **Then** release 1.2.4, his go: `tasks.md` [0002] holds the queue. Until then, fixes land on the dev
   branch and go onto that list, not onto live.
@@ -27,4 +28,6 @@ from the paired branch, with `ci.yml -f public_ref=<full SHA>` before any build.
   [0007] · F3's open half [0008] · tap targets [0009] · R27's account side [0010] · tab order [0011] ·
   monthly crypto [0012] · the estimate fallback [0013] · `server_url` precedence [0014] · journal
   timestamps [0015] · paisa parity [0016].
+- **Promoting ~11 general feedback notes to `~/.claude/rules/`:** the always-loaded tier is at 315 of
+  320 lines, so promotion means compressing something. His call on what.
 - **The public-repo identity scrub**: authorised, at the end of a session only. `tasks.md` [0072].

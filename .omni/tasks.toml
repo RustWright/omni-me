@@ -501,7 +501,7 @@ ref    = "tasks.md § From daily use — backlog"
 [[task]]
 id     = "omni-me-0070"
 title  = "Memory prune pass"
-status = "todo"
+status = "done"
 size   = "M"
 ref    = "tasks.md § Owed at cycle close"
 

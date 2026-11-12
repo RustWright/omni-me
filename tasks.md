@@ -205,8 +205,6 @@ generic IMAP config source.
 
 ## Owed at cycle close
 
-- [0070] **Memory prune pass.** Content-first, per note. Classifying by filename is what
-  went wrong last time. `MEMORY.md` is near its cap. [M]
 - [0071] **Staleness signals for artifacts beyond `NEXT.md`.** The `tasks.md` size cap
   (dotfiles `944036d`) is the first one. Too
   many canaries and they get skimmed, so thresholds differ per artifact. [S]
