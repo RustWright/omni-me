@@ -1603,6 +1603,12 @@ his: the September statements (E2), and the recurring-cost comparison (owed by m
   image: live runs `/opt/omni-ws/ws_driver.py`, so it ships by copy, separately from the deploy.
   Refile: `~/omni-dev-tools/refile_ws_buys_live.py` (dry run by default; tickers from live's cache,
   each must already be a commodity of that account in the ledger; expects 12).
+  ✅ SHIPPED 2026-11-12: overlay CI `43076972797` green (50, incl. the new test); merge `05e67a9`,
+  his push + deploy `43152159378` (`sha-05e67a9`, healthy); his copy of the driver to live
+  `/opt/omni-ws/ws_driver.py` (sha `5087f5e4…`, backup `.bak-…-pre-trades`; dev's copied by me,
+  same sha). Boot tick: fetched 281, deduped 63, 218 out of window; cache written (7 KB). My dry
+  run: all 12 resolved to tickers the ledger holds (TFSA TEC/XQQ/ZQQ, RRSP+FHSA VUN, BTC). ✅ His
+  `--apply`: 12 updated. Unverified until the next weekly buy (11-16): a NEW buy arriving whole.
   (2) Three transactions that balance only together: which three, his to name.
   (3) Two 11-08 cheques, 542.81 and 16.00. Resolve proposed `Income:Business`, wrong. MPI part:
   `Insurance:Auto`, `provider: MPI` (his: "a refund from the fees I paid for my license/
