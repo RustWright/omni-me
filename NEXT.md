@@ -25,9 +25,8 @@ began ("used as a dumping ground"). `PROJECT_PROCESS.md` § Task File Management
 ⛔ Live is the pause: every live step waits for his go, one at a time. Production deploys, releases
 and writes to live data are his to run (the permission check refuses mine); hand him the command.
 ⚠️ A fast-forward of public `main` closes the draft PR (now #8); open a new one after each.
-⛔ **Never `cargo build`/`test` on this box** — `check`/`fmt`/`clippy` only (`project-dev-machines-
-and-build-limits`). Overlay: dispatch from the overlay branch paired with the public ref, run
-overlay `ci.yml` with `-f public_ref=<full SHA>` before any overlay build. Live tools: `~/omni-dev-tools/`.
+⛔ **Never `cargo build`/`test` on this box** (`project-dev-machines-and-build-limits`). Overlay: dispatch
+from the paired branch, `ci.yml -f public_ref=<full SHA>` before any build. Live tools: `~/omni-dev-tools/`.
 
 ## ⛔ Waiting on him
 - **N-to-1 receipt matching**: build it or not (the flights case; `tasks.md`, "🆕 Gap").
@@ -35,6 +34,7 @@ overlay `ci.yml` with `-f public_ref=<full SHA>` before any overlay build. Live 
 - **The design session's decisions**: `DESIGN_PREREAD.md` § Decisions, Parts 1 and 2 (read first).
 - **R2**: his Cloudflare account, a bucket and a scoped API token, for the off-box blob copy.
 - **GitHub Support purge** of the pre-S-W1 commits (optional, his ruling): `tasks.md` § release item 4.
+- **F3's open half**: whether multi-page reading should be told pages can repeat.
 - **Tap targets**: a visual redesign across screens, his call. `tasks.md` § Open.
 - **R27's account side**: his to check; ⛔ no list of affected runs exists, by his decision.
 - **The public-repo identity scrub**: authorised, end of a session only. `tasks.md` § Owed at cycle close.
