@@ -587,3 +587,10 @@ size   = "L"
 ref    = "tasks.md § Cycle 5 sequence"
 blocked_by = ["omni-me-0079"]
 
+[[task]]
+id     = "omni-me-0083"
+title  = "Path-scoped Claude Code rules kept out of the public repo, then area traps moved in"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Design calls"
+

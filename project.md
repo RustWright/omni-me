@@ -361,7 +361,13 @@ These are settled. Do not re-open one without a new reason.
   contract, registry and placement rule, is decided after it. Part 1's build waits for both.
 - Right after the study: one session on logbooks and per-feature page demos as proof, then
   the logbook backlog (mylearnbase Cycle 7 has a January deadline).
-- The owed codebase-scaling discussion (per-area "process owner" agents) runs inside the study.
+- Codebase scaling (ruled in the study, 2026-11-13): no per-area "process owner" agents. Nothing
+  was named that one adds beyond area knowledge and tests, and every handoff is a cold start plus
+  a lossy report. Instead, area traps, rulings and past failures go in path-scoped Claude Code
+  rules (loaded when matching files are touched), procedures in skills, and the test layers stay
+  as they are: module tests for development work, the benches for the runtime agent.
+- Those rules never reach the public repo: synced and project-scoped like memory. Mechanism:
+  `tasks.md` [0083].
 
 ## Where the history went
 

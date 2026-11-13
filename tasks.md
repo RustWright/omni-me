@@ -32,7 +32,7 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 - [0076] **Agent architecture study**, a learning thread: how Claude Code/Codex-style agents
   are composed (loop, tools, context, sub-agents, memory, verification), omni-me's agents mapped
   onto that and diagrammed, gaps marked. Output: a `docs/src/` page. Builds on `ASSISTANT_RESEARCH.md`.
-  It also hosts the owed codebase-scaling discussion (memory note `project-codebase-scaling-discussion-owed`). [L]
+  Its codebase-scaling discussion is ruled (`project.md` § Agent framework). [L]
 - [0077] **Then: logbooks and page demos.** Whether a self-contained page demo becomes each
   feature's proof, then the logbook backlog since 08-28 (mylearnbase Cycle 7, January deadline). [USER]
 - [0078] **Then: Part 2a.** Job contract fields, registry, device/server/agent placement
@@ -82,6 +82,10 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
   per call and nothing reads it (`MODEL_BENCH.md` R4b). His billing page settles it today. [S]
 
 ## Design calls — mine to propose before building
+
+- [0083] **Path-scoped rules kept out of the public repo.** A symlink out of the tree fails:
+  Claude Code skips path-scoped rules behind one. Candidates: a subfolder of `~/.claude/rules/`,
+  or hook-synced gitignored `.claude/rules/`. Then move the area traps out of memory. [M]
 
 - [0019] **`check_total` holds for one hint in four.** Paystub is penalised whatever the
   model emits (`verify.rs`). The fix is sign-aware per hint, or a redefined `total`. Check
@@ -236,5 +240,4 @@ generic IMAP config source.
   and the assistant gains them with no assistant code. [L]
 - Filed, not scheduled: inbox management · Open Banking Canada · Gmail write-back (once trust
   is built) · blobs on object storage and the agent on its own machine (these must not
-  complicate the co-located design) · the codebase-scaling discussion owed after the next
-  release.
+  complicate the co-located design).
