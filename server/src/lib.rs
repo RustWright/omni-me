@@ -38,6 +38,7 @@ use omni_me_core::events::{EventStore, ProjectionRunner, SurrealEventStore, regi
 use omni_me_core::extraction::DocumentExtractor;
 use omni_me_core::jobs::alerts::{AlertEngine, FLUSH_INTERVAL};
 use omni_me_core::jobs::runs::{RunStore, SurrealRunStore};
+use omni_me_core::jobs::summary::SummaryJob;
 use omni_me_core::llm::{
     ClientOptions, LlmClient, build_extractor, build_llm_client, build_reader, build_transcriber,
 };
@@ -100,8 +101,8 @@ async fn run_store(db: &Arc<Database>) -> Arc<dyn RunStore> {
     Arc::new(store)
 }
 
-/// Critical alerts, when ntfy is configured. Also starts the flush that sends
-/// alerts held through quiet hours and retries failed sends.
+/// Critical alerts and the daily review summary, when ntfy is configured. Also
+/// starts the flush that sends alerts held through quiet hours and retries failed sends.
 async fn alert_engine(
     db: &Arc<Database>,
     runs: Arc<dyn RunStore>,
@@ -111,8 +112,17 @@ async fn alert_engine(
         tracing::info!("OMNI_NTFY_URL or OMNI_NTFY_TOPIC unset; alerts are off");
         return None;
     };
-    tracing::info!(topic = ntfy.topic(), "alerts on, through ntfy");
-    let engine = Arc::new(AlertEngine::new((**db).clone(), runs, Arc::new(ntfy)));
+    tracing::info!(
+        topic = ntfy.topic(),
+        "alerts and the daily summary on, through ntfy"
+    );
+    let ntfy: Arc<dyn omni_me_core::notify::Notifier> = Arc::new(ntfy);
+    let summary = Arc::new(SummaryJob::new((**db).clone(), runs.clone(), ntfy.clone()));
+    match summary.init_schema().await {
+        Ok(()) => summary.spawn(),
+        Err(e) => tracing::error!(error = %e, "summary store unavailable; no daily summary"),
+    }
+    let engine = Arc::new(AlertEngine::new((**db).clone(), runs, ntfy));
     if let Err(e) = engine.init_schema().await {
         tracing::error!(error = %e, "alert store unavailable; alerts are off");
         return None;

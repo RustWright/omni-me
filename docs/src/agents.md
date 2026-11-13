@@ -234,6 +234,13 @@ stored, which is what lets the weekly critical-alert budget be measured later wi
 storage. Delivery goes through ntfy on the box to its app on the phone, behind a `Notifier`
 trait that a push channel into the app could later replace.
 
+The review tier reaches the phone once a day instead, as its own job on the contract
+(`core/src/jobs/summary.rs`): one silent notification of counts, with unmatched transactions
+counted apart from what waits on review. It is skipped when nothing has arrived since the
+last one sent. "New" is a difference of sets of ids, not of counts, because a cleared item and
+a new one would cancel out in a count. It runs on the server, which therefore folds the
+assistant's proposals as well; the placement test enforces that.
+
 **The status view** is Settings → Jobs: one line per job with its health and last run, the last
 20 runs when expanded, and the jobs not yet on the contract listed beneath.
 

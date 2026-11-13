@@ -587,10 +587,9 @@ ref    = "tasks.md § Later cycles"
 [[task]]
 id     = "omni-me-0080"
 title  = "Notifications slice 2: silent daily summary, unmatched split from review count"
-status = "blocked"
+status = "done"
 size   = "M"
 ref    = "tasks.md § Cycle 5 sequence"
-blocked_by = ["omni-me-0079"]
 
 [[task]]
 id     = "omni-me-0081"

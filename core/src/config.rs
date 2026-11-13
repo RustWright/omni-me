@@ -42,6 +42,7 @@ pub enum ConfigKey {
     ArchiveBackfillBatch,
     NotifyQuietStart,
     NotifyQuietEnd,
+    NotifySummaryHour,
 }
 
 /// Social notification senders: not records, and half the archive before this.
@@ -89,6 +90,7 @@ pub const ALL_KEYS: &[ConfigKey] = &[
     ConfigKey::ArchiveBackfillBatch,
     ConfigKey::NotifyQuietStart,
     ConfigKey::NotifyQuietEnd,
+    ConfigKey::NotifySummaryHour,
 ];
 
 /// The theme values `appearance.theme` accepts. `System` follows
@@ -161,6 +163,7 @@ impl fmt::Display for ConfigKey {
             ConfigKey::ArchiveBackfillBatch => "archive.backfill_batch",
             ConfigKey::NotifyQuietStart => "notify.quiet_start",
             ConfigKey::NotifyQuietEnd => "notify.quiet_end",
+            ConfigKey::NotifySummaryHour => "notify.summary_hour",
         };
         write!(f, "{s}")
     }
@@ -195,6 +198,7 @@ impl FromStr for ConfigKey {
             "archive.backfill_batch" => Ok(ConfigKey::ArchiveBackfillBatch),
             "notify.quiet_start" => Ok(ConfigKey::NotifyQuietStart),
             "notify.quiet_end" => Ok(ConfigKey::NotifyQuietEnd),
+            "notify.summary_hour" => Ok(ConfigKey::NotifySummaryHour),
             other => Err(format!("unknown config key: {other}")),
         }
     }
@@ -388,6 +392,8 @@ impl ConfigKey {
             // the check-in time zone, which is the user's zone everywhere else too.
             ConfigKey::NotifyQuietStart => ConfigValue::Int(22),
             ConfigKey::NotifyQuietEnd => ConfigValue::Int(8),
+            // His ruling, 2026-11-12: one silent summary of what waits on review, at 19:00.
+            ConfigKey::NotifySummaryHour => ConfigValue::Int(19),
         }
     }
 
@@ -416,7 +422,8 @@ impl ConfigKey {
             | ConfigKey::AssistantChatDeleteDays
             | ConfigKey::ArchiveBackfillBatch
             | ConfigKey::NotifyQuietStart
-            | ConfigKey::NotifyQuietEnd => ValueKind::Int,
+            | ConfigKey::NotifyQuietEnd
+            | ConfigKey::NotifySummaryHour => ValueKind::Int,
         }
     }
 
@@ -443,7 +450,8 @@ impl ConfigKey {
             | ConfigKey::ArchiveBackfillBatch
             // Read by the server each time an alert is about to go.
             | ConfigKey::NotifyQuietStart
-            | ConfigKey::NotifyQuietEnd => true,
+            | ConfigKey::NotifyQuietEnd
+            | ConfigKey::NotifySummaryHour => true,
             ConfigKey::FeatureJournal
             | ConfigKey::FeatureNotes
             | ConfigKey::FeatureRoutines
@@ -486,6 +494,7 @@ impl ConfigKey {
             ConfigKey::ArchiveBackfillBatch => "Older mail read per ten minutes",
             ConfigKey::NotifyQuietStart => "Quiet hours start (hour)",
             ConfigKey::NotifyQuietEnd => "Quiet hours end (hour)",
+            ConfigKey::NotifySummaryHour => "Daily review summary (hour)",
         }
     }
 
@@ -522,7 +531,8 @@ impl ConfigKey {
             | ConfigKey::ArchiveBackfillBefore
             | ConfigKey::ArchiveBackfillBatch
             | ConfigKey::NotifyQuietStart
-            | ConfigKey::NotifyQuietEnd => None,
+            | ConfigKey::NotifyQuietEnd
+            | ConfigKey::NotifySummaryHour => None,
         }
     }
 
@@ -554,7 +564,9 @@ impl ConfigKey {
             ConfigKey::ArchiveSkipSenders
             | ConfigKey::ArchiveBackfillBefore
             | ConfigKey::ArchiveBackfillBatch => ConfigGroup::Archive,
-            ConfigKey::NotifyQuietStart | ConfigKey::NotifyQuietEnd => ConfigGroup::Notifications,
+            ConfigKey::NotifyQuietStart
+            | ConfigKey::NotifyQuietEnd
+            | ConfigKey::NotifySummaryHour => ConfigGroup::Notifications,
         }
     }
 
@@ -598,7 +610,9 @@ impl ConfigKey {
             ConfigKey::AssistantChatDeleteDays => Some((1, 3650)),
             // The fetcher's own per-tick ceiling is 200.
             ConfigKey::ArchiveBackfillBatch => Some((1, 200)),
-            ConfigKey::NotifyQuietStart | ConfigKey::NotifyQuietEnd => Some((0, 23)),
+            ConfigKey::NotifyQuietStart
+            | ConfigKey::NotifyQuietEnd
+            | ConfigKey::NotifySummaryHour => Some((0, 23)),
             _ => None,
         }
     }
@@ -862,11 +876,12 @@ mod tests {
                 | ConfigKey::ArchiveBackfillBefore
                 | ConfigKey::ArchiveBackfillBatch
                 | ConfigKey::NotifyQuietStart
-                | ConfigKey::NotifyQuietEnd => counted += 1,
+                | ConfigKey::NotifyQuietEnd
+                | ConfigKey::NotifySummaryHour => counted += 1,
             }
         }
         assert_eq!(
-            counted, 24,
+            counted, 25,
             "ALL_KEYS does not list every ConfigKey variant"
         );
 

@@ -7,12 +7,14 @@
 pub mod alerts;
 pub mod runs;
 pub mod spend;
+pub mod summary;
 
 use serde::Serialize;
 
 use crate::credentials::LlmRole;
 use crate::events::{
-    AutoImportProjection, BudgetProjection, ConfigProjection, DocumentsProjection, NotesProjection,
+    AssistantProjection, AutoImportProjection, BudgetProjection, ConfigProjection,
+    DocumentsProjection, NotesProjection, RetentionProjection,
 };
 
 pub const MAIL_IMPORT: &str = "mail_import";
@@ -186,6 +188,32 @@ pub const REGISTRY: &[JobSpec] = &[
         model: None,
         // Dedup also reads the raw event log, which every host holds.
         reads: &[AutoImportProjection::NAME],
+    },
+    JobSpec {
+        name: summary::REVIEW_SUMMARY,
+        title: "Daily review summary",
+        shape: Shape::PlainCode,
+        trigger: Trigger::Calendar("daily at notify.summary_hour (19:00 default), user's zone"),
+        host: Host::Server,
+        off_switch: "OMNI_NTFY_URL/TOPIC unset; skipped on its own when nothing is new",
+        failure: FailurePolicy {
+            retry: "a failed run leaves the day open; retried every 5 min until it sends",
+            alert_needs_user: false,
+            alert_failing_hours: None,
+        },
+        output: Output {
+            lands_in: "one silent ntfy notification of counts",
+            tier: Tier::Review,
+        },
+        model: None,
+        reads: &[
+            ConfigProjection::NAME,
+            AssistantProjection::NAME,
+            AutoImportProjection::NAME,
+            BudgetProjection::NAME,
+            DocumentsProjection::NAME,
+            RetentionProjection::NAME,
+        ],
     },
 ];
 

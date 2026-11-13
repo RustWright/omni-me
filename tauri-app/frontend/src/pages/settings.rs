@@ -366,7 +366,9 @@ fn group_meta(group: ConfigGroup) -> (&'static str, Option<&'static str>) {
             "Notifications",
             Some(
                 "Urgent alerts, such as a source that needs a code, are held during \
-                 these hours and sent when they end. Hours are in the check-in time \
+                 these hours and sent when they end. Once a day, at the summary hour, \
+                 one silent notification lists what is waiting on review, and none \
+                 is sent when nothing new has arrived. Hours are in the check-in time \
                  zone. Sent by the server through ntfy.",
             ),
         ),
