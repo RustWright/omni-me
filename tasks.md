@@ -230,7 +230,9 @@ generic IMAP config source.
 - [0072] **Scrub the private identity from this PUBLIC repo** (authorised; at the end of an
   autonomous session, never first). Known sites: `docs/src/auto-import.md:6` and the doc
   comments and fixtures in `core/src/auto_import/receipts.rs`. Sweep `docs/` and `.archive/`.
-  Rewrite each name to the role it plays, and check every fixture's assertion too. [M]
+  Rewrite each name to the role it plays, and check every fixture's assertion too. Sized
+  2026-11-13: ~90 hits in 28 files (merchants, the city, its utility), plus the mock image
+  `mocks/receipt-loblaws.png`; the denylist catches none of them. Its own pass. [L]
 - [0073] **Revise the comment convention** (own session, design-first), then the sweep it
   gates. The routing is right; the length and voice failed. [L]
 

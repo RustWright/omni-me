@@ -319,7 +319,7 @@ mod tests {
 
     #[test]
     fn quiet_hours_wrap_midnight_in_the_users_zone() {
-        let tz: Tz = "America/Winnipeg".parse().unwrap();
+        let tz: Tz = "America/Chicago".parse().unwrap();
         // 23:30 local on 11-13 (CST, UTC-6) holds until 08:00 local on 11-14.
         let held = quiet_until(utc("2026-11-14T05:30:00Z"), tz, 22, 8).unwrap();
         assert_eq!(held, utc("2026-11-14T14:00:00Z"));
