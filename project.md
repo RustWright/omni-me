@@ -367,6 +367,9 @@ These are settled. Do not re-open one without a new reason.
   acts, receipts from email, search by meaning, the document archive. Statements and OTA
   releases are dropped, not deferred. A one-page mock build is measured first (my proposal) so
   the demos for 1, 3 and 4 can follow.
+- Order (2026-11-13): Part 2a, then notifications slice 1, then the logbooks, so the
+  source-failure alert lands before the writing. Slices 2–4 sit after the logbooks in
+  `tasks.md`; that placement is my reading, not stated.
 - Codebase scaling (ruled in the study, 2026-11-13): no per-area "process owner" agents. Nothing
   was named that one adds beyond area knowledge and tests, and every handoff is a cold start plus
   a lossy report. Instead, area traps, rulings and past failures go in path-scoped Claude Code
