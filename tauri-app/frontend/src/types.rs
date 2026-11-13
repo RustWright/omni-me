@@ -882,6 +882,93 @@ pub struct AutoImportSourceView {
     pub paused: bool,
 }
 
+/// `GET /jobs`: every job on the contract, plus the ones not on it yet.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct JobsView {
+    pub jobs: Vec<JobView>,
+    #[serde(default)]
+    pub pending: Vec<PendingJobView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PendingJobView {
+    pub title: String,
+    pub shape: String,
+    pub host: String,
+}
+
+/// One job's declaration and its recent record. `health` is one of
+/// "unknown" | "healthy" | "degraded" | "needs_user".
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct JobView {
+    pub name: String,
+    pub title: String,
+    pub shape: String,
+    /// `{ "kind": "poll", "detail": "..." }` and the other trigger kinds.
+    pub trigger: serde_json::Value,
+    pub host: String,
+    pub off_switch: String,
+    pub failure: JobFailureView,
+    pub output: JobOutputView,
+    #[serde(default)]
+    pub model: Option<JobModelView>,
+    pub health: String,
+    #[serde(default)]
+    pub latest: Vec<JobRunView>,
+    pub runs_24h: usize,
+    pub failures_24h: usize,
+    pub cost_micros_24h: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct JobFailureView {
+    pub retry: String,
+    pub alert_needs_user: bool,
+    #[serde(default)]
+    pub alert_failing_hours: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct JobOutputView {
+    pub lands_in: String,
+    pub tier: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct JobModelView {
+    pub seats: Vec<JobSeatView>,
+    pub budget: String,
+    pub permission: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct JobSeatView {
+    pub role: String,
+    pub purpose: String,
+    pub effort: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct JobRunView {
+    pub id: String,
+    pub subject: String,
+    pub started_at: String,
+    pub ended_at: String,
+    /// `{ "kind": "success" }` | `{ "kind": "failure", "error": .. }` |
+    /// `{ "kind": "needs_user", "reason": .. }`.
+    pub outcome: serde_json::Value,
+    #[serde(default)]
+    pub counts: std::collections::BTreeMap<String, u64>,
+    pub spend: JobSpendView,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub struct JobSpendView {
+    pub calls: u32,
+    pub cost_micros: u64,
+    pub unpriced_calls: u32,
+}
+
 /// Captured payload from an Android share-target SEND intent (Phase 3.3).
 /// `MainActivity.kt` writes bytes + meta to filesDir; `take_pending_share_intent`
 /// reads + clears them and ships the pair up.

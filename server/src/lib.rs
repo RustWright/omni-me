@@ -36,6 +36,7 @@ use omni_me_core::credentials::{self, LlmRole};
 use omni_me_core::db::Database;
 use omni_me_core::events::{EventStore, ProjectionRunner, SurrealEventStore, registry};
 use omni_me_core::extraction::DocumentExtractor;
+use omni_me_core::jobs::runs::{RunStore, SurrealRunStore};
 use omni_me_core::llm::{
     ClientOptions, LlmClient, build_extractor, build_llm_client, build_reader, build_transcriber,
 };
@@ -85,6 +86,16 @@ pub fn blob_dir_from_env() -> PathBuf {
     std::env::var("BLOB_DIR")
         .unwrap_or_else(|_| DEFAULT_BLOB_DIR.into())
         .into()
+}
+
+/// The job run store. A schema failure is logged, not fatal: every run write
+/// then fails and logs too, and the imports themselves are unaffected.
+async fn run_store(db: &Arc<Database>) -> Arc<dyn RunStore> {
+    let store = SurrealRunStore::new((**db).clone());
+    if let Err(e) = store.init_schema().await {
+        tracing::error!(error = %e, "job run store unavailable; runs will not be recorded");
+    }
+    Arc::new(store)
 }
 
 #[derive(Clone)]
@@ -283,7 +294,7 @@ pub async fn run(cfg: RunConfig) {
 
     // Shared registry — populated below by spawn_sources, read by the
     // /auto_import/status + /auto_import/tick route handlers via AppState.
-    let auto_import_registry = SourceRegistry::new();
+    let auto_import_registry = SourceRegistry::new().with_run_store(run_store(&db_arc).await);
 
     // Auto-import build handles. Built before AppState so the state can carry
     // *clones* (the in-app add-source endpoint constructs + spawns a source live
@@ -471,6 +482,7 @@ pub fn build_app(
         .merge(routes::documents_routes())
         .merge(routes::statement_routes())
         .merge(routes::auto_import_routes())
+        .merge(routes::jobs_routes())
         .merge(routes::feedback_routes())
         .merge(routes::llm_routes())
         // Behind the bearer gate like the rest, and with two gates of its own on

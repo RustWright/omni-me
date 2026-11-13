@@ -623,6 +623,7 @@ impl OpenAiCompatExtractor {
         // The measurement per-question `max_tokens` ceilings get sized from (`MODEL_BENCH.md` R20).
         // A call that times out never reaches here, so this records only real answers.
         let usage = crate::llm::Usage::from_response(&response_body);
+        crate::jobs::spend::record_response(&response_body);
         tracing::info!(
             model = %self.model,
             // Top level, as the chat client reads it: a gateway names the upstream

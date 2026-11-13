@@ -217,6 +217,7 @@ impl OpenAiCompatClient {
                     .unwrap_or("Unknown API error");
                 return Err(LlmError::ApiError(format!("HTTP {status}: {msg}")));
             }
+            crate::jobs::spend::record_response(&response_body);
             return Ok(response_body);
         }
     }

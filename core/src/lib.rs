@@ -23,6 +23,7 @@ pub mod future_dated;
 pub mod fx;
 pub mod http;
 pub mod import;
+pub mod jobs;
 pub mod journal_file;
 pub mod journal_import;
 pub mod ledger;

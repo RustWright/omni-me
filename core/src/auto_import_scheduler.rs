@@ -29,6 +29,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
+use crate::jobs::runs::{RunOutcome, RunRecord, RunStore};
+use crate::jobs::spend::Spend;
+
 /// Why a fetched row did not become an event. Every row a source pulls must
 /// land in exactly one of these, which is what makes a silent drop impossible
 /// to write (see [`ImportTally`]).
@@ -108,6 +111,22 @@ pub struct ImportSummary {
     /// The dropped rows themselves, so the status surface can name what is
     /// missing without shell access to the box.
     pub dropped: Vec<DroppedRow>,
+}
+
+/// A summary's dispositions as a run record's counts.
+fn summary_counts(s: &ImportSummary) -> std::collections::BTreeMap<String, u64> {
+    [
+        ("fetched", s.fetched),
+        ("appended", s.appended),
+        ("deduped", s.deduped),
+        ("out_of_window", s.out_of_window),
+        ("ignored", s.ignored),
+        ("unmapped", s.unmapped),
+        ("failed", s.failed),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v as u64))
+    .collect()
 }
 
 impl ImportSummary {
@@ -373,6 +392,10 @@ pub trait AutoImportSource: Send + Sync {
     /// (`"northwind-sync"`, `"globepay"`, `"imap-meridian"`, etc.)
     fn name(&self) -> &str;
 
+    /// The job this source runs as, one of the names in [`crate::jobs`]. Runs are
+    /// recorded only for a job on the contract (`jobs::REGISTRY`).
+    fn job(&self) -> &'static str;
+
     /// Run one import pass. Implementations should be idempotent — re-running
     /// after a partial failure must not duplicate events.
     async fn pull(&self) -> Result<ImportSummary, ImportError>;
@@ -431,6 +454,10 @@ struct OneAtATime {
 impl AutoImportSource for OneAtATime {
     fn name(&self) -> &str {
         self.inner.name()
+    }
+
+    fn job(&self) -> &'static str {
+        self.inner.job()
     }
 
     async fn pull(&self) -> Result<ImportSummary, ImportError> {
@@ -583,11 +610,84 @@ struct RegisteredSource {
 #[derive(Clone, Default)]
 pub struct SourceRegistry {
     inner: Arc<RwLock<HashMap<String, RegisteredSource>>>,
+    runs: Option<Arc<dyn RunStore>>,
+    on_run: Option<Arc<dyn RunObserver>>,
+}
+
+/// Told about every recorded run, after it is stored. The alert engine is one.
+#[async_trait]
+pub trait RunObserver: Send + Sync {
+    async fn observe(&self, run: &RunRecord);
 }
 
 impl SourceRegistry {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Record a run per pull for every source whose job is on the contract.
+    pub fn with_run_store(mut self, runs: Arc<dyn RunStore>) -> Self {
+        self.runs = Some(runs);
+        self
+    }
+
+    pub fn with_observer(mut self, observer: Arc<dyn RunObserver>) -> Self {
+        self.on_run = Some(observer);
+        self
+    }
+
+    /// Where runs are recorded, for the status routes. Held here while every job
+    /// on the contract is an import source.
+    pub fn run_store(&self) -> Option<Arc<dyn RunStore>> {
+        self.runs.clone()
+    }
+
+    /// One pull, timed and metered, with its status and run record written.
+    async fn run_once(
+        &self,
+        source: &Arc<dyn AutoImportSource>,
+    ) -> Result<ImportSummary, ImportError> {
+        let started = Utc::now();
+        let (outcome, spend) = crate::jobs::spend::metered(source.pull()).await;
+        self.record_tick(source.name(), &outcome).await;
+        self.record_run(source.as_ref(), started, &outcome, spend)
+            .await;
+        outcome
+    }
+
+    /// A failed write is logged and never fails the pull: the import already happened.
+    async fn record_run(
+        &self,
+        source: &dyn AutoImportSource,
+        started: DateTime<Utc>,
+        outcome: &Result<ImportSummary, ImportError>,
+        spend: Spend,
+    ) {
+        let Some(store) = &self.runs else { return };
+        if crate::jobs::spec(source.job()).is_none() {
+            return;
+        }
+        let result = match outcome {
+            Ok(_) => RunOutcome::Success,
+            Err(ImportError::NeedsReauth(reason)) => RunOutcome::NeedsUser {
+                reason: reason.clone(),
+            },
+            Err(e) => RunOutcome::Failure {
+                error: e.to_string(),
+            },
+        };
+        let mut run = RunRecord::new(source.job(), source.name(), started, Utc::now(), result);
+        if let Ok(summary) = outcome {
+            run.counts = summary_counts(summary);
+        }
+        run.spend = spend;
+        if let Err(e) = store.record(&run).await {
+            tracing::warn!(job = run.job, subject = run.subject, error = %e, "could not record a job run");
+            return;
+        }
+        if let Some(observer) = &self.on_run {
+            observer.observe(&run).await;
+        }
     }
 
     /// Register a source. Called by `spawn_sources` before spawning
@@ -732,14 +832,9 @@ impl SourceRegistry {
         // that hung up dropped the tick mid-message, and a pull stores nothing
         // until its end: every model call made so far was lost.
         let registry = self.clone();
-        let name = name.to_string();
-        tokio::spawn(async move {
-            let outcome = source.pull().await;
-            registry.record_tick(&name, &outcome).await;
-            outcome
-        })
-        .await
-        .map_err(|e| ImportError::Upstream(format!("manual tick task: {e}")))?
+        tokio::spawn(async move { registry.run_once(&source).await })
+            .await
+            .map_err(|e| ImportError::Upstream(format!("manual tick task: {e}")))?
     }
 
     /// Rewind `name`'s read position so its next tick re-fetches from the
@@ -865,9 +960,7 @@ pub fn spawn_with_registry(
     tokio::spawn(async move {
         let mut backoff = INITIAL_BACKOFF;
         loop {
-            let result = source.pull().await;
-            registry.record_tick(source.name(), &result).await;
-            match result {
+            match registry.run_once(&source).await {
                 Ok(summary) => {
                     log_tick(source.name(), &summary);
                     backoff = INITIAL_BACKOFF;
@@ -1012,6 +1105,7 @@ pub mod null {
         poll_interval: Option<Duration>,
         /// How long each `pull()` takes before answering.
         pull_delay: Duration,
+        job: &'static str,
     }
 
     impl NullSource {
@@ -1023,7 +1117,14 @@ pub mod null {
                 scripted_reauth: Mutex::new(None),
                 poll_interval: None,
                 pull_delay: Duration::ZERO,
+                job: "test",
             }
+        }
+
+        /// Run as `job`, so a registry with a run store records its pulls.
+        pub fn with_job(mut self, job: &'static str) -> Self {
+            self.job = job;
+            self
         }
 
         /// Make every `pull()` take `delay`, so a caller can give up mid-tick.
@@ -1060,6 +1161,10 @@ pub mod null {
     impl AutoImportSource for NullSource {
         fn name(&self) -> &str {
             &self.name
+        }
+
+        fn job(&self) -> &'static str {
+            self.job
         }
 
         async fn pull(&self) -> Result<ImportSummary, ImportError> {
@@ -1433,6 +1538,79 @@ mod tests {
         assert!(matches!(snap[0].last_outcome, TickOutcome::Failure { .. }));
     }
 
+    // ----- Run records (the job contract) -----
+
+    #[derive(Default)]
+    struct Seen(std::sync::Mutex<Vec<RunRecord>>);
+
+    #[async_trait]
+    impl RunObserver for Seen {
+        async fn observe(&self, run: &RunRecord) {
+            self.0.lock().unwrap().push(run.clone());
+        }
+    }
+
+    async fn recording_registry() -> (
+        SourceRegistry,
+        Arc<crate::jobs::runs::SurrealRunStore>,
+        Arc<Seen>,
+    ) {
+        let store = Arc::new(crate::jobs::runs::SurrealRunStore::new(
+            crate::db::test_db().await,
+        ));
+        store.init_schema().await.unwrap();
+        let seen = Arc::new(Seen::default());
+        let registry = SourceRegistry::new()
+            .with_run_store(store.clone())
+            .with_observer(seen.clone());
+        (registry, store, seen)
+    }
+
+    #[tokio::test]
+    async fn a_pull_of_a_contract_job_leaves_a_run_record() {
+        let (registry, store, seen) = recording_registry().await;
+        let src = Arc::new(
+            null::NullSource::new("gmail")
+                .with_job(crate::jobs::MAIL_IMPORT)
+                .with_script(vec![
+                    Ok(ImportSummary::all_appended(4)),
+                    Err(ImportError::NeedsReauth("app password revoked".into())),
+                ]),
+        );
+        registry.register(src, Duration::from_secs(60)).await;
+        registry.trigger_manual("gmail").await.unwrap();
+        registry.trigger_manual("gmail").await.unwrap_err();
+
+        let runs = store
+            .recent(Some(crate::jobs::MAIL_IMPORT), 10)
+            .await
+            .unwrap();
+        assert_eq!(runs.len(), 2);
+        assert!(matches!(runs[0].outcome, RunOutcome::NeedsUser { .. }));
+        assert_eq!(runs[1].outcome, RunOutcome::Success);
+        assert_eq!(runs[1].counts["appended"], 4);
+        assert_eq!(runs[1].subject, "gmail");
+        assert_eq!(
+            seen.0.lock().unwrap().len(),
+            2,
+            "the observer hears every stored run"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_job_not_on_the_contract_records_nothing() {
+        let (registry, store, seen) = recording_registry().await;
+        registry
+            .register(
+                Arc::new(null::NullSource::new("other")),
+                Duration::from_secs(60),
+            )
+            .await;
+        registry.trigger_manual("other").await.unwrap();
+        assert!(store.recent(None, 10).await.unwrap().is_empty());
+        assert!(seen.0.lock().unwrap().is_empty());
+    }
+
     // ----- Live lifecycle: spawn_one / remove (3.7 fast-follow) -----
 
     #[tokio::test]
@@ -1467,6 +1645,9 @@ mod tests {
         impl AutoImportSource for Counting {
             fn name(&self) -> &str {
                 "counting"
+            }
+            fn job(&self) -> &'static str {
+                "test"
             }
             async fn pull(&self) -> Result<ImportSummary, ImportError> {
                 let now = self.now.fetch_add(1, Ordering::SeqCst) + 1;

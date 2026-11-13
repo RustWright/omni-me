@@ -499,6 +499,10 @@ impl AutoImportSource for SubprocessSource {
         &self.name
     }
 
+    fn job(&self) -> &'static str {
+        crate::jobs::BANK_IMPORT
+    }
+
     fn poll_interval(&self) -> Option<Duration> {
         self.schedule_secs.map(Duration::from_secs)
     }

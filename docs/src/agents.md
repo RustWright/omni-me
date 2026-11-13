@@ -186,13 +186,47 @@ In order of how much they matter now:
    records what was decided, and earned autonomy is a query over it. The other jobs do not, and
    for high-volume output like document enrichment, trust cannot come from reviewing everything.
    A per-job record of runs and outcomes, plus checking a random sample, is the shape of a fix.
-   This belongs to the job contract that follows this page.
-2. **Jobs run on three hosts with three schedulers** and no rule for which goes where.
+   The [job contract](#the-job-contract) below starts it; jobs gain a record as they migrate.
+2. **Jobs run on three hosts with three schedulers** and no rule for which goes where. The
+   contract's placement rule is the answer, applied one job at a time.
 3. **Factual claims are unchecked.** The claim check covers changes, not statements about
    records. Citations (every factual sentence points at a record the run retrieved, and code
    verifies the pointer) are the published fix.
 4. **Context has no compaction**, so a long thread grows without bound, and earlier findings are
    dropped between questions, which is a trade of turns for cost and privacy rather than a bug.
+
+## The job contract
+
+Every job that runs on its own declares the same record (`core/src/jobs/mod.rs`): its name and
+shape, what triggers it, which host it runs on, its off switch, its failure policy, where its
+output lands and at which notification tier, and, for a job that calls a model, its seats with
+their effort, its per-run budget and its permission (read, propose or autonomous). The point is
+less any one field than that every job answers the same questions, so a gap shows as a blank
+rather than as nothing at all. Mail import declares "no cap per run", for instance: the budget
+is unbounded today, and the declaration makes that visible instead of implicit.
+
+**A registry lists every job.** Jobs on the contract carry the full record; the rest are listed
+by name, shape and host until they migrate, so the list is complete from the first day. Jobs
+move one at a time, mail import first, and never in a mass move.
+
+**Each run leaves a record**: start, end, outcome, counts and spend. Trust is built from that
+record rather than from checking every output. The records sit in a table on the host that ran
+the job, not in the event log: a poll every half hour per account would put thousands of rows a
+month into a log that is permanent and copied to every device. They are kept for 90 days, long
+enough to measure the critical-alert budget over weeks. Spend comes from the provider's own
+per-call cost figure, metered around the run, so a job needs no plumbing of its own to report
+it; a call that reports no cost is counted as unpriced, never as free. A correction record
+(what the user changed in a job's output) is the next field, and waits for enrichment to migrate.
+
+**Placement.** A job runs on a device only if it must work offline or is computed when a screen
+opens. Otherwise it runs on the server, and intake always does. The agent host takes only the
+agent loop and what serves it. One rule is enforced by a test: a job may only sit on a host that
+folds every table it reads, because a table a host does not fold reads back empty and nothing
+says so. The test can check only what a job declares it reads, so the declaration is the part to
+review when a job changes.
+
+**The status view** is Settings → Jobs: one line per job with its health and last run, the last
+20 runs when expanded, and the jobs not yet on the contract listed beneath.
 
 ## Scaling the codebase without per-area agents
 

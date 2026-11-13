@@ -4070,6 +4070,91 @@ pub async fn invoke_list_auto_import_sources() -> Result<Vec<AutoImportSourceVie
     }
 }
 
+#[cfg(feature = "mock")]
+fn mock_jobs() -> crate::types::JobsView {
+    let now = chrono::Utc::now();
+    let run = |subject: &str, mins_ago: i64, outcome: serde_json::Value, appended: u64| {
+        let end = now - chrono::Duration::minutes(mins_ago);
+        crate::types::JobRunView {
+            id: format!("{subject}-{mins_ago}"),
+            subject: subject.into(),
+            started_at: (end - chrono::Duration::seconds(14)).to_rfc3339(),
+            ended_at: end.to_rfc3339(),
+            outcome,
+            counts: [
+                ("fetched".to_string(), appended + 2),
+                ("appended".to_string(), appended),
+            ]
+            .into_iter()
+            .collect(),
+            spend: crate::types::JobSpendView {
+                calls: 3,
+                cost_micros: 1_240,
+                unpriced_calls: 0,
+            },
+        }
+    };
+    serde_json::from_value(serde_json::json!({
+        "jobs": [{
+            "name": "mail_import", "title": "Mail import", "shape": "workflow",
+            "trigger": { "kind": "poll", "detail": "per source, 30 min default" },
+            "host": "server", "off_switch": "enable_imap at deploy; Pause per account in Settings",
+            "failure": { "retry": "exponential backoff, 1 s doubling to 1 h",
+                         "alert_needs_user": true, "alert_failing_hours": 24 },
+            "output": { "lands_in": "Finances review, and the archive", "tier": "review" },
+            "model": { "seats": [
+                { "role": "C0", "purpose": "could this email record money", "effort": "provider default" },
+                { "role": "C1", "purpose": "the email to draft transactions", "effort": "provider default" }
+            ], "budget": "no cap per run", "permission": "propose" },
+            "health": "degraded",
+            "latest": [
+                run("imap-meridian", 4, serde_json::json!({ "kind": "success" }), 1),
+                run("imap-northwind", 31, serde_json::json!({ "kind": "failure", "error": "connection reset" }), 0),
+            ],
+            "runs_24h": 94, "failures_24h": 3, "cost_micros_24h": 41_870
+        }],
+        "pending": [
+            { "title": "Bank import", "shape": "plain_code", "host": "server" },
+            { "title": "Daily check-in", "shape": "agent", "host": "agent_host" }
+        ]
+    }))
+    .expect("mock jobs decode")
+}
+
+pub async fn invoke_list_jobs() -> Result<crate::types::JobsView, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(mock_jobs())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("list_jobs", &Args {}).await
+    }
+}
+
+pub async fn invoke_list_job_runs(name: &str) -> Result<Vec<crate::types::JobRunView>, String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = name;
+        Ok(mock_jobs()
+            .jobs
+            .into_iter()
+            .flat_map(|j| j.latest)
+            .collect())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            name: &'a str,
+            limit: usize,
+        }
+        invoke("list_job_runs", &Args { name, limit: 20 }).await
+    }
+}
+
 /// Mirrors the server's `ImportSummary` (see the Tauri `TickResponse`).
 ///
 /// Every field defaults so an older server decodes rather than erroring; a

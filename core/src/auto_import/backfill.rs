@@ -154,6 +154,10 @@ impl AutoImportSource for BackfillSource {
         &self.name
     }
 
+    fn job(&self) -> &'static str {
+        crate::jobs::MAIL_BACKFILL
+    }
+
     fn poll_interval(&self) -> Option<Duration> {
         Some(POLL_INTERVAL)
     }

@@ -231,6 +231,10 @@ impl AutoImportSource for ImapSource {
         &self.name
     }
 
+    fn job(&self) -> &'static str {
+        crate::jobs::MAIL_IMPORT
+    }
+
     async fn pull(&self) -> Result<ImportSummary, ImportError> {
         let cursor_snapshot = self.cursor.lock().await.clone();
         let target = self.archive.as_ref().map(|a| ArchiveTarget {

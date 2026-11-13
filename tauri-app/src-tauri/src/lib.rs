@@ -920,6 +920,8 @@ pub fn run() {
             commands::documents::preview_document_purge,
             commands::documents::preview_document_delete,
             commands::documents::confirm_document_purge,
+            commands::jobs::list_jobs,
+            commands::jobs::list_job_runs,
             // Auto-import observability (Phase 3.9)
             commands::auto_import::list_auto_import_sources,
             commands::auto_import::trigger_auto_import_tick,

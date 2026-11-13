@@ -285,6 +285,10 @@ pub fn SettingsPage() -> Element {
                 CacheSection {}
             }
 
+            // Not feature-owned: it lists every job on the contract, whichever
+            // feature each belongs to.
+            super::jobs::JobsSection {}
+
             if features.on(Feature::AutoImport) {
                 // --- Auto-Import Sources (Phase 3.9) ---
                 AutoImportSection {}
@@ -1170,7 +1174,7 @@ fn DangerZone() -> Element {
 /// Render the "X ago" label for a `last_tick_at` ISO timestamp. Returns
 /// "never" when the source hasn't ticked yet. Coarse buckets — auto-import
 /// runs at 30-min cadence so second-level precision is noise.
-fn format_relative_time(iso: Option<&str>) -> String {
+pub(super) fn format_relative_time(iso: Option<&str>) -> String {
     let Some(iso) = iso else {
         return "never".into();
     };
@@ -1195,9 +1199,11 @@ fn format_relative_time(iso: Option<&str>) -> String {
 /// Map the wire-format `health` string to a (label, badge-classes) pair.
 /// `wire_health` is one of
 /// `"healthy" | "stale" | "degraded" | "dropping" | "unknown"`.
-fn health_badge(wire_health: &str) -> (&'static str, &'static str) {
+pub(super) fn health_badge(wire_health: &str) -> (&'static str, &'static str) {
     match wire_health {
         "healthy" => ("Healthy", "bg-success/15 text-success border-success/30"),
+        // A job's run is waiting on a code or a reconnect.
+        "needs_user" => ("Needs you", "bg-error/15 text-error border-error/30"),
         "stale" => ("Stale", "bg-warn/15 text-warn border-warn/30"),
         "degraded" => ("Degraded", "bg-error/15 text-error border-error/30"),
         // The tick *worked* and still lost rows. Shown in the error colour
