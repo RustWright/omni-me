@@ -81,20 +81,27 @@ jobs:
             echo "| **total** | **$((total_raw / 1024))** | **$((total_gz / 1024))** | **$((total_br / 1024))** |"
             echo
             echo "brotli 0 means the runner had no brotli binary."
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
-      # Mock data only: no server, tailnet or provider address may be in the bundle.
-      # A server URL always carries its port, which is what catches a host name.
+      # Mock data only: no tailnet address, real server or key may be in the bundle.
+      # A server URL always carries its port, which is what catches a host name;
+      # the mock bridge's own hosts are the exceptions. Public provider base URLs
+      # in the mock settings are not secrets and are allowed.
       - name: Nothing real baked in
         working-directory: tauri-app/frontend/target/dx/frontend/release/web/public
         run: |
-          found=$(grep -a -o -h -E '100\.[0-9]+\.[0-9]+\.[0-9]+|[a-z0-9-]+\.ts\.net|deepinfra|openrouter|:3000|:3001' -r . | sort -u || true)
+          found=$(
+            {
+              grep -a -o -h -E '100\.[0-9]+\.[0-9]+\.[0-9]+|[a-z0-9-]+\.ts\.net|(sk|tk|key)[-_][A-Za-z0-9]{24,}' -r . || true
+              grep -a -o -h -E '[A-Za-z0-9.-]+:300[01]' -r . | grep -v -E '^(mock-box|localhost|127\.0\.0\.1|[A-Za-z0-9.-]+\.example):' || true
+            } | sort -u
+          )
           {
             echo "### URLs in the bundle"
             echo '```'
             grep -a -o -h -E 'https?://[A-Za-z0-9./_:-]+' -r . | sort -u | head -50 || true
             echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
           if [ -n "$found" ]; then
             echo "real endpoints in a demo bundle:"; echo "$found"; exit 1
           fi
