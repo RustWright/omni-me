@@ -20,9 +20,9 @@ same proportion. This page is the contract that makes the first true without the
 It is written for two readers: someone deciding whether to let software like this near
 their life, and someone extending omni-me who needs to know which lines are load-bearing.
 
-## Five verbs, and the list stays small **(today)**
+## Six verbs, and the list stays small **(today)**
 
-The assistant acts through exactly five tools:
+The assistant acts through exactly six tools:
 
 | Verb | What it does | |
 |---|---|---|
@@ -30,9 +30,10 @@ The assistant acts through exactly five tools:
 | `read` | Fetch one record in full, by identity. | **(today)** |
 | `list_types` | List the kinds of record this app holds. | **(today)** |
 | `describe_type` | Describe one kind: how it is identified, and its properties. | **(today)** |
+| `list` | List records of one kind by filter, newest first, without searching words. Added because `search` ranks by relevance and could not answer "my most recent X". | **(today)** |
 | `propose` | Offer a change for approval. The only route to any write. | **(today)** |
 
-All five verbs work. `propose` is the write half, and it is worth being precise
+All six verbs work. `propose` is the write half, and it is worth being precise
 about what shipping it did **not** change: the assistant is still **read-only in
 the strongest sense** — there is no write path behind any tool it holds.
 `propose` validates an intention and returns; it is handed nothing that can
@@ -433,7 +434,7 @@ Documents and messages arriving from the outside world are read by a **quarantin
 that has no tools, cannot call anything, and can only emit fields matching a fixed schema.
 Its output is data.
 
-The **privileged** model is the one holding the five verbs. It never sees a raw email body, a
+The **privileged** model is the one holding the six verbs. It never sees a raw email body, a
 raw document, or the bytes of a photograph. It sees typed fields the quarantined model
 extracted, and it knows they came from outside.
 
