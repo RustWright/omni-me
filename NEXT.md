@@ -22,9 +22,6 @@ and writes to live data are his to run (the permission check refuses mine), so h
 from the paired branch, with `ci.yml -f public_ref=<full SHA>` before any build. Live tools: `~/omni-dev-tools/`.
 
 ## ⛔ Waiting on him
-- **One docs CI run** to prove the pinned mdBook and the mermaid step (the permission check refused my
-  dispatch; publishing is off, so it only builds):
-  `gh workflow run deploy-docs.yml --ref dev/role-split-model-seats`
 - **His decisions, `tasks.md` § Waiting on his decision:** N-to-1 matching [0003] · the two
   pre-November drafts [0004] · R2 [0006] · the Support purge [0007] · F3's open half [0008] · tap
   targets [0009] · R27's account side [0010] · tab order [0011] · monthly crypto [0012] · the
