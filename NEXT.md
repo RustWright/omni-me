@@ -4,10 +4,11 @@
 live in `project.md` § Decisions in force, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`),
 rationale in `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
-## ▶ NEXT ACTION — his choice, asked 2026-11-13
-The build stretch ([0089], [0079]'s code, [0090], [0084]) is on the dev branch and on dev. What
-remains in his order is the four logbooks, whose prose is his. Asked: does slice 2 [0080] start
-while he writes, or does the identity scrub [0072] (now sized, its own pass) go first?
+## ▶ NEXT ACTION — slice 3 [0081] needs one design answer first
+Built and on the dev branch: [0089], [0079]'s code, [0090], [0084], and slice 2 [0080] (his pick,
+2026-11-13). Slice 3 "asks whether to demote the noisiest kind", and nothing can demote a kind
+yet: ask him what a demotion is (a setting per alert kind?) before building it. The identity
+scrub [0072] is sized and is its own pass.
 - The audit trail for the stretch: overlay `DECISION_LOG_2026-11-13.md`.
 - Logbooks: load `writing-posts` (from `~/.dotfiles/claude/skills/`, not linked on the WSL box).
 
@@ -23,6 +24,8 @@ from the paired branch, with `ci.yml -f public_ref=<full SHA>` before any build.
 
 ## ⛔ Waiting on him
 - **ntfy bring-up**, [0079]: overlay `deploy/ntfy/README.md`, files already in `~/omni-ntfy`.
+- **The summary's tap target:** the ruling says it taps through to the tab, the app has no deep
+  link, and delivery was ruled "no change to omni-me's app". Asked 2026-11-13.
 - **Logbook prose** from the four scaffolds in `logbook/_drafts/` (gitignored, on the WSL box only).
 - **His decisions, `tasks.md` § Waiting on his decision:** [0003]–[0016], unchanged.
 - **Promoting ~11 general feedback notes to `~/.claude/rules/`:** the always-loaded tier is at 315 of
