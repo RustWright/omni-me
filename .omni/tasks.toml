@@ -535,14 +535,14 @@ ref    = "tasks.md § Later cycles"
 [[task]]
 id     = "omni-me-0076"
 title  = "Agent architecture study: how agentic systems are composed, ours mapped and diagrammed"
-status = "todo"
+status = "done"
 size   = "L"
 ref    = "tasks.md § Cycle 5 sequence"
 
 [[task]]
 id     = "omni-me-0077"
 title  = "Discuss logbook backlog and per-feature page demos as proof"
-status = "blocked"
+status = "todo"
 size   = "USER"
 ref    = "tasks.md § Cycle 5 sequence"
 blocked_by = ["omni-me-0076"]
@@ -550,7 +550,7 @@ blocked_by = ["omni-me-0076"]
 [[task]]
 id     = "omni-me-0078"
 title  = "Decide the agent job contract, registry and placement rule"
-status = "blocked"
+status = "todo"
 size   = "USER"
 ref    = "tasks.md § Cycle 5 sequence"
 blocked_by = ["omni-me-0076"]

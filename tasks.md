@@ -29,14 +29,11 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 
 ## Cycle 5 sequence (design session, 2026-11-12; rulings in `project.md` § Notifications, § Agent framework)
 
-- [0076] **Agent architecture study**, a learning thread: how Claude Code/Codex-style agents
-  are composed (loop, tools, context, sub-agents, memory, verification), omni-me's agents mapped
-  onto that and diagrammed, gaps marked. Output: a `docs/src/` page. Builds on `ASSISTANT_RESEARCH.md`.
-  Its codebase-scaling discussion is ruled (`project.md` § Agent framework). [L]
-- [0077] **Then: logbooks and page demos.** Whether a self-contained page demo becomes each
+- [0077] **Logbooks and page demos.** Whether a self-contained page demo becomes each
   feature's proof, then the logbook backlog since 08-28 (mylearnbase Cycle 7, January deadline). [USER]
-- [0078] **Then: Part 2a.** Job contract fields, registry, device/server/agent placement
-  rule, first job to migrate, a Rig spike or not (`DESIGN_PREREAD.md` Part 2, decisions 2–5). [USER]
+- [0078] **Then: Part 2a.** Job contract fields, registry, placement rule, first job to migrate, a
+  Rig spike or not (`DESIGN_PREREAD.md` Part 2, decisions 2–5). Gaps 1–2 of
+  `docs/src/agents.md` § Gaps are its inputs. [USER]
 - [0079] **Notifications slice 1:** ntfy on the box, a server sender, alerts for a source
   needing a code (at once) or erroring 24 h, quiet hours. Check first: ntfy's docs, and that
   the phone holds Tailscale. [M]
