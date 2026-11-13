@@ -542,7 +542,7 @@ ref    = "tasks.md § Cycle 5 sequence"
 [[task]]
 id     = "omni-me-0077"
 title  = "Discuss logbook backlog and per-feature page demos as proof"
-status = "todo"
+status = "done"
 size   = "USER"
 ref    = "tasks.md § Cycle 5 sequence"
 blocked_by = ["omni-me-0076"]
@@ -593,4 +593,39 @@ title  = "Path-scoped Claude Code rules kept out of the public repo, then area t
 status = "todo"
 size   = "M"
 ref    = "tasks.md § Design calls"
+
+[[task]]
+id     = "omni-me-0084"
+title  = "Spike: build one app page alone as a mock web bundle and measure its size"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Cycle 5 sequence"
+
+[[task]]
+id     = "omni-me-0085"
+title  = "Logbook: the assistant asks before it acts"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Cycle 5 sequence"
+
+[[task]]
+id     = "omni-me-0086"
+title  = "Logbook: receipts from email"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Cycle 5 sequence"
+
+[[task]]
+id     = "omni-me-0087"
+title  = "Logbook: search by meaning"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Cycle 5 sequence"
+
+[[task]]
+id     = "omni-me-0088"
+title  = "Logbook: the document archive"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Cycle 5 sequence"
 

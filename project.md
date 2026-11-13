@@ -359,8 +359,14 @@ These are settled. Do not re-open one without a new reason.
 - Part 2 splits: 2b, an architecture study (how Claude Code/Codex-style agents are composed,
   omni-me's agents mapped and diagrammed, run as a learning thread), comes first. 2a, the job
   contract, registry and placement rule, is decided after it. Part 1's build waits for both.
-- Right after the study: one session on logbooks and per-feature page demos as proof, then
-  the logbook backlog (mylearnbase Cycle 7 has a January deadline).
+- Page demos are a showcase, not each feature's proof (2026-11-13): built where a visitor can
+  try a screen, chosen for what they show recruiters, one page or flow per mock bundle. Pipeline
+  features keep evidence that fits them (recorded runs, bench scores), since a mock demo of a
+  backend shows fake data arriving and proves nothing about real input.
+- The January logbook set (2026-11-13) is four entries, in order: the assistant asks before it
+  acts, receipts from email, search by meaning, the document archive. Statements and OTA
+  releases are dropped, not deferred. A one-page mock build is measured first (my proposal) so
+  the demos for 1, 3 and 4 can follow.
 - Codebase scaling (ruled in the study, 2026-11-13): no per-area "process owner" agents. Nothing
   was named that one adds beyond area knowledge and tests, and every handoff is a cold start plus
   a lossy report. Instead, area traps, rulings and past failures go in path-scoped Claude Code

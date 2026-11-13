@@ -29,8 +29,15 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 
 ## Cycle 5 sequence (design session, 2026-11-12; rulings in `project.md` § Notifications, § Agent framework)
 
-- [0077] **Logbooks and page demos.** Whether a self-contained page demo becomes each
-  feature's proof, then the logbook backlog since 08-28 (mylearnbase Cycle 7, January deadline). [USER]
+- [0084] **Spike: one page as its own mock web build**, measured release size, built on CI or
+  the other machine. Check it is mock with no real endpoint baked in (`project.md` § demos). [M]
+- [0085] **Logbook: the assistant asks before it acts.** Demo: chat plus inbox, if [0084] holds.
+  Source `docs/src/assistant.md`, `agents.md`. January deadline (mylearnbase Cycle 7). [M]
+- [0086] **Logbook: receipts from email.** Evidence is a recorded run and bench scores, not a
+  demo. Source `docs/src/auto-import.md`, `MODEL_BENCH.md`. [M]
+- [0087] **Logbook: search by meaning.** Demo: search over mock records. Source `retrieval.md`. [M]
+- [0088] **Logbook: the document archive.** Demo: the document view. Source `archive.md`,
+  `extraction.md`. [M]
 - [0078] **Then: Part 2a.** Job contract fields, registry, placement rule, first job to migrate, a
   Rig spike or not (`DESIGN_PREREAD.md` Part 2, decisions 2–5). Gaps 1–2 of
   `docs/src/agents.md` § Gaps are its inputs. [USER]
