@@ -4,11 +4,13 @@
 live in `project.md` § Decisions in force, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`),
 rationale in `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
-## ▶ NEXT ACTION — Part 2a, `tasks.md` [0078]: his decisions session
-The study [0076] and the logbooks session [0077] are done (rulings in `project.md` § Agent
-framework). His order: Part 2a, then notifications slice 1 [0079], then the spike and four
-January logbooks [0084]–[0088]. Part 2a's inputs are `docs/src/agents.md` § Gaps 1–2 and
-`DESIGN_PREREAD.md` Part 2 decisions 2–5, which he has not read: explain from zero.
+## ▶ NEXT ACTION — autonomous build, in his order (authorised 2026-11-13)
+[0089] job contract and registry with mail import migrated → [0079] notifications slice 1 →
+[0090] bank import → [0084] one-page mock build spike → logbooks [0085]–[0088]. Rulings:
+`project.md` § Job contract, § Notifications, § Agent framework. Part 2a is closed; do not re-open it.
+- Keep a decision log (one line per non-obvious call) for him to audit; back up any dev data first.
+- ntfy on the box and any deploy touch live: prepare them, hand him the command, wait for his go.
+- Logbooks: load `writing-posts` first. Drafts only; publishing to mylearnbase is his go.
 
 ## ⏳ Dated, independent of the sequence
 - **11-16:** the weekly WS buys arrive whole: `tasks.md` [0001].

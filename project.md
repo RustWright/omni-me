@@ -370,6 +370,22 @@ These are settled. Do not re-open one without a new reason.
 - Order (2026-11-13): Part 2a, then notifications slice 1, then the logbooks, so the
   source-failure alert lands before the writing. Slices 2–4 sit after the logbooks in
   `tasks.md`; that placement is my reading, not stated.
+
+**Job contract** (Part 2a, 2026-11-13; rationale in `docs/src/agents.md`)
+- Every job declares: name, shape (agent, workflow, plain code), trigger, host, off switch,
+  failure policy, output and tier, and a run record (start, end, outcome, counts, spend). A job
+  that calls a model also declares its model seats (with effort or thinking), a per-run budget
+  and its permission (read, propose, autonomous). A correction record waits for enrichment.
+- A registry lists every job, and a status view reads the run records: trust is built from
+  that record, not from checking every output.
+- Placement: device only for what must work offline or is computed when a screen opens; server
+  by default and always for intake; agent host only for the agent loop and what serves it. A job
+  may only sit on a host that folds every table it reads, guarded by a test per job. Applied as
+  each job migrates, never as a mass move; recurring detection is the one misfit (to the server).
+- Mail import migrates first, inside notifications slice 1, whose alerts are its failure policy
+  and tier; bank import follows on the same alert.
+- No Rig spike: the one OpenAI-compatible client already covers every provider in use. Revisit
+  only for a provider that does not speak that protocol.
 - Codebase scaling (ruled in the study, 2026-11-13): no per-area "process owner" agents. Nothing
   was named that one adds beyond area knowledge and tests, and every handoff is a cold start plus
   a lossy report. Instead, area traps, rulings and past failures go in path-scoped Claude Code

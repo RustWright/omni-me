@@ -550,10 +550,17 @@ blocked_by = ["omni-me-0076"]
 [[task]]
 id     = "omni-me-0078"
 title  = "Decide the agent job contract, registry and placement rule"
-status = "todo"
+status = "done"
 size   = "USER"
 ref    = "tasks.md § Cycle 5 sequence"
 blocked_by = ["omni-me-0076"]
+
+[[task]]
+id     = "omni-me-0089"
+title  = "Job contract and registry, with mail import migrated onto it"
+status = "todo"
+size   = "L"
+ref    = "tasks.md § Cycle 5 sequence"
 
 [[task]]
 id     = "omni-me-0079"
@@ -561,7 +568,22 @@ title  = "Notifications slice 1: ntfy, source-failure alerts, quiet hours"
 status = "blocked"
 size   = "M"
 ref    = "tasks.md § Cycle 5 sequence"
-blocked_by = ["omni-me-0078"]
+blocked_by = ["omni-me-0089"]
+
+[[task]]
+id     = "omni-me-0090"
+title  = "Bank import onto the job contract"
+status = "blocked"
+size   = "S"
+ref    = "tasks.md § Cycle 5 sequence"
+blocked_by = ["omni-me-0079"]
+
+[[task]]
+id     = "omni-me-0091"
+title  = "Recurring detection moved to the server when it migrates onto the contract"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Later cycles"
 
 [[task]]
 id     = "omni-me-0080"
