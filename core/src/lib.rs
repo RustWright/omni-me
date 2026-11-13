@@ -36,6 +36,7 @@ pub mod llm;
 /// ingest it — the archive would be searchable on the server and not on a
 /// client, with nothing reporting the difference.
 pub mod mime;
+pub mod notify;
 pub mod paths;
 pub mod preprocess;
 pub mod purge;

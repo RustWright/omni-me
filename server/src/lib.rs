@@ -36,10 +36,12 @@ use omni_me_core::credentials::{self, LlmRole};
 use omni_me_core::db::Database;
 use omni_me_core::events::{EventStore, ProjectionRunner, SurrealEventStore, registry};
 use omni_me_core::extraction::DocumentExtractor;
+use omni_me_core::jobs::alerts::{AlertEngine, FLUSH_INTERVAL};
 use omni_me_core::jobs::runs::{RunStore, SurrealRunStore};
 use omni_me_core::llm::{
     ClientOptions, LlmClient, build_extractor, build_llm_client, build_reader, build_transcriber,
 };
+use omni_me_core::notify::NtfyNotifier;
 use omni_me_core::runtime::Instance;
 
 const DB_PATH: &str = "surreal_data/server.db";
@@ -96,6 +98,34 @@ async fn run_store(db: &Arc<Database>) -> Arc<dyn RunStore> {
         tracing::error!(error = %e, "job run store unavailable; runs will not be recorded");
     }
     Arc::new(store)
+}
+
+/// Critical alerts, when ntfy is configured. Also starts the flush that sends
+/// alerts held through quiet hours and retries failed sends.
+async fn alert_engine(
+    db: &Arc<Database>,
+    runs: Arc<dyn RunStore>,
+    secrets: &HashMap<String, String>,
+) -> Option<Arc<AlertEngine>> {
+    let Some(ntfy) = NtfyNotifier::from_env(secrets) else {
+        tracing::info!("OMNI_NTFY_URL or OMNI_NTFY_TOPIC unset; alerts are off");
+        return None;
+    };
+    tracing::info!(topic = ntfy.topic(), "alerts on, through ntfy");
+    let engine = Arc::new(AlertEngine::new((**db).clone(), runs, Arc::new(ntfy)));
+    if let Err(e) = engine.init_schema().await {
+        tracing::error!(error = %e, "alert store unavailable; alerts are off");
+        return None;
+    }
+    let flusher = engine.clone();
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(FLUSH_INTERVAL);
+        loop {
+            tick.tick().await;
+            flusher.flush().await;
+        }
+    });
+    Some(engine)
 }
 
 #[derive(Clone)]
@@ -294,7 +324,12 @@ pub async fn run(cfg: RunConfig) {
 
     // Shared registry — populated below by spawn_sources, read by the
     // /auto_import/status + /auto_import/tick route handlers via AppState.
-    let auto_import_registry = SourceRegistry::new().with_run_store(run_store(&db_arc).await);
+    let runs = run_store(&db_arc).await;
+    let auto_import_registry = SourceRegistry::new().with_run_store(runs.clone());
+    let auto_import_registry = match alert_engine(&db_arc, runs, &creds.secrets).await {
+        Some(engine) => auto_import_registry.with_observer(engine),
+        None => auto_import_registry,
+    };
 
     // Auto-import build handles. Built before AppState so the state can carry
     // *clones* (the in-app add-source endpoint constructs + spawns a source live

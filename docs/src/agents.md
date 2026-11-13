@@ -225,6 +225,15 @@ folds every table it reads, because a table a host does not fold reads back empt
 says so. The test can check only what a job declares it reads, so the declaration is the part to
 review when a job changes.
 
+**The failure policy drives the alerts.** A job declares whether a run that needs the user (a
+code, a reconnect) alerts at once, and how long a subject may go without a success before it
+alerts. The alert engine reads each stored run against that policy (`core/src/jobs/alerts.rs`).
+An alert is one episode: opened by the first run that qualifies and closed by the next success,
+so a source retrying all night alerts once. Alerts wait out quiet hours, and each episode is
+stored, which is what lets the weekly critical-alert budget be measured later without new
+storage. Delivery goes through ntfy on the box to its app on the phone, behind a `Notifier`
+trait that a push channel into the app could later replace.
+
 **The status view** is Settings → Jobs: one line per job with its health and last run, the last
 20 runs when expanded, and the jobs not yet on the contract listed beneath.
 

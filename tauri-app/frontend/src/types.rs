@@ -417,6 +417,8 @@ pub enum ConfigGroup {
     Assistant,
     /// What the importers keep.
     Archive,
+    /// When alerts may interrupt.
+    Notifications,
 }
 
 /// A feature that can be switched off whole. Mirror of `core::config::Feature`.

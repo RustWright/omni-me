@@ -346,6 +346,8 @@ These are settled. Do not re-open one without a new reason.
 - Delivery starts with ntfy self-hosted on the box and the ntfy app on the phone, with no
   change to omni-me's app, chosen as the prototype. UnifiedPush or Google push (FCM) into
   omni-me's own app stays open as a later upgrade of the last mile only.
+- ntfy is reachable over the tailnet only, with auth on (2026-11-13). Alerts pause while the
+  phone's Tailscale is off, and ntfy's 72 h cache delivers them on reconnect.
 - Build order: (1) ntfy, source alerts and quiet hours; (2) the summary, with unmatched split
   from the review count; (3) budget measurement; (4) each new detector, ruled on its own.
   Slices 1–2 lead Cycle 5's build work and do not wait for Part 2's contract. Building
@@ -382,6 +384,7 @@ These are settled. Do not re-open one without a new reason.
   by default and always for intake; agent host only for the agent loop and what serves it. A job
   may only sit on a host that folds every table it reads, guarded by a test per job. Applied as
   each job migrates, never as a mass move; recurring detection is the one misfit (to the server).
+- The status view is Settings → Jobs, a collapsed section listing every job (2026-11-13).
 - Mail import migrates first, inside notifications slice 1, whose alerts are its failure policy
   and tier; bank import follows on the same alert.
 - No Rig spike: the one OpenAI-compatible client already covers every provider in use. Revisit

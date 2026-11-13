@@ -4114,7 +4114,7 @@ fn mock_jobs() -> crate::types::JobsView {
             "runs_24h": 94, "failures_24h": 3, "cost_micros_24h": 41_870
         }],
         "pending": [
-            { "title": "Bank import", "shape": "plain_code", "host": "server" },
+            { "title": "Old-mail backfill", "shape": "workflow", "host": "server" },
             { "title": "Daily check-in", "shape": "agent", "host": "agent_host" }
         ]
     }))

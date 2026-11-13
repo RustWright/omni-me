@@ -81,6 +81,12 @@ impl RunRecord {
     }
 }
 
+/// Told about every recorded run, after it is stored. The alert engine is one.
+#[async_trait]
+pub trait RunObserver: Send + Sync {
+    async fn observe(&self, run: &RunRecord);
+}
+
 #[async_trait]
 pub trait RunStore: Send + Sync {
     async fn record(&self, run: &RunRecord) -> Result<(), String>;

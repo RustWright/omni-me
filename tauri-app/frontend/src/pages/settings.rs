@@ -263,6 +263,8 @@ pub fn SettingsPage() -> Element {
             // --- Archive & import ---
             ConfigSection { group: ConfigGroup::Archive }
 
+            ConfigSection { group: ConfigGroup::Notifications }
+
             // Feature-owned sections below. A section whose feature is off is not
             // rendered at all rather than disabled — a control for something inert
             // is worse than its absence. The two `ConfigSection`s above are never
@@ -358,6 +360,14 @@ fn group_meta(group: ConfigGroup) -> (&'static str, Option<&'static str>) {
                  archived a few messages at a time and never imported as transactions; \
                  anything its retention timer would already purge is left out. Empty \
                  means off. Applies from the next mail check.",
+            ),
+        ),
+        ConfigGroup::Notifications => (
+            "Notifications",
+            Some(
+                "Urgent alerts, such as a source that needs a code, are held during \
+                 these hours and sent when they end. Hours are in the check-in time \
+                 zone. Sent by the server through ntfy.",
             ),
         ),
         // Not "Assistant retrieval" any more: the turn budget governs the loop,

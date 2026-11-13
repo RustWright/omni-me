@@ -4,6 +4,7 @@
 //! record per run ([`runs`]). Why each field exists and the placement rule are in
 //! `docs/src/agents.md` § The job contract.
 
+pub mod alerts;
 pub mod runs;
 pub mod spend;
 
@@ -125,46 +126,68 @@ pub struct JobSpec {
 }
 
 /// Every job on the contract. A job joins as it migrates, never in a mass move.
-pub const REGISTRY: &[JobSpec] = &[JobSpec {
-    name: MAIL_IMPORT,
-    title: "Mail import",
-    shape: Shape::Workflow,
-    trigger: Trigger::Poll("per source, 30 min default (OMNI_AUTO_IMPORT_INTERVAL_SECS)"),
-    host: Host::Server,
-    off_switch: "enable_imap at deploy; Pause per account in Settings",
-    failure: FailurePolicy {
-        retry: "exponential backoff, 1 s doubling to 1 h; halts on a reconnect until Reconnect",
-        alert_needs_user: true,
-        alert_failing_hours: Some(24),
-    },
-    output: Output {
-        lands_in: "Finances review, and the archive",
-        tier: Tier::Review,
-    },
-    model: Some(ModelUse {
-        seats: &[
-            Seat {
-                role: LlmRole::Triage,
-                purpose: "could this email record money",
-                effort: "provider default, 8 output tokens",
-            },
-            Seat {
-                role: LlmRole::Extractor,
-                purpose: "the email to draft transactions",
-                effort: "provider default",
-            },
+pub const REGISTRY: &[JobSpec] = &[
+    JobSpec {
+        name: MAIL_IMPORT,
+        title: "Mail import",
+        shape: Shape::Workflow,
+        trigger: Trigger::Poll("per source, 30 min default (OMNI_AUTO_IMPORT_INTERVAL_SECS)"),
+        host: Host::Server,
+        off_switch: "enable_imap at deploy; Pause per account in Settings",
+        failure: FailurePolicy {
+            retry: "exponential backoff, 1 s doubling to 1 h; halts on a reconnect until Reconnect",
+            alert_needs_user: true,
+            alert_failing_hours: Some(24),
+        },
+        output: Output {
+            lands_in: "Finances review, and the archive",
+            tier: Tier::Review,
+        },
+        model: Some(ModelUse {
+            seats: &[
+                Seat {
+                    role: LlmRole::Triage,
+                    purpose: "could this email record money",
+                    effort: "provider default, 8 output tokens",
+                },
+                Seat {
+                    role: LlmRole::Extractor,
+                    purpose: "the email to draft transactions",
+                    effort: "provider default",
+                },
+            ],
+            budget: "no cap per run; per email one triage call and at most 3 extraction attempts",
+            permission: Permission::Propose,
+        }),
+        reads: &[
+            ConfigProjection::NAME,
+            AutoImportProjection::NAME,
+            DocumentsProjection::NAME,
+            NotesProjection::NAME,
+            BudgetProjection::NAME,
         ],
-        budget: "no cap per run; per email one triage call and at most 3 extraction attempts",
-        permission: Permission::Propose,
-    }),
-    reads: &[
-        ConfigProjection::NAME,
-        AutoImportProjection::NAME,
-        DocumentsProjection::NAME,
-        NotesProjection::NAME,
-        BudgetProjection::NAME,
-    ],
-}];
+    },
+    JobSpec {
+        name: BANK_IMPORT,
+        title: "Bank import",
+        shape: Shape::PlainCode,
+        trigger: Trigger::Poll("per source: its schedule_secs, else the 30 min default"),
+        host: Host::Server,
+        off_switch: "enable_bank at deploy; Pause per source in Settings",
+        failure: FailurePolicy {
+            retry: "exponential backoff, 1 s doubling to 1 h; halts on a code request until Reconnect",
+            alert_needs_user: true,
+            alert_failing_hours: Some(24),
+        },
+        output: Output {
+            lands_in: "Finances review",
+            tier: Tier::Review,
+        },
+        model: None,
+        // Dedup also reads the raw event log, which every host holds.
+        reads: &[AutoImportProjection::NAME],
+    },
+];
 
 /// Jobs not yet on the contract, so the registry still lists everything that runs.
 /// Fields are from the verified table in `docs/src/agents.md`.
@@ -195,11 +218,6 @@ pub const PENDING: &[PendingJob] = &[
         title: "Search index refresh",
         shape: Shape::PlainCode,
         host: Host::AgentHost,
-    },
-    PendingJob {
-        title: "Bank import",
-        shape: Shape::PlainCode,
-        host: Host::Server,
     },
     PendingJob {
         title: "Old-mail backfill",

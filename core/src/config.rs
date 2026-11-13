@@ -40,6 +40,8 @@ pub enum ConfigKey {
     ArchiveSkipSenders,
     ArchiveBackfillBefore,
     ArchiveBackfillBatch,
+    NotifyQuietStart,
+    NotifyQuietEnd,
 }
 
 /// Social notification senders: not records, and half the archive before this.
@@ -85,6 +87,8 @@ pub const ALL_KEYS: &[ConfigKey] = &[
     ConfigKey::ArchiveSkipSenders,
     ConfigKey::ArchiveBackfillBefore,
     ConfigKey::ArchiveBackfillBatch,
+    ConfigKey::NotifyQuietStart,
+    ConfigKey::NotifyQuietEnd,
 ];
 
 /// The theme values `appearance.theme` accepts. `System` follows
@@ -155,6 +159,8 @@ impl fmt::Display for ConfigKey {
             ConfigKey::ArchiveSkipSenders => "archive.skip_senders",
             ConfigKey::ArchiveBackfillBefore => "archive.backfill_before",
             ConfigKey::ArchiveBackfillBatch => "archive.backfill_batch",
+            ConfigKey::NotifyQuietStart => "notify.quiet_start",
+            ConfigKey::NotifyQuietEnd => "notify.quiet_end",
         };
         write!(f, "{s}")
     }
@@ -187,6 +193,8 @@ impl FromStr for ConfigKey {
             "archive.skip_senders" => Ok(ConfigKey::ArchiveSkipSenders),
             "archive.backfill_before" => Ok(ConfigKey::ArchiveBackfillBefore),
             "archive.backfill_batch" => Ok(ConfigKey::ArchiveBackfillBatch),
+            "notify.quiet_start" => Ok(ConfigKey::NotifyQuietStart),
+            "notify.quiet_end" => Ok(ConfigKey::NotifyQuietEnd),
             other => Err(format!("unknown config key: {other}")),
         }
     }
@@ -276,6 +284,8 @@ pub enum ConfigGroup {
     Assistant,
     /// What the importers keep: senders whose mail is never archived.
     Archive,
+    /// When alerts may interrupt. Read by the server, which sends them.
+    Notifications,
 }
 
 /// Which layer supplied the value that is actually in effect.
@@ -374,6 +384,10 @@ impl ConfigKey {
             ConfigKey::ArchiveBackfillBefore => ConfigValue::Text(String::new()),
             // My proposal: 20 every ten minutes, about 2,900 a day.
             ConfigKey::ArchiveBackfillBatch => ConfigValue::Int(20),
+            // His ruling, 2026-11-12: critical alerts are held 22:00 to 08:00, in
+            // the check-in time zone, which is the user's zone everywhere else too.
+            ConfigKey::NotifyQuietStart => ConfigValue::Int(22),
+            ConfigKey::NotifyQuietEnd => ConfigValue::Int(8),
         }
     }
 
@@ -400,7 +414,9 @@ impl ConfigKey {
             | ConfigKey::AssistantMaxTurns
             | ConfigKey::AssistantChatArchiveDays
             | ConfigKey::AssistantChatDeleteDays
-            | ConfigKey::ArchiveBackfillBatch => ValueKind::Int,
+            | ConfigKey::ArchiveBackfillBatch
+            | ConfigKey::NotifyQuietStart
+            | ConfigKey::NotifyQuietEnd => ValueKind::Int,
         }
     }
 
@@ -424,7 +440,10 @@ impl ConfigKey {
             // Re-read by the importer on every pull.
             | ConfigKey::ArchiveSkipSenders
             | ConfigKey::ArchiveBackfillBefore
-            | ConfigKey::ArchiveBackfillBatch => true,
+            | ConfigKey::ArchiveBackfillBatch
+            // Read by the server each time an alert is about to go.
+            | ConfigKey::NotifyQuietStart
+            | ConfigKey::NotifyQuietEnd => true,
             ConfigKey::FeatureJournal
             | ConfigKey::FeatureNotes
             | ConfigKey::FeatureRoutines
@@ -465,6 +484,8 @@ impl ConfigKey {
             ConfigKey::ArchiveSkipSenders => "Never archive mail from",
             ConfigKey::ArchiveBackfillBefore => "Archive older mail, received before",
             ConfigKey::ArchiveBackfillBatch => "Older mail read per ten minutes",
+            ConfigKey::NotifyQuietStart => "Quiet hours start (hour)",
+            ConfigKey::NotifyQuietEnd => "Quiet hours end (hour)",
         }
     }
 
@@ -499,7 +520,9 @@ impl ConfigKey {
             | ConfigKey::AssistantChatDeleteDays
             | ConfigKey::ArchiveSkipSenders
             | ConfigKey::ArchiveBackfillBefore
-            | ConfigKey::ArchiveBackfillBatch => None,
+            | ConfigKey::ArchiveBackfillBatch
+            | ConfigKey::NotifyQuietStart
+            | ConfigKey::NotifyQuietEnd => None,
         }
     }
 
@@ -531,6 +554,7 @@ impl ConfigKey {
             ConfigKey::ArchiveSkipSenders
             | ConfigKey::ArchiveBackfillBefore
             | ConfigKey::ArchiveBackfillBatch => ConfigGroup::Archive,
+            ConfigKey::NotifyQuietStart | ConfigKey::NotifyQuietEnd => ConfigGroup::Notifications,
         }
     }
 
@@ -574,6 +598,7 @@ impl ConfigKey {
             ConfigKey::AssistantChatDeleteDays => Some((1, 3650)),
             // The fetcher's own per-tick ceiling is 200.
             ConfigKey::ArchiveBackfillBatch => Some((1, 200)),
+            ConfigKey::NotifyQuietStart | ConfigKey::NotifyQuietEnd => Some((0, 23)),
             _ => None,
         }
     }
@@ -835,11 +860,13 @@ mod tests {
                 | ConfigKey::AssistantChatDeleteDays
                 | ConfigKey::ArchiveSkipSenders
                 | ConfigKey::ArchiveBackfillBefore
-                | ConfigKey::ArchiveBackfillBatch => counted += 1,
+                | ConfigKey::ArchiveBackfillBatch
+                | ConfigKey::NotifyQuietStart
+                | ConfigKey::NotifyQuietEnd => counted += 1,
             }
         }
         assert_eq!(
-            counted, 22,
+            counted, 24,
             "ALL_KEYS does not list every ConfigKey variant"
         );
 

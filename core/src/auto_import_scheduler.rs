@@ -29,6 +29,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
+pub use crate::jobs::runs::RunObserver;
 use crate::jobs::runs::{RunOutcome, RunRecord, RunStore};
 use crate::jobs::spend::Spend;
 
@@ -612,12 +613,6 @@ pub struct SourceRegistry {
     inner: Arc<RwLock<HashMap<String, RegisteredSource>>>,
     runs: Option<Arc<dyn RunStore>>,
     on_run: Option<Arc<dyn RunObserver>>,
-}
-
-/// Told about every recorded run, after it is stored. The alert engine is one.
-#[async_trait]
-pub trait RunObserver: Send + Sync {
-    async fn observe(&self, run: &RunRecord);
 }
 
 impl SourceRegistry {
