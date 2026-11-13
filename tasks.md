@@ -83,9 +83,9 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 
 ## Design calls — mine to propose before building
 
-- [0083] **Path-scoped rules kept out of the public repo.** A symlink out of the tree fails:
-  Claude Code skips path-scoped rules behind one. Candidates: a subfolder of `~/.claude/rules/`,
-  or hook-synced gitignored `.claude/rules/`. Then move the area traps out of memory. [M]
+- [0083] **Path-scoped rules kept out of the public repo** (they never load via a symlink). A,
+  my pick: `~/.claude/rules/omni-me/`, if a test shows user rules load from subfolders. B:
+  gitignored `.claude/rules/`, hook-synced both ways. Test at implementation; then move traps. [M]
 
 - [0019] **`check_total` holds for one hint in four.** Paystub is penalised whatever the
   model emits (`verify.rs`). The fix is sign-aware per hint, or a redefined `total`. Check
