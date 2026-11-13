@@ -9,6 +9,7 @@
 - [One database for the whole test suite](testing.md)
 - [Turning features off](features.md)
 - [The assistant](assistant.md)
+- [How the agents are composed](agents.md)
 - [Reading documents](extraction.md)
 - [What counts as one purchase](auto-import.md)
 - [The document archive](archive.md)

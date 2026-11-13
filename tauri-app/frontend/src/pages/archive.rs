@@ -1104,7 +1104,7 @@ fn RetentionPanel(on_review: EventHandler<(String, String)>) -> Element {
                                     p { class: "text-obsidian-text", "{group.tag} · {group.count} document(s)" }
                                     p { class: "text-[10px] text-obsidian-text-muted",
                                         "kept {group.keep_days} days"
-                                        if let Some(oldest) = group.oldest_archived_at.as_deref() {
+                                        if let Some(oldest) = group.oldest.as_deref() {
                                             ", oldest {oldest}"
                                         }
                                     }
@@ -1292,12 +1292,11 @@ fn PurgeGroup(
                                                     "{item.label}"
                                                 }
                                                 div { class: "text-[11px] text-obsidian-text-muted flex flex-wrap gap-x-2",
-                                                    // ⚠️ The date, not the stored
-                                                    // timestamp. This list is
-                                                    // scanned to decide what goes,
-                                                    // and `…T09:00:00Z` is noise in
-                                                    // every row of it.
-                                                    if let Some(d) = &item.archived_at {
+                                                    // The day retention counted from,
+                                                    // not the archive day: backfilled
+                                                    // mail would show the backfill
+                                                    // date, which the list never shows.
+                                                    if let Some(d) = item.counted_from.as_deref().or(item.archived_at.as_deref()) {
                                                         span { "{crate::types::day_of(d)}" }
                                                     }
                                                     if let Some(src) = &item.ingest_source {

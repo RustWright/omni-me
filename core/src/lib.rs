@@ -23,6 +23,7 @@ pub mod future_dated;
 pub mod fx;
 pub mod http;
 pub mod import;
+pub mod jobs;
 pub mod journal_file;
 pub mod journal_import;
 pub mod ledger;
@@ -35,6 +36,7 @@ pub mod llm;
 /// ingest it — the archive would be searchable on the server and not on a
 /// client, with nothing reporting the difference.
 pub mod mime;
+pub mod notify;
 pub mod paths;
 pub mod preprocess;
 pub mod purge;

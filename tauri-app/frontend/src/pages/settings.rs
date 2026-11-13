@@ -263,6 +263,8 @@ pub fn SettingsPage() -> Element {
             // --- Archive & import ---
             ConfigSection { group: ConfigGroup::Archive }
 
+            ConfigSection { group: ConfigGroup::Notifications }
+
             // Feature-owned sections below. A section whose feature is off is not
             // rendered at all rather than disabled — a control for something inert
             // is worse than its absence. The two `ConfigSection`s above are never
@@ -284,6 +286,10 @@ pub fn SettingsPage() -> Element {
                 // --- Attachment Cache (Phase 3.8) --- receipts + statements
                 CacheSection {}
             }
+
+            // Not feature-owned: it lists every job on the contract, whichever
+            // feature each belongs to.
+            super::jobs::JobsSection {}
 
             if features.on(Feature::AutoImport) {
                 // --- Auto-Import Sources (Phase 3.9) ---
@@ -354,6 +360,16 @@ fn group_meta(group: ConfigGroup) -> (&'static str, Option<&'static str>) {
                  archived a few messages at a time and never imported as transactions; \
                  anything its retention timer would already purge is left out. Empty \
                  means off. Applies from the next mail check.",
+            ),
+        ),
+        ConfigGroup::Notifications => (
+            "Notifications",
+            Some(
+                "Urgent alerts, such as a source that needs a code, are held during \
+                 these hours and sent when they end. Once a day, at the summary hour, \
+                 one silent notification lists what is waiting on review, and none \
+                 is sent when nothing new has arrived. Hours are in the check-in time \
+                 zone. Sent by the server through ntfy.",
             ),
         ),
         // Not "Assistant retrieval" any more: the turn budget governs the loop,
@@ -1170,7 +1186,7 @@ fn DangerZone() -> Element {
 /// Render the "X ago" label for a `last_tick_at` ISO timestamp. Returns
 /// "never" when the source hasn't ticked yet. Coarse buckets — auto-import
 /// runs at 30-min cadence so second-level precision is noise.
-fn format_relative_time(iso: Option<&str>) -> String {
+pub(super) fn format_relative_time(iso: Option<&str>) -> String {
     let Some(iso) = iso else {
         return "never".into();
     };
@@ -1195,9 +1211,11 @@ fn format_relative_time(iso: Option<&str>) -> String {
 /// Map the wire-format `health` string to a (label, badge-classes) pair.
 /// `wire_health` is one of
 /// `"healthy" | "stale" | "degraded" | "dropping" | "unknown"`.
-fn health_badge(wire_health: &str) -> (&'static str, &'static str) {
+pub(super) fn health_badge(wire_health: &str) -> (&'static str, &'static str) {
     match wire_health {
         "healthy" => ("Healthy", "bg-success/15 text-success border-success/30"),
+        // A job's run is waiting on a code or a reconnect.
+        "needs_user" => ("Needs you", "bg-error/15 text-error border-error/30"),
         "stale" => ("Stale", "bg-warn/15 text-warn border-warn/30"),
         "degraded" => ("Degraded", "bg-error/15 text-error border-error/30"),
         // The tick *worked* and still lost rows. Shown in the error colour

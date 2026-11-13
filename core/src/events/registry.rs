@@ -204,8 +204,10 @@ pub fn build_projections_server() -> Vec<Box<dyn Projection>> {
     // was empty and every emailed receipt landed in `Expenses:Unknown` (R4-9).
     // Config because mail intake reads the skip-senders list and the user's zone.
     // Auto-import because the triage scorecard scores the review queue's outcomes.
+    // Assistant because the daily review summary counts its pending suggestions.
     vec![
         Box::new(ConfigProjection),
+        Box::new(AssistantProjection),
         Box::new(AutoImportProjection),
         Box::new(DocumentsProjection),
         Box::new(NotesProjection),

@@ -1,0 +1,651 @@
+schema  = 1
+project = "omni-me"
+cycle   = 5
+updated = 2026-11-12
+
+# Narrative lives in tasks.md (Cycle 5). Contract: ../../setup_files/TASK_HUB_CONTRACT.md
+# Public repo: titles are public. Keep private identity out.
+
+[[task]]
+id     = "omni-me-0001"
+title  = "Confirm the 11-16 weekly WS buys arrive as two legs with no Unmatched"
+status = "todo"
+size   = "XS"
+ref    = "tasks.md § Now — dated"
+due    = 2026-11-16
+
+[[task]]
+id     = "omni-me-0002"
+title  = "Release 1.2.4 from the batched fix queue"
+status = "todo"
+size   = "USER"
+ref    = "tasks.md § Now — dated"
+blocked_by = ["omni-me-0001"]
+
+[[task]]
+id     = "omni-me-0003"
+title  = "N-to-1 receipt matching: build it or not"
+status = "blocked"
+size   = "M"
+ref    = "tasks.md § Waiting on his decision"
+
+[[task]]
+id     = "omni-me-0004"
+title  = "Dismiss or keep the two pre-November drafts in live review"
+status = "blocked"
+size   = "USER"
+ref    = "tasks.md § Waiting on his decision"
+
+[[task]]
+id     = "omni-me-0005"
+title  = "Rule on the design session decisions in DESIGN_PREREAD.md"
+status = "done"
+size   = "USER"
+ref    = "project.md § Decisions in force"
+
+[[task]]
+id     = "omni-me-0006"
+title  = "Provide R2 account, bucket and token for the off-box blob copy"
+status = "blocked"
+size   = "USER"
+ref    = "tasks.md § Waiting on his decision"
+
+[[task]]
+id     = "omni-me-0007"
+title  = "GitHub Support purge of the pre-S-W1 commits"
+status = "blocked"
+size   = "USER"
+ref    = "tasks.md § Waiting on his decision"
+
+[[task]]
+id     = "omni-me-0008"
+title  = "Decide whether multi-page reading is told that pages can repeat"
+status = "blocked"
+size   = "XS"
+ref    = "tasks.md § Waiting on his decision"
+
+[[task]]
+id     = "omni-me-0009"
+title  = "Decide on a tap-target visual redesign across screens"
+status = "blocked"
+size   = "USER"
+ref    = "tasks.md § Waiting on his decision"
+
+[[task]]
+id     = "omni-me-0010"
+title  = "Check R27 account side: OpenRouter data collection and upstream retention"
+status = "blocked"
+size   = "USER"
+ref    = "tasks.md § Waiting on his decision"
+
+[[task]]
+id     = "omni-me-0011"
+title  = "Tab order without a recompile: global or per device?"
+status = "blocked"
+size   = "M"
+ref    = "tasks.md § Waiting on his decision"
+
+[[task]]
+id     = "omni-me-0012"
+title  = "Confirm whether crypto modelled monthly was intended"
+status = "blocked"
+size   = "XS"
+ref    = "tasks.md § Waiting on his decision"
+
+[[task]]
+id     = "omni-me-0013"
+title  = "Decide whether review offers the estimate when the receipt fails to price"
+status = "blocked"
+size   = "S"
+ref    = "tasks.md § Waiting on his decision"
+
+[[task]]
+id     = "omni-me-0014"
+title  = "Should a persisted server_url outrank a compile-time default"
+status = "blocked"
+size   = "S"
+ref    = "tasks.md § Waiting on his decision"
+
+[[task]]
+id     = "omni-me-0015"
+title  = "Re-elicit requirements for the journal line timestamps redesign"
+status = "blocked"
+size   = "M"
+ref    = "tasks.md § Waiting on his decision"
+
+[[task]]
+id     = "omni-me-0016"
+title  = "Is import parity with the paisa importers still wanted?"
+status = "blocked"
+size   = "M"
+ref    = "tasks.md § Waiting on his decision"
+
+[[task]]
+id     = "omni-me-0017"
+title  = "Report the monthly LLM spend"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § Owed to him"
+
+[[task]]
+id     = "omni-me-0018"
+title  = "Hand over the session-start diff adding a tasks.md size cap"
+status = "done"
+size   = "XS"
+ref    = "tasks.md § Owed to him"
+
+[[task]]
+id     = "omni-me-0019"
+title  = "Make check_total coherent per extraction hint"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Design calls — mine to propose before building"
+
+[[task]]
+id     = "omni-me-0020"
+title  = "The non-production banner cannot fire on Android"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § Design calls — mine to propose before building"
+
+[[task]]
+id     = "omni-me-0021"
+title  = "The server authors events with no feature gate"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Design calls — mine to propose before building"
+
+[[task]]
+id     = "omni-me-0022"
+title  = "pull_only holds up to 100k pulled events in one Vec"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Design calls — mine to propose before building"
+
+[[task]]
+id     = "omni-me-0023"
+title  = "Last-write-wins guards degrade to 'always apply' on a failed read"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § Design calls — mine to propose before building"
+
+[[task]]
+id     = "omni-me-0024"
+title  = "Check that extracted fields are plausible, e.g. commodity is a currency"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § Design calls — mine to propose before building"
+
+[[task]]
+id     = "omni-me-0025"
+title  = "Stemming needs a migration"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Design calls — mine to propose before building"
+
+[[task]]
+id     = "omni-me-0026"
+title  = "budget.set needs a catalogued budget type"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Design calls — mine to propose before building"
+
+[[task]]
+id     = "omni-me-0027"
+title  = "Frontend clippy lacks --all-targets"
+status = "todo"
+size   = "XS"
+ref    = "tasks.md § Bugs"
+
+[[task]]
+id     = "omni-me-0028"
+title  = "An oversized pushed event retries forever"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § Bugs"
+
+[[task]]
+id     = "omni-me-0029"
+title  = "A zero-amount receipt draft got past the 'no non-zero amount' check"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § Bugs"
+
+[[task]]
+id     = "omni-me-0030"
+title  = "Citation chips show the record's kind, not its title"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § Bugs"
+
+[[task]]
+id     = "omni-me-0031"
+title  = "The Ledger restores pre-wipe rows until Apply"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § Bugs"
+
+[[task]]
+id     = "omni-me-0032"
+title  = "The desktop's post-update splash hang is back, intermittently"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § Bugs"
+
+[[task]]
+id     = "omni-me-0033"
+title  = "Mail attachments reach the vision model unrotated"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § Bugs"
+
+[[task]]
+id     = "omni-me-0034"
+title  = "Check three unverified archive oddities (mime filter, yahoo order, backfill reset)"
+status = "todo"
+size   = "XS"
+ref    = "tasks.md § Bugs"
+
+[[task]]
+id     = "omni-me-0035"
+title  = "The box's GHCR token is hand-placed and expires silently every 90 days"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § Bugs"
+
+[[task]]
+id     = "omni-me-0036"
+title  = "The CodeMirror cursor lands behind the soft keyboard and the drawer"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Bugs"
+
+[[task]]
+id     = "omni-me-0037"
+title  = "Sync feels laggy, and an open view sometimes stays stale"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Bugs"
+
+[[task]]
+id     = "omni-me-0038"
+title  = "Wipe snapshots are never pruned, and a restore has never been tried"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § Bugs"
+
+[[task]]
+id     = "omni-me-0039"
+title  = "Small cleanups: dead ingest code, picker file count, notes-search report"
+status = "todo"
+size   = "XS"
+ref    = "tasks.md § Bugs"
+
+[[task]]
+id     = "omni-me-0040"
+title  = "The search verb takes no filters"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § From daily use — backlog"
+
+[[task]]
+id     = "omni-me-0041"
+title  = "No weekday frequency for routines"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § From daily use — backlog"
+
+[[task]]
+id     = "omni-me-0042"
+title  = "Ground categorize/tag in categories already in use"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § From daily use — backlog"
+
+[[task]]
+id     = "omni-me-0043"
+title  = "A per-role turn budget"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § From daily use — backlog"
+
+[[task]]
+id     = "omni-me-0044"
+title  = "A second scheduled question for finding beliefs"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § From daily use — backlog"
+blocked_by = ["omni-me-0043"]
+
+[[task]]
+id     = "omni-me-0045"
+title  = "Real step-by-step progress in chat"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § From daily use — backlog"
+
+[[task]]
+id     = "omni-me-0046"
+title  = "Fix role D prompt: entry date, empty categories, untrusted-input warning"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § From daily use — backlog"
+
+[[task]]
+id     = "omni-me-0075"
+title  = "Beliefs have no filter for retired ones"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § From daily use — backlog"
+
+[[task]]
+id     = "omni-me-0047"
+title  = "Say when a receipt total covers more items than listed"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § From daily use — backlog"
+
+[[task]]
+id     = "omni-me-0048"
+title  = "Lift the retention scan cap of 500 documents per open"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § From daily use — backlog"
+
+[[task]]
+id     = "omni-me-0049"
+title  = "Split a document across requests past an endpoint's image cap"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § From daily use — backlog"
+
+[[task]]
+id     = "omni-me-0050"
+title  = "Statements as the source-of-truth health check"
+status = "todo"
+size   = "L"
+ref    = "tasks.md § From daily use — backlog"
+
+[[task]]
+id     = "omni-me-0051"
+title  = "A categorization classifier"
+status = "todo"
+size   = "L"
+ref    = "tasks.md § From daily use — backlog"
+
+[[task]]
+id     = "omni-me-0052"
+title  = "Reconciliation deferrals: recurring edit, fee posting, card CSV, FX matches"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § From daily use — backlog"
+
+[[task]]
+id     = "omni-me-0053"
+title  = "Privacy eye: hide every amount with one tap"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § From daily use — backlog"
+
+[[task]]
+id     = "omni-me-0054"
+title  = "Swipe between Overview, Ledger and Analyze"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § From daily use — backlog"
+
+[[task]]
+id     = "omni-me-0055"
+title  = "Observe finances performance on real data"
+status = "todo"
+ref    = "tasks.md § From daily use — backlog"
+
+[[task]]
+id     = "omni-me-0056"
+title  = "Generalization trailing work: presets, record-type export, setup guides"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § From daily use — backlog"
+
+[[task]]
+id     = "omni-me-0057"
+title  = "Publish the mdbook"
+status = "todo"
+size   = "USER"
+ref    = "tasks.md § From daily use — backlog"
+
+[[task]]
+id     = "omni-me-0058"
+title  = "A headless smoke step for the AppImage"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § From daily use — backlog"
+
+[[task]]
+id     = "omni-me-0059"
+title  = "Docker builds recompile every dependency"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § From daily use — backlog"
+
+[[task]]
+id     = "omni-me-0060"
+title  = "The desktop flashes white for ~320 ms on boot"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § From daily use — backlog"
+
+[[task]]
+id     = "omni-me-0061"
+title  = "A growth policy for the dev instance"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § From daily use — backlog"
+
+[[task]]
+id     = "omni-me-0062"
+title  = "The wipe runbook omits client-side credential strays"
+status = "todo"
+size   = "XS"
+ref    = "tasks.md § From daily use — backlog"
+
+[[task]]
+id     = "omni-me-0063"
+title  = "Feedback's last device leg: a real wasm panic"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § From daily use — backlog"
+
+[[task]]
+id     = "omni-me-0064"
+title  = "Older small flags: Arc parity, seconds unit, stuck-buffer indicator, visualizer"
+status = "todo"
+size   = "XS"
+ref    = "tasks.md § From daily use — backlog"
+
+[[task]]
+id     = "omni-me-0065"
+title  = "Extend the retrieval bench past search over notes and journal"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § From daily use — backlog"
+
+[[task]]
+id     = "omni-me-0066"
+title  = "Research what would move seat A"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § From daily use — backlog"
+
+[[task]]
+id     = "omni-me-0067"
+title  = "Widen the C2 probe set"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § From daily use — backlog"
+
+[[task]]
+id     = "omni-me-0068"
+title  = "Bench role E embedders and GLM-5.3 for the batch seat"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § From daily use — backlog"
+
+[[task]]
+id     = "omni-me-0069"
+title  = "Vision parity per role is unproven"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § From daily use — backlog"
+
+[[task]]
+id     = "omni-me-0070"
+title  = "Memory prune pass"
+status = "done"
+size   = "M"
+ref    = "tasks.md § Owed at cycle close"
+
+[[task]]
+id     = "omni-me-0071"
+title  = "Staleness signals for artifacts beyond NEXT.md"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § Owed at cycle close"
+
+[[task]]
+id     = "omni-me-0072"
+title  = "Scrub private identity from the public repo"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Owed at cycle close"
+
+[[task]]
+id     = "omni-me-0073"
+title  = "Revise the comment convention"
+status = "todo"
+size   = "L"
+ref    = "tasks.md § Owed at cycle close"
+
+[[task]]
+id     = "omni-me-0074"
+title  = "Task and project records (gates estimation calibration)"
+status = "shelved"
+ref    = "tasks.md § Later cycles"
+
+[[task]]
+id     = "omni-me-0076"
+title  = "Agent architecture study: how agentic systems are composed, ours mapped and diagrammed"
+status = "done"
+size   = "L"
+ref    = "tasks.md § Cycle 5 sequence"
+
+[[task]]
+id     = "omni-me-0077"
+title  = "Discuss logbook backlog and per-feature page demos as proof"
+status = "done"
+size   = "USER"
+ref    = "tasks.md § Cycle 5 sequence"
+blocked_by = ["omni-me-0076"]
+
+[[task]]
+id     = "omni-me-0078"
+title  = "Decide the agent job contract, registry and placement rule"
+status = "done"
+size   = "USER"
+ref    = "tasks.md § Cycle 5 sequence"
+blocked_by = ["omni-me-0076"]
+
+[[task]]
+id     = "omni-me-0089"
+title  = "Job contract and registry, with mail import migrated onto it"
+status = "done"
+size   = "L"
+ref    = "tasks.md § Cycle 5 sequence"
+
+[[task]]
+id     = "omni-me-0079"
+title  = "Notifications slice 1: ntfy, source-failure alerts, quiet hours"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Cycle 5 sequence"
+
+[[task]]
+id     = "omni-me-0090"
+title  = "Bank import onto the job contract"
+status = "done"
+size   = "S"
+ref    = "tasks.md § Cycle 5 sequence"
+blocked_by = ["omni-me-0079"]
+
+[[task]]
+id     = "omni-me-0091"
+title  = "Recurring detection moved to the server when it migrates onto the contract"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Later cycles"
+
+[[task]]
+id     = "omni-me-0080"
+title  = "Notifications slice 2: silent daily summary, unmatched split from review count"
+status = "done"
+size   = "M"
+ref    = "tasks.md § Cycle 5 sequence"
+
+[[task]]
+id     = "omni-me-0081"
+title  = "Notifications slice 3: measure the critical budget"
+status = "blocked"
+size   = "S"
+ref    = "tasks.md § Cycle 5 sequence"
+blocked_by = ["omni-me-0079"]
+
+[[task]]
+id     = "omni-me-0082"
+title  = "New critical detectors: large and new-merchant charges, penalty-dated bills"
+status = "blocked"
+size   = "L"
+ref    = "tasks.md § Cycle 5 sequence"
+blocked_by = ["omni-me-0079"]
+
+[[task]]
+id     = "omni-me-0083"
+title  = "Path-scoped Claude Code rules kept out of the public repo, then area traps moved in"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Design calls"
+
+[[task]]
+id     = "omni-me-0084"
+title  = "Spike: build one app page alone as a mock web bundle and measure its size"
+status = "done"
+size   = "M"
+ref    = "tasks.md § Cycle 5 sequence"
+
+[[task]]
+id     = "omni-me-0085"
+title  = "Logbook: the assistant asks before it acts"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Cycle 5 sequence"
+
+[[task]]
+id     = "omni-me-0086"
+title  = "Logbook: receipts from email"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Cycle 5 sequence"
+
+[[task]]
+id     = "omni-me-0087"
+title  = "Logbook: search by meaning"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Cycle 5 sequence"
+
+[[task]]
+id     = "omni-me-0088"
+title  = "Logbook: the document archive"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Cycle 5 sequence"
+

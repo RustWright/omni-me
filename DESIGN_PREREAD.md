@@ -1,5 +1,9 @@
 # Pre-read: what reaches you, and how the app's agents are organised
 
+**Status 2026-11-12: Part 1 is ruled, and Part 2 is partly ruled.** The rulings are in
+`project.md` § Notifications and § Agent framework. Part 2's decisions 2–5 wait for the
+architecture study (`tasks.md` [0076], then [0078]). The text below is the pre-read as written.
+
 For one design session, ruled 2026-11-09: **(1) notification criticality, finance first,
 then (2) an agent framework for the app.** Nothing here is decided. It is an inventory of
 what exists, a diagnosis, and my proposals, each marked as mine, so the session can start

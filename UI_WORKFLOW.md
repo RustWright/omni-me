@@ -225,3 +225,22 @@ CI runs this as `continue-on-error` until it has proven itself; see the note in 
 note *why* a compile-time guard wouldn't have caught it: `dx serve --features mock`
 builds in debug, so `debug_assertions` is true and any `cfg`-based guard stays silent;
 the failure was in which directory got copied, not in how the code was compiled.
+
+## Demo builds
+
+One page of the mock app, for a public demo: the `demo` feature (which implies `mock`) opens
+on the tab named by `OMNI_DEMO_TAB` at build time and hides the side nav, the drawer and the
+hamburger. Build it on CI only, by pushing a branch named `demo/<tab>`
+(`.github/workflows/demo-build.yml`); a release build with `mock` lands in the release output
+dir, which is what a desktop bundle picks up on a dev machine.
+
+The workflow prints a size table and fails on anything real in the bundle: a tailnet
+address, a `ts.net` name, a host on port 3000 or 3001 other than the mock bridge's own, or
+a string shaped like an API key.
+
+Measured 2026-11-13, Assistant tab, release: **1.5 MB brotli** (2.0 MB gzip, 6.7 MB raw) for
+everything in the output dir. A first load fetches about 1.1 MB of it: the wasm (852 KB) and
+the editor bundle (206 KB), which `main.rs` injects at boot. The PDF viewer and its worker
+(412 KB) load only when a PDF is opened (`attachment_viewer.rs`). Every page is still compiled in,
+because the tab is chosen at run time. Cutting the others out would shrink only the wasm, so
+it is not worth doing until a demo's load time says otherwise.

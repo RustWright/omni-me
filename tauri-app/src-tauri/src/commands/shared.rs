@@ -105,11 +105,18 @@ mod tests {
     /// `update.rs` (the updater is how a broken build gets replaced).
     /// `attachments.rs` is exempt on purpose too: it is content-addressed blob
     /// housekeeping, and gating cache-size/clear would strand disk usage behind a
-    /// hidden settings section.
+    /// hidden settings section. `jobs.rs` lists jobs of every feature and only
+    /// reads their run records, so no one feature's switch can gate it.
     #[test]
     fn every_box_reaching_feature_module_guards_itself() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/commands");
-        const EXEMPT: &[&str] = &["sync.rs", "update.rs", "attachments.rs", "shared.rs"];
+        const EXEMPT: &[&str] = &[
+            "sync.rs",
+            "update.rs",
+            "attachments.rs",
+            "shared.rs",
+            "jobs.rs",
+        ];
         let mut offenders = Vec::new();
 
         for entry in std::fs::read_dir(&dir).expect("commands dir").flatten() {

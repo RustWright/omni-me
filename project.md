@@ -6,20 +6,13 @@ event-sourced store, with an LLM deriving structure from raw notes. Tauri v2
 Open-core: the bank-free engine is public, a private overlay carries real
 sources and credentials.
 
-**Status:** **v1.1.0 released 2026-09-06** — the server deployed to the box first
-(`sha-9a0b1dd`, health-gated), then the tag cut on a green CI matrix and the APK +
-AppImage published to `/updates`. On-device verification is the open item, and its
-first step is perishable: a still-v1.0.5 client syncing against the new server can
-only be observed before either device takes the update. The release carries items 1
-and 2 of the three-item sequence — feedback capture, and generalization through
-record types. **v1.0.5 was in real daily use** on both personal devices —
-the phone and `surface`, the Linux desktop — syncing against the box. Cycle 4's
-build work is done: the pre-v1 review is closed, the branch gate and version stamp
-are in place, and the OTA round-trip is proven on both platforms. What the cycle
-still owes is its **close-out** — the curiosities→concepts pass and a memory prune.
-**All three on-device confirmations are closed** (user, 2026-09-05, from real use
-rather than a staged test): note and journal body edits propagate across devices,
-ledger transaction edits do too, and Android predictive text commits on space.
+**Status (2026-11-12):** **v1.2.3 is live and in daily use.** The go-live sequence
+finished 2026-11-11: server 1.2.3 on the box, the agent running there, both devices on
+1.2.3, the Finances tab on, the historical ledger (11,048 transactions) and the document
+corpus imported, and mail and bank feeds running from 2026-11-01. Small fixes now batch
+into 1.2.4 (`tasks.md` § Now). Cycle 4 is closed out: `tasks.md` was reset and memory
+pruned that day (the pre-reset file is `git show 7ef0e55:tasks.md`). Cycle 5 has begun.
+The narrative below this point is the September record and is kept as history.
 
 Work now follows a **three-item sequence set by the user 2026-09-05, taken one at a
 time: 1. feedback capture · 2. generalization · 3. AI/LLM/ML integration.** Items 1 and
@@ -215,15 +208,194 @@ The validation pass that follows is the one deferred all through this block — 
 dev sync server, and the on-device work — now unblocked on both sides it was waiting for.
 Its shape is set by one clarification worth recording: *"not connected to my actual data"*
 was always a rule about **writes**, junk entries that would have to be cleaned, so a clone
-satisfies it exactly. The runbook is `tasks.md` § ▶ RUNBOOK, and it opens with an isolation
+satisfies it exactly. The runbook was `tasks.md` § ▶ RUNBOOK (now `git show 7ef0e55:tasks.md`), and it opened with an isolation
 guard rather than a test, because a clone of the live database is indistinguishable from
 production from the inside.
 
-**Last Updated:** 2026-09-14
+**Last Updated:** 2026-11-12
 
 > **What's next lives in [`NEXT.md`](NEXT.md)** — the next action and the
 > decisions in force, rewritten at every completion. Open work lives in
 > [`tasks.md`](tasks.md). This file is current state only.
+
+## Decisions in force
+
+Rulings carried out of the pre-reset `tasks.md` (2026-11-12), one line each. They are
+the user's unless marked "mine". The reasoning behind each is in that file at
+`git show 7ef0e55:tasks.md` (search the topic), in `docs/src/`, or at the edit site.
+These are settled. Do not re-open one without a new reason.
+
+**Product shape**
+- The journal is user-authored only. The assistant reads and cites it and can never
+  propose a write to it (`NEVER_PROPOSABLE`). This is an invariant, not a phase.
+- Approval lives with the domain. The assistant inbox holds only proposals with no other
+  home. A badge routes, it never decides. Never merge review queues into the inbox: the flows
+  share an event shape, but the review UI is the whole value (a receipt needs editable lines,
+  a re-run and a correction flow, which a generic card cannot carry).
+- Autonomy is earned per action type and only the user grants it. Irreversible actions
+  (deletion, purge, `transaction.clear`) can never be granted. A purge confirms once per
+  group, listing every document, each one sparable.
+- Beliefs are ask-only. The preferred long-term shape (proposing only on repeated
+  independent evidence, run by role B) needs a per-role turn budget and a second scheduled
+  question first. `belief.record` is refused until the run has listed a date range reaching
+  the last 30 days. The daily check-in proposes retiring beliefs that no longer hold, and
+  it is off by default.
+- The archive is a filing cabinet, not an inbox: no badge. Emails render in the archive.
+  It is not a mail client. The mailbox is never written to (`EXAMINE`). Gmail write-back is
+  the stated destination once trust is built: deferred, not rejected.
+- Where a clean separation can be defined, define it (wipes, isolation, imports).
+- Task and project records come before estimation calibration. Nothing task-shaped exists yet.
+- Finance actions: everything except delete and merge. `transaction.update` reaches the
+  description and date only. `transaction.clear` requires a cited statement.
+- Notes: `note.append`, `note.rename` and `note.revise` exist. `note.update` was rejected.
+  `note.revise` matches an exact, unique text anchor, resolves at approval, and logs the
+  finished body. Never make it fuzzy, and never move resolution into the projection.
+- `routine.complete` and `routine.skip` can be proposed, because the journal is readable
+  for exactly this. There is no partial batch approval (`BATCH_LIMIT` 12).
+- The release is the assistant, the archive and finances together. His sign-off on UX
+  and performance is the gate.
+- A new day opens the journal on today. The same day restores the date last viewed.
+
+**Assistant engineering**
+- Keep our Rust loop, with no framework (`ASSISTANT_RESEARCH.md`). A full rewrite is
+  acceptable if it is markedly better. Quality outranks token cost. Specialists come per
+  feature, the ledger first.
+- A small fixed verb set over declared record types. Changes are proposed with a reason.
+- The turn budget is tunable within 3–50 (the floor is the halting guarantee). `propose`
+  sits outside the budget. The final turn withholds tools, so a reply is guaranteed.
+- The app writes an outcome line under every reply, built from its suggestions and never
+  from the prose.
+- Chats untouched for 30 days auto-archive, and archived chats auto-delete after 90.
+  Check-ins are archived, then deleted after 14 days. A thread with an undecided
+  suggestion is never deleted.
+- Waiting indicator: an animation now, real step-by-step progress after the merge.
+- Ledger grounding: his `CONVENTIONS.md` (paisa ledger, ⛔ never in this repo) is the
+  source. Known accounts are the ledger's, plus those declared, plus any the note names.
+  I draft the live conventions note and he reviews it.
+
+**Models and benches** (`MODEL_BENCH.md`, `MODEL_THRESHOLDS.md`)
+- Hosting is DeepInfra, open weights only, with US jurisdiction an accepted risk. Closed
+  weights are refused unless `allow_closed_weights` is set.
+- One model per job, chosen statically by benchmark, never by a runtime orchestrator.
+  Re-evaluate every 3–6 months. The synthetic bench is a bootstrap: shadow mode and the
+  correction log supersede it.
+- Thresholds and tie-breaks are written before a run. A saturated instrument is published
+  as unmeasured. A winner is switched on dev only. No hand-labelled gold set (his time).
+- Sampling: roles B, C1–C3 and D at temperature 0; role A at the provider default.
+- Spend the OpenRouter credits generously on screening. The deciding run goes direct.
+- R27's account side is his. No list of affected runs exists, by his decision.
+- The triage seat stays in shadow mode until real weeks score it. It never gates archiving.
+- Do not tune the extractor prompt against the four sample receipts. `json_schema` beats
+  `json_object`: a loud 400 beats a wrong 200.
+
+**Mail, import and reconciliation**
+- Never add a vendor to fix a missed receipt. The sender gate is inverted and the
+  classifier decides (overlay `GATE_INVERSION_DESIGN.md`). Candidate group keys were
+  refused. A printed order reference outranks the model's reading.
+- Newest wins, because later documents are more authoritative. Any scoring respects
+  document authority first.
+- A receipt's stated total takes precedence. Never fetch a linked page for missing items.
+- Duplicates are dropped only on a shared Message-ID, otherwise flagged. The two halves of
+  an own-account transfer are joined. A receipt with no total becomes one transaction.
+- Matching an authorisation plus its adjustment, and cross-currency reimbursements: dropped,
+  matched by hand. Do not re-raise either unprompted.
+- Bank feeds are the long-term source. Statements are for reconciliation and closing.
+- Old mail is archived on live by a slow backfill, with no financial extraction before the
+  imported statements. Cursors and the backfill both start 2026-11-01.
+- Retention: one category per email from a fixed list, chosen at intake. The category's
+  timer decides unless a topic tag he set carries a longer one. The clock counts from the
+  email's own date. Social mail is not archived. The reader tags area of life only.
+- A draft dated after today cannot be committed from review. An empty batch reaches review
+  only when it is a receipt.
+- Encrypted PDFs: every `pdf_password*` secret is tried. The server serves a decrypted copy,
+  so the phone never holds a password. A multi-photo receipt is one combined PDF. Photos
+  shrink on the device before upload.
+
+**Data and operations**
+- Live is the pause. Every live step waits for his go, one at a time. Dev is mine.
+- A wipe is a server route (preview, then confirm), generic over features, with documents
+  refused and a snapshot taken first. Devices follow a wipe. A cursor reset is its own route.
+- Stay on the CX22, with Cloudflare R2 (free tier) as the off-box copy of the blobs. Resize
+  only on a trigger: under ~500 MB available, or an OOM kill.
+- Dev's agent stays stopped. It runs only while live's agent is idle.
+- Fixes batch into the next release, not one release per fix.
+- If config and the instance marker disagree, the server refuses to boot. The live box and
+  his real phone are outside the dev grant, always.
+- On a significant failure, stop, and write down what stopped it and what came next.
+- The phone-width layout sweep, including the gutter check, is a CI gate.
+- The ledger-classification rulings (F2, 2026-11-11) live in paisa's `CONVENTIONS.md` and
+  live's "Ledger conventions" note, not here.
+
+**Notifications** (design session, 2026-11-12; `DESIGN_PREREAD.md` Part 1)
+- Three tiers by what happens if he never sees an item: critical interrupts, review rolls
+  into one daily summary plus the badge, ambient never notifies.
+- Critical means missing it costs money or leaves the record wrong, and waiting makes it worse.
+- Finance mapping. Critical: a source needing a code or reauth (at once); a source erroring
+  for 24 h; a statement that disagrees with the ledger; a large charge; a new-merchant charge;
+  money due with a penalty date (the day before). Review: proposed batches and transactions,
+  unmatched (its own count, apart from review), the purge queue. Ambient: duplicate flags,
+  recurring-charge detection, the check-in.
+- The large-charge threshold is a setting, and the new-merchant alert has its own on/off.
+- Critical's budget is measured, never enforced: target ~3 a week. Over it, alerts still go,
+  and the next summary asks whether to demote the noisiest kind.
+- Quiet hours (default 22:00–08:00, adjustable) hold every critical alert until morning. A
+  setting lets charge alerts through at night, off by default.
+- Review reaches him as one silent daily notification of counts, built by code (default
+  19:00, adjustable), skipped when nothing is new, tapping through to the tab. It does not
+  depend on the check-in.
+- Delivery starts with ntfy self-hosted on the box and the ntfy app on the phone, with no
+  change to omni-me's app, chosen as the prototype. UnifiedPush or Google push (FCM) into
+  omni-me's own app stays open as a later upgrade of the last mile only.
+- ntfy is reachable over the tailnet only, with auth on (2026-11-13). Alerts pause while the
+  phone's Tailscale is off, and ntfy's 72 h cache delivers them on reconnect.
+- Build order: (1) ntfy, source alerts and quiet hours; (2) the summary, with unmatched split
+  from the review count; (3) budget measurement; (4) each new detector, ruled on its own.
+  Slices 1–2 lead Cycle 5's build work and do not wait for Part 2's contract. Building
+  starts once Part 2 has been discussed.
+
+**Agent framework** (design session, 2026-11-12; `DESIGN_PREREAD.md` Part 2)
+- The haphazardness is: no common shape across jobs, results he does not fully trust, jobs
+  in odd places, and no clear, visualisable layout of how the agents are built and composed.
+  He wants to understand how modern agentic systems (Claude Code, Codex) are composed, learn
+  from them, and write mylearnbase posts about omni-me's agent structure.
+- Part 2 splits: 2b, an architecture study (how Claude Code/Codex-style agents are composed,
+  omni-me's agents mapped and diagrammed, run as a learning thread), comes first. 2a, the job
+  contract, registry and placement rule, is decided after it. Part 1's build waits for both.
+- Page demos are a showcase, not each feature's proof (2026-11-13): built where a visitor can
+  try a screen, chosen for what they show recruiters, one page or flow per mock bundle. Pipeline
+  features keep evidence that fits them (recorded runs, bench scores), since a mock demo of a
+  backend shows fake data arriving and proves nothing about real input.
+- The January logbook set (2026-11-13) is four entries, in order: the assistant asks before it
+  acts, receipts from email, search by meaning, the document archive. Statements and OTA
+  releases are dropped, not deferred. A one-page mock build is measured first (my proposal) so
+  the demos for 1, 3 and 4 can follow.
+- Order (2026-11-13): Part 2a, then notifications slice 1, then the logbooks, so the
+  source-failure alert lands before the writing. Slices 2–4 sit after the logbooks in
+  `tasks.md`; that placement is my reading, not stated.
+
+**Job contract** (Part 2a, 2026-11-13; rationale in `docs/src/agents.md`)
+- Every job declares: name, shape (agent, workflow, plain code), trigger, host, off switch,
+  failure policy, output and tier, and a run record (start, end, outcome, counts, spend). A job
+  that calls a model also declares its model seats (with effort or thinking), a per-run budget
+  and its permission (read, propose, autonomous). A correction record waits for enrichment.
+- A registry lists every job, and a status view reads the run records: trust is built from
+  that record, not from checking every output.
+- Placement: device only for what must work offline or is computed when a screen opens; server
+  by default and always for intake; agent host only for the agent loop and what serves it. A job
+  may only sit on a host that folds every table it reads, guarded by a test per job. Applied as
+  each job migrates, never as a mass move; recurring detection is the one misfit (to the server).
+- The status view is Settings → Jobs, a collapsed section listing every job (2026-11-13).
+- Mail import migrates first, inside notifications slice 1, whose alerts are its failure policy
+  and tier; bank import follows on the same alert.
+- No Rig spike: the one OpenAI-compatible client already covers every provider in use. Revisit
+  only for a provider that does not speak that protocol.
+- Codebase scaling (ruled in the study, 2026-11-13): no per-area "process owner" agents. Nothing
+  was named that one adds beyond area knowledge and tests, and every handoff is a cold start plus
+  a lossy report. Instead, area traps, rulings and past failures go in path-scoped Claude Code
+  rules (loaded when matching files are touched), procedures in skills, and the test layers stay
+  as they are: module tests for development work, the benches for the runtime agent.
+- Those rules never reach the public repo: synced and project-scoped like memory. Mechanism:
+  `tasks.md` [0083].
 
 ## Where the history went
 
@@ -248,7 +420,7 @@ Obsidian-replacement, and the budget feature; Cycle 4 is polish, deploy, the
 open-core split, and v1.
 
 Dogfooding is the test harness — real daily friction is the primary bug-finder,
-and it collects in `tasks.md` § *Running friction log* to be triaged into
+and it collects in `tasks.md` § *From daily use* to be triaged into
 whichever phase is live.
 
 ## Standing at the v1.0.0 cut
@@ -270,7 +442,7 @@ whichever phase is live.
 | File | What it holds |
 |---|---|
 | `NEXT.md` | Next action + decisions in force (≤40 lines, rewritten at completion) |
-| `tasks.md` | Open work, the roadmap to v1, and the running friction log |
+| `tasks.md` | This cycle's open work only, under a size cap; reset each cycle |
 | `architecture.md` | Technical decisions with rationale |
 | `research.md` | Session 2 research findings |
 | `UI_WORKFLOW.md` | How to develop the UI (`dx serve` + Playwright) |

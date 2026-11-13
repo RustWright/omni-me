@@ -1,0 +1,107 @@
+name: Demo build
+
+# One page of the mock app, built for release, measured, and checked for anything
+# real baked in (tasks.md [0084]). Prints its findings to the job summary and
+# uploads nothing.
+#
+# Runs only on a runner: a release build with `mock` lands in the RELEASE output
+# dir, and on a dev machine that dir is what a desktop bundle would pick up.
+
+# A push to `demo/<tab>` builds that tab: dispatch only works once a workflow is on
+# the default branch, and this one is proven on a dev branch first.
+on:
+  push:
+    branches: ['demo/**']
+  workflow_dispatch:
+    inputs:
+      tab:
+        description: The page to build
+        type: choice
+        default: assistant
+        options: [assistant, archive, journal, notes, finances, routines, settings]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  demo:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Which page
+        env:
+          INPUT_TAB: ${{ inputs.tab }}
+        run: |
+          tab="${INPUT_TAB:-${GITHUB_REF_NAME#demo/}}"
+          case "$tab" in
+            assistant|archive|journal|notes|finances|routines|settings) ;;
+            *) echo "unknown tab: $tab"; exit 1 ;;
+          esac
+          echo "TAB=$tab" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@1.99.0
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tauri-app/frontend
+          cache-bin: false
+
+      - uses: cargo-bins/cargo-binstall@main
+      - name: Binstall dx
+        run: cargo binstall dioxus-cli@0.7.2 --no-confirm --force --locked
+
+      - name: Build the page
+        working-directory: tauri-app/frontend
+        run: OMNI_DEMO_TAB="$TAB" dx build --platform web --release --features demo
+
+      - name: Copy the JS bundles the app aborts without
+        working-directory: tauri-app
+        run: npm run copy:editor:release
+
+      - name: Measure
+        working-directory: tauri-app/frontend/target/dx/frontend/release/web/public
+        run: |
+          {
+            echo "## Demo build: $TAB"
+            echo
+            echo "| file | raw KB | gzip KB | brotli KB |"
+            echo "|---|---:|---:|---:|"
+            total_raw=0; total_gz=0; total_br=0
+            while IFS= read -r f; do
+              raw=$(stat -c %s "$f")
+              gz=$(gzip -9 -c "$f" | wc -c)
+              if command -v brotli >/dev/null; then br=$(brotli -c -q 11 "$f" | wc -c); else br=0; fi
+              total_raw=$((total_raw + raw)); total_gz=$((total_gz + gz)); total_br=$((total_br + br))
+              echo "| \`$f\` | $((raw / 1024)) | $((gz / 1024)) | $((br / 1024)) |"
+            done < <(find . -type f \( -name '*.wasm' -o -name '*.js' -o -name '*.css' -o -name '*.html' \) | sort)
+            echo "| **total** | **$((total_raw / 1024))** | **$((total_gz / 1024))** | **$((total_br / 1024))** |"
+            echo
+            echo "brotli 0 means the runner had no brotli binary."
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Mock data only: no tailnet address, real server or key may be in the bundle.
+      # A server URL always carries its port, which is what catches a host name;
+      # the mock bridge's own hosts are the exceptions. Public provider base URLs
+      # in the mock settings are not secrets and are allowed.
+      - name: Nothing real baked in
+        working-directory: tauri-app/frontend/target/dx/frontend/release/web/public
+        run: |
+          found=$(
+            {
+              grep -a -o -h -E '100\.[0-9]+\.[0-9]+\.[0-9]+|[a-z0-9-]+\.ts\.net|(sk|tk|key)[-_][A-Za-z0-9]{24,}' -r . || true
+              grep -a -o -h -E '[A-Za-z0-9.-]+:300[01]' -r . | grep -v -E '^(mock-box|localhost|127\.0\.0\.1|[A-Za-z0-9.-]+\.example):' || true
+            } | sort -u
+          )
+          {
+            echo "### URLs in the bundle"
+            echo '```'
+            grep -a -o -h -E 'https?://[A-Za-z0-9./_:-]+' -r . | sort -u | head -50 || true
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ -n "$found" ]; then
+            echo "real endpoints in a demo bundle:"; echo "$found"; exit 1
+          fi

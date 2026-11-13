@@ -30,6 +30,7 @@ pub mod documents;
 pub mod extract;
 pub mod feedback;
 pub mod import;
+pub mod jobs;
 pub mod journal_import;
 pub mod llm;
 pub mod notes;

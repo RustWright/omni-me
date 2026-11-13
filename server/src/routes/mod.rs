@@ -2,6 +2,7 @@ mod auto_import;
 mod blobs;
 mod documents;
 mod feedback;
+mod jobs;
 mod llm;
 mod notes;
 mod statements;
@@ -14,6 +15,7 @@ pub use documents::documents_routes;
 // The purge ticket is held on `AppState`, so its type has to be nameable there.
 pub use documents::PurgeTicket;
 pub use feedback::feedback_routes;
+pub use jobs::jobs_routes;
 pub use llm::llm_routes;
 pub use notes::notes_routes;
 pub use statements::statement_routes;

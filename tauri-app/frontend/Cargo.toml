@@ -9,6 +9,9 @@ license = "MIT OR Apache-2.0"
 [features]
 default = []
 mock = []
+# One page of the mock app with no navigation, for a public demo. The page is the
+# OMNI_DEMO_TAB env var at build time (`.github/workflows/demo-build.yml`).
+demo = ["mock"]
 
 [dependencies]
 dioxus = { version = "=0.7.2", features = ["web"] }
