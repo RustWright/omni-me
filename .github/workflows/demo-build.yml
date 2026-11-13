@@ -7,7 +7,11 @@ name: Demo build
 # Runs only on a runner: a release build with `mock` lands in the RELEASE output
 # dir, and on a dev machine that dir is what a desktop bundle would pick up.
 
+# A push to `demo/<tab>` builds that tab: dispatch only works once a workflow is on
+# the default branch, and this one is proven on a dev branch first.
 on:
+  push:
+    branches: ['demo/**']
   workflow_dispatch:
     inputs:
       tab:
@@ -26,6 +30,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Which page
+        env:
+          INPUT_TAB: ${{ inputs.tab }}
+        run: |
+          tab="${INPUT_TAB:-${GITHUB_REF_NAME#demo/}}"
+          case "$tab" in
+            assistant|archive|journal|notes|finances|routines|settings) ;;
+            *) echo "unknown tab: $tab"; exit 1 ;;
+          esac
+          echo "TAB=$tab" >> "$GITHUB_ENV"
+
       - uses: dtolnay/rust-toolchain@1.99.0
         with:
           targets: wasm32-unknown-unknown
@@ -41,9 +56,7 @@ jobs:
 
       - name: Build the page
         working-directory: tauri-app/frontend
-        env:
-          OMNI_DEMO_TAB: ${{ inputs.tab }}
-        run: dx build --platform web --release --features demo
+        run: OMNI_DEMO_TAB="$TAB" dx build --platform web --release --features demo
 
       - name: Copy the JS bundles the app aborts without
         working-directory: tauri-app
@@ -51,8 +64,6 @@ jobs:
 
       - name: Measure
         working-directory: tauri-app/frontend/target/dx/frontend/release/web/public
-        env:
-          TAB: ${{ inputs.tab }}
         run: |
           {
             echo "## Demo build: $TAB"
