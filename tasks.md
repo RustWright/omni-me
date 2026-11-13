@@ -24,27 +24,22 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
   `/opt/omni-ws`), and only a new buy proves it. [XS]
 - [0002] **Release 1.2.4, after [0001], his go.** Queue: `63728f7` (tax-authority notices
   file as statements; server) and `918a9d5` (retention review shows the counted-from date;
-  server + app). Add each new fix here. A fast-forward of public `main` closes the draft PR
+  server + app). Also on the branch since: the job contract and Settings → Jobs (`d6ded9e`),
+  ntfy alerts and quiet hours (`a9cd960`), the demo build (`dd0bc0c`). Add each new fix here. A fast-forward of public `main` closes the draft PR
   (#8), so open a new one after. [M, USER]
 
 ## Cycle 5 sequence (design session, 2026-11-12; rulings in `project.md` § Notifications, § Agent framework)
 
-- [0089] **Job contract and registry, mail import migrated** (`project.md` § Job contract): the
-  record type, the registry, run records, a per-job host guard test. Status view surface is
-  mine to propose. Slice 1's first half. [L]
-- [0079] **Notifications slice 1:** ntfy on the box, a server sender, alerts for a source
-  needing a code (at once) or erroring 24 h, quiet hours, driven by the contract's failure
-  policy. Check first: ntfy's docs, and that the phone holds Tailscale. [M]
-- [0090] **Bank import onto the contract**, on slice 1's alert. [S]
-- [0084] **Then the logbooks. Spike: one page as its own mock web build**, measured release
-  size, built on CI or the other machine. Check it is mock, no real endpoint baked in. [M]
-- [0085] **Logbook: the assistant asks before it acts.** Demo: chat plus inbox, if [0084] holds.
-  Source `docs/src/assistant.md`, `agents.md`. January deadline (mylearnbase Cycle 7). [M]
-- [0086] **Logbook: receipts from email.** Evidence is a recorded run and bench scores, not a
-  demo. Source `docs/src/auto-import.md`, `MODEL_BENCH.md`. [M]
-- [0087] **Logbook: search by meaning.** Demo: search over mock records. Source `retrieval.md`. [M]
-- [0088] **Logbook: the document archive.** Demo: the document view. Source `archive.md`,
-  `extraction.md`. [M]
+- [0079] **Slice 1's live half, his steps:** the code is on the dev branch. Bring ntfy up and
+  make users and the server token (overlay `deploy/ntfy/README.md`, files already in
+  `~/omni-ntfy`), then the phone app. Live alerts start with 1.2.4 and its `.env` lines. [S, USER]
+- [0085] **Logbook: the assistant asks before it acts.** Scaffold in `logbook/_drafts/` (device-
+  local, gitignored). Demo: push `demo/assistant`; [0084] held at 1.5 MB brotli. Jan deadline. [M]
+- [0086] **Logbook: receipts from email.** Scaffold in `logbook/_drafts/`. Evidence: a Settings →
+  Jobs screenshot from live after 1.2.4, and the C1/C0 bench scores. [M]
+- [0087] **Logbook: search by meaning.** Scaffold drafted. The mock bridge returns canned search
+  results, so the demo needs a decision: port fusion to the browser, or lead with the bench. [M]
+- [0088] **Logbook: the document archive.** Scaffold drafted. Demo: push `demo/archive`. [M]
 - [0080] **Slice 2:** the silent daily summary, and unmatched counted apart from review. [M]
 - [0081] **Slice 3:** measure critical's weekly budget; over it, the summary asks to demote. [S]
 - [0082] **Slice 4, each ruled on its own:** large charge (threshold setting), new merchant
