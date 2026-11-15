@@ -4457,7 +4457,7 @@ pub async fn invoke_list_pending_batches() -> Result<Vec<PendingBatchView>, Stri
         // One Globepay batch (CAD/USD) + one Meridian AED batch — the
         // latter has a manual-FX currency so the FX prompt path is exercisable.
         let now = chrono::Utc::now();
-        Ok(vec![
+        let mut batches = vec![
             PendingBatchView {
                 batch_id: "01HXMOCKGPAY000000000001".into(),
                 source: "globepay".into(),
@@ -4686,7 +4686,29 @@ pub async fn invoke_list_pending_batches() -> Result<Vec<PendingBatchView>, Stri
                 }])),
                 revises_batch_id: Some("01HXMOCKRCPT000000000003".into()),
             },
-        ])
+        ];
+        // The receipts logbook's picture: the grouped order without the misread
+        // this fixture carries for the warning panel.
+        if option_env!("OMNI_DEMO_SCENARIO") == Some("receipts")
+            && let Some(b) = batches
+                .iter_mut()
+                .find(|b| b.batch_id == "01HXMOCKRCPT000000000001")
+        {
+            for p in &mut b.draft_postings[0].postings {
+                p.amount = if p.amount.starts_with('-') {
+                    "-99.83"
+                } else {
+                    "99.83"
+                }
+                .into();
+            }
+            if let Some(meta) = b.source_metadata.as_mut() {
+                meta["effective_confidence"] = 0.94.into();
+                meta["needs_manual_review"] = false.into();
+                meta["warnings"] = serde_json::json!([]);
+            }
+        }
+        Ok(batches)
     }
     #[cfg(not(feature = "mock"))]
     {
