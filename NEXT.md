@@ -4,11 +4,10 @@
 live in `project.md` § Decisions in force, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`),
 rationale in `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
-## ▶ NEXT ACTION — slice 3 [0081] needs one design answer first
-Built and on the dev branch: [0089], [0079]'s code, [0090], [0084], and slice 2 [0080] (his pick,
-2026-11-13). Slice 3 "asks whether to demote the noisiest kind", and nothing can demote a kind
-yet: ask him what a demotion is (a setting per alert kind?) before building it. The identity
-scrub [0072] is sized and is its own pass.
+## ▶ NEXT ACTION — slice 4 [0082], one detector at a time, his ruling on which first
+On the dev branch: [0089], [0079]'s code, [0090], [0084], slices 2 [0080] and 3 [0081]. Dev runs
+through slice 2. Slice 4's detectors are each ruled on their own (`tasks.md` [0082]); asked him
+which comes first. The identity scrub [0072] is sized and is its own pass.
 - The audit trail for the stretch: overlay `DECISION_LOG_2026-11-13.md`.
 - Logbooks: load `writing-posts` (from `~/.dotfiles/claude/skills/`, not linked on the WSL box).
 
