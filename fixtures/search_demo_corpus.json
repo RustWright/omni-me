@@ -1,0 +1,22 @@
+{
+  "questions": [
+    "did my rent go up?",
+    "when did I last see a doctor?",
+    "how much do I spend on coffee?",
+    "what gifts did I plan for my sister?"
+  ],
+  "records": [
+    {"id": "j1", "type": "journal", "text": "The landlord bumped the rate again, starting in March. Third time in two years."},
+    {"id": "j2", "type": "journal", "text": "Clinic visit for the cough that won't quit. The GP prescribed antibiotics and told me to rest."},
+    {"id": "n1", "type": "note", "text": "Café habit: about four flat whites a week at the place by the office, roughly 22 a week."},
+    {"id": "n2", "type": "note", "text": "Birthday ideas for my little sibling: a pottery class, the novel she kept mentioning, good headphones."},
+    {"id": "j3", "type": "journal", "text": "Went up the hill for a long run before work. Legs are sore but it felt good."},
+    {"id": "n3", "type": "note", "text": "Coffee table arrived today. Assembly took an hour and one screw is missing."},
+    {"id": "j4", "type": "journal", "text": "Sister called about the plan for the family dinner on Sunday."},
+    {"id": "n4", "type": "note", "text": "Car rental for the trip: pick up Friday at noon, return Monday by six."},
+    {"id": "j5", "type": "journal", "text": "Last day of the sprint. Shipped the export feature and finally slept properly."},
+    {"id": "n5", "type": "note", "text": "Reading list: two books on habit formation and one on the history of maps."},
+    {"id": "j6", "type": "journal", "text": "Rainy walk by the river after lunch, then a quiet evening with a film."},
+    {"id": "n6", "type": "note", "text": "Router keeps dropping the connection at night. Try a firmware update before calling support."}
+  ]
+}

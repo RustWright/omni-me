@@ -5395,10 +5395,67 @@ mod mock_assistant {
         }
     }
 
+    /// Questions that share no content word with the record that answers them.
+    /// Each record is the one `bge-small-en-v1.5` ranked first over the search
+    /// demo's corpus; the answer sentences are written, not generated.
+    const DEMO_SEARCHES: [(&str, &str, &str, &str); 4] = [
+        (
+            "did my rent go up?",
+            "Yes. Your journal says the landlord bumped the rate again, starting in March, and \
+             that it is the third time in two years.",
+            "journal",
+            "2026-03-14",
+        ),
+        (
+            "when did I last see a doctor?",
+            "Your last visit was to the clinic for the cough. The GP prescribed antibiotics and \
+             told you to rest.",
+            "journal",
+            "2026-10-02",
+        ),
+        (
+            "how much do I spend on coffee?",
+            "About 22 a week. Your note counts roughly four flat whites a week at the place by \
+             the office.",
+            "note",
+            "Café habit",
+        ),
+        (
+            "what gifts did I plan for my sister?",
+            "Your birthday ideas note lists a pottery class, the novel she kept mentioning, and \
+             good headphones.",
+            "note",
+            "Birthday ideas",
+        ),
+    ];
+
+    /// The search demo opens on one conversation of four answered questions, each
+    /// citing a record it shares no words with.
+    fn seed_search_demo() {
+        let thread = "demo-thread-search";
+        for (i, (asked, answer, kind, title)) in DEMO_SEARCHES.iter().enumerate() {
+            let ago = 40 - 10 * i as i64;
+            let question = message(thread, "user", asked, minutes_ago(ago + 1));
+            let mut reply = message(thread, "assistant", answer, minutes_ago(ago));
+            reply.in_reply_to = Some(question.message_id.clone());
+            reply.stopped = Some("answered".into());
+            reply.records_read = Some(vec![RecordCitation {
+                kind: (*kind).into(),
+                id: format!("demo-{kind}-{i}"),
+                title: Some((*title).into()),
+            }]);
+            STORE.with(|s| s.borrow_mut().extend([question, reply]));
+        }
+    }
+
     /// The demo page opens on two finished conversations: a suggestion waiting
     /// for a decision, and a journal write the assistant may not propose.
     fn seed_demo() {
         if !cfg!(feature = "demo") || SEEDED.with(|s| s.replace(true)) {
+            return;
+        }
+        if option_env!("OMNI_DEMO_SCENARIO") == Some("search") {
+            seed_search_demo();
             return;
         }
         for (thread, asked, answer, proposes, ago) in [

@@ -386,6 +386,10 @@ These are settled. Do not re-open one without a new reason.
   archive (a correction that survives a re-run), then search (his call, port or screenshot).
   The archive demo has no re-run (2026-11-15): the app has no such control, so the demo shows
   fields by source and a correction that sticks, and the cited fold tests carry the re-run claim.
+  Search gets a screenshot, not a demo (2026-11-15): the Assistant page answering four questions,
+  each citing the record the server's exact model ranks first (`scripts/search-demo-rank.py`,
+  `OMNI_DEMO_SCENARIO=search`). A standalone ranking page was rejected as showing no app, and an
+  in-browser model as ~35 MB in a different runtime; the measurements carry the post.
 - Demos are built locally (2026-11-15): the mock web page only, memory-capped, never the app,
   server or Android build. He installs any tool it needs.
 - Order (2026-11-13): Part 2a, then notifications slice 1, then the logbooks, so the
