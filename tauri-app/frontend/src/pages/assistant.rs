@@ -330,7 +330,8 @@ fn ApprovalsElsewhere() -> Element {
     // refresh does not reshuffle rows under a finger already reaching for one.
     rows.sort_by_key(|(tab, _)| ALL_TABS.iter().position(|t| t == tab).unwrap_or(usize::MAX));
 
-    if rows.is_empty() {
+    // A demo shows one page, so a row pointing at another tab would lead nowhere.
+    if rows.is_empty() || cfg!(feature = "demo") {
         return rsx! {};
     }
 

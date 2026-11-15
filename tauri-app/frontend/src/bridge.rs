@@ -314,6 +314,15 @@ pub fn blur_active_element() {
 pub async fn ensure_js_bundle(src: &str, global_name: &str, max_attempts: u16) -> bool {
     const POLL_INTERVAL_MS: i32 = 100;
 
+    // A demo page is served under `dx --base-path`, not at the site root. Normal
+    // builds have no base path and keep `src` as given.
+    let src = &match dioxus::cli_config::base_path() {
+        Some(base) if !base.trim_matches('/').is_empty() => {
+            format!("/{}{src}", base.trim_matches('/'))
+        }
+        _ => src.to_string(),
+    };
+
     let Some(window) = web_sys::window() else {
         return false;
     };
@@ -5317,6 +5326,7 @@ mod mock_assistant {
         static ARCHIVED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
         static DELETED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
         static SEQ: RefCell<u32> = const { RefCell::new(0) };
+        static SEEDED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     }
 
     fn next_id(prefix: &str) -> String {
@@ -5329,6 +5339,104 @@ mod mock_assistant {
 
     fn now() -> String {
         chrono::Utc::now().to_rfc3339()
+    }
+
+    fn minutes_ago(n: i64) -> String {
+        (chrono::Utc::now() - chrono::Duration::minutes(n)).to_rfc3339()
+    }
+
+    const DEMO_PROPOSES: &str = "Your travel note says the passport expires in May. I don't add \
+         anything on my own, so here is a note for you to accept or decline.";
+    const DEMO_REFUSES: &str = "I can't do that. Your journal is yours alone: writing in it is not \
+         something I can suggest, and not something you can allow me to do. Ask me for a note \
+         instead and I will suggest one.";
+    const DEMO_OTHER: &str = "Answers on this page are scripted, so there is nothing real to \
+         search. Ask for a note or a reminder to see a suggestion, or for a journal entry to see \
+         a refusal.";
+
+    fn message(thread_id: &str, role: &str, text: &str, at: String) -> AssistantMessage {
+        AssistantMessage {
+            message_id: next_id("mock-msg"),
+            thread_id: thread_id.to_string(),
+            role: role.into(),
+            text: Some(text.to_string()),
+            created_at: at,
+            in_reply_to: None,
+            stopped: None,
+            detail: None,
+            model: None,
+            elapsed_ms: None,
+            verbs: None,
+            records_read: None,
+            usage: None,
+            scheduled: None,
+        }
+    }
+
+    fn note_proposal(
+        thread_id: &str,
+        message_id: &str,
+        title: &str,
+        at: String,
+    ) -> AssistantProposal {
+        AssistantProposal {
+            proposal_id: next_id("mock-proposal"),
+            thread_id: thread_id.to_string(),
+            message_id: message_id.to_string(),
+            action: "note.create".into(),
+            args: serde_json::json!({
+                "title": title,
+                "body": "Expires in May. Book the appointment first.",
+            }),
+            rationale: "You said you would forget this one.".into(),
+            reversible: true,
+            created_at: at,
+            decision: None,
+        }
+    }
+
+    /// The demo page opens on two finished conversations: a suggestion waiting
+    /// for a decision, and a journal write the assistant may not propose.
+    fn seed_demo() {
+        if !cfg!(feature = "demo") || SEEDED.with(|s| s.replace(true)) {
+            return;
+        }
+        for (thread, asked, answer, proposes, ago) in [
+            (
+                "demo-thread-journal",
+                "Write in today's journal that I finished the tax forms.",
+                DEMO_REFUSES,
+                false,
+                30,
+            ),
+            (
+                "demo-thread-passport",
+                "Remind me to renew my passport before it expires.",
+                DEMO_PROPOSES,
+                true,
+                10,
+            ),
+        ] {
+            let question = message(thread, "user", asked, minutes_ago(ago + 1));
+            let mut reply = message(thread, "assistant", answer, minutes_ago(ago));
+            reply.in_reply_to = Some(question.message_id.clone());
+            reply.stopped = Some("answered".into());
+            if proposes {
+                reply.records_read = Some(vec![RecordCitation {
+                    kind: "note".into(),
+                    id: "mock-note-1".into(),
+                    title: None,
+                }]);
+                let p = note_proposal(
+                    thread,
+                    &reply.message_id,
+                    "Renew passport",
+                    minutes_ago(ago),
+                );
+                PROPOSALS.with(|list| list.borrow_mut().push(p));
+            }
+            STORE.with(|s| s.borrow_mut().extend([question, reply]));
+        }
     }
 
     pub fn ask(text: &str, thread_id: Option<&str>) -> AssistantAsked {
@@ -5382,32 +5490,33 @@ mod mock_assistant {
                 // random one: it is the only way a browser sweep can reach the
                 // approval cards at all. Asking anything containing "note" makes
                 // the mock propose one.
-                if asked.to_lowercase().contains("note") {
-                    PROPOSALS.with(|p| {
-                        p.borrow_mut().push(AssistantProposal {
-                            proposal_id: next_id("mock-proposal"),
-                            thread_id: q.thread_id.clone(),
-                            message_id: answer_id.clone(),
-                            action: "note.create".into(),
-                            args: serde_json::json!({
-                                "title": "Renew passport",
-                                "body": "Expires in May. Book the appointment first.",
-                            }),
-                            rationale: "You said you would forget this one.".into(),
-                            reversible: true,
-                            created_at: now(),
-                            decision: None,
-                        })
-                    });
+                // The demo adds "remind" as a trigger and refuses "journal" first,
+                // the one write the assistant may never propose.
+                let lower = asked.to_lowercase();
+                let demo = cfg!(feature = "demo");
+                let refuses = demo && lower.contains("journal");
+                let proposes =
+                    !refuses && (lower.contains("note") || (demo && lower.contains("remind")));
+                if proposes {
+                    let title = if demo { asked.trim() } else { "Renew passport" };
+                    let p = note_proposal(&q.thread_id, &answer_id, title, now());
+                    PROPOSALS.with(|list| list.borrow_mut().push(p));
                 }
+                let text = match (demo, refuses, proposes) {
+                    (false, ..) => format!("This is mock data — no model ran. You asked: “{asked}”"),
+                    (true, true, _) => DEMO_REFUSES.to_string(),
+                    (true, false, true) => {
+                        "Here is a note for you to accept or decline. I don't add anything on my own."
+                            .to_string()
+                    }
+                    (true, false, false) => DEMO_OTHER.to_string(),
+                };
 
                 store.push(AssistantMessage {
                     message_id: answer_id,
                     thread_id: q.thread_id.clone(),
                     role: "assistant".into(),
-                    text: Some(format!(
-                        "This is mock data — no model ran. You asked: “{asked}”"
-                    )),
+                    text: Some(text),
                     created_at: now(),
                     in_reply_to: Some(q.message_id.clone()),
                     stopped: Some("answered".into()),
@@ -5415,11 +5524,14 @@ mod mock_assistant {
                     model: Some("mock".into()),
                     elapsed_ms: Some(1200),
                     verbs: Some(vec!["search".into(), "read".into()]),
-                    records_read: Some(vec![RecordCitation {
-                        kind: "note".into(),
-                        id: "mock-note-1".into(),
-                        title: None,
-                    }]),
+                    // A demo answer cites only when it drew on a record.
+                    records_read: (!demo || proposes).then(|| {
+                        vec![RecordCitation {
+                            kind: "note".into(),
+                            id: "mock-note-1".into(),
+                            title: None,
+                        }]
+                    }),
                     usage: Some(AssistantUsage {
                         prompt_tokens: 900,
                         completion_tokens: 120,
@@ -5529,6 +5641,7 @@ mod mock_assistant {
     }
 
     pub fn pending_proposals() -> Vec<AssistantProposal> {
+        seed_demo();
         PROPOSALS.with(|p| {
             p.borrow()
                 .iter()
@@ -5581,6 +5694,7 @@ mod mock_assistant {
     }
 
     pub fn thread_proposals(thread_id: &str) -> Vec<AssistantProposal> {
+        seed_demo();
         PROPOSALS.with(|p| {
             p.borrow()
                 .iter()
@@ -5608,6 +5722,7 @@ mod mock_assistant {
     }
 
     pub fn threads() -> Vec<AssistantThread> {
+        seed_demo();
         STORE.with(|s| {
             let store = s.borrow();
             let mut ids: Vec<String> = Vec::new();
@@ -5664,6 +5779,7 @@ mod mock_assistant {
         // The mock settles on read rather than on a timer: it keeps the fake
         // loop entirely demand-driven, so nothing keeps ticking in a background
         // tab.
+        seed_demo();
         settle();
         STORE.with(|s| {
             let messages: Vec<AssistantMessage> = s

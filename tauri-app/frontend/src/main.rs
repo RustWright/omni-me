@@ -175,6 +175,12 @@ pub fn request_tab(tab: Tab) {
 
 /// Ask the shell to switch tabs and land somewhere specific inside.
 pub fn request_nav(target: NavTarget) {
+    // A demo is one page with no way back from another, so it never leaves it.
+    if cfg!(feature = "demo")
+        && option_env!("OMNI_DEMO_TAB").and_then(Tab::from_key) != Some(target.tab)
+    {
+        return;
+    }
     if let Some(NavRequest(mut req)) = try_use_context::<NavRequest>() {
         req.set(Some(target));
     }
@@ -411,7 +417,13 @@ fn App() -> Element {
     // Reading the signal is what makes those callers reactive.
     let home_of = move || home_tab(&feature_set.read().clone().unwrap_or_default());
 
-    let mut active_tab = use_signal(|| Tab::Journal);
+    // A demo opens on its own page from the first frame, not after the restore below.
+    let mut active_tab = use_signal(|| {
+        option_env!("OMNI_DEMO_TAB")
+            .filter(|_| cfg!(feature = "demo"))
+            .and_then(Tab::from_key)
+            .unwrap_or(Tab::Journal)
+    });
 
     // Pages asking to switch tabs (see `NavRequest`). Cleared as it is consumed,
     // so the same destination can be requested twice in a row — a user who
@@ -1020,7 +1032,11 @@ fn App() -> Element {
                     div {
                         class: "shrink-0 px-3 py-1.5 bg-warn/20 border-b border-warn/40 text-warn text-[11px] font-semibold uppercase tracking-wide text-center",
                         title: "data: {profile.data_dir} · sync: {profile.server_url}",
-                        "Non-production data — not your live app"
+                        if cfg!(feature = "demo") {
+                            "Demo with made-up data · nothing leaves your browser"
+                        } else {
+                            "Non-production data — not your live app"
+                        }
                     }
                 }
                 // Auto-hiding header (#7): collapses its height + padding (not just

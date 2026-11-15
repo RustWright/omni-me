@@ -379,6 +379,13 @@ These are settled. Do not re-open one without a new reason.
   acts, receipts from email, search by meaning, the document archive. Statements and OTA
   releases are dropped, not deferred. A one-page mock build is measured first (my proposal) so
   the demos for 1, 3 and 4 can follow.
+- Logbooks are objective and descriptive, so I draft the prose and he checks it (2026-11-15);
+  this overrides mylearnbase `editorial/editing.md`'s "the prose is his" for logbooks only.
+- Each demo shows the one interaction that proves its claim, nothing more (2026-11-15). Order:
+  the assistant (scripted questions, a waiting proposal, a refused journal write), then the
+  archive (a correction that survives a re-run), then search (his call, port or screenshot).
+- Demos are built locally (2026-11-15): the mock web page only, memory-capped, never the app,
+  server or Android build. He installs any tool it needs.
 - Order (2026-11-13): Part 2a, then notifications slice 1, then the logbooks, so the
   source-failure alert lands before the writing. Slices 2–4 sit after the logbooks in
   `tasks.md`; that placement is my reading, not stated.
