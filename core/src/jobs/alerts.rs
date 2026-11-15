@@ -203,6 +203,17 @@ struct Pending {
     alert_id: String,
     title: String,
     message: String,
+    kind: String,
+}
+
+/// Where a tap on an alert lands: a charge on Finances, a source problem on
+/// Settings, where sources are reconnected.
+fn tab_for(kind: &str) -> &'static str {
+    if kind == LARGE_CHARGE {
+        "finances"
+    } else {
+        "settings"
+    }
 }
 
 pub struct AlertEngine {
@@ -349,7 +360,7 @@ impl AlertEngine {
         let pending: Vec<Pending> = match self
             .db
             .query(
-                "SELECT alert_id, title, message FROM job_alerts \
+                "SELECT alert_id, title, message, kind FROM job_alerts \
                  WHERE sent_at IS NONE AND closed_at IS NONE AND due_at <= $now \
                  AND (tier IS NONE OR tier = 'critical')",
             )
@@ -369,6 +380,7 @@ impl AlertEngine {
                 message: p.message,
                 priority: Priority::High,
                 tags: vec!["warning".into()],
+                click: Some(crate::notify::app_link(tab_for(&p.kind))),
             };
             match self.notifier.send(&n).await {
                 Ok(()) => {

@@ -126,6 +126,25 @@ impl Waiting {
         .collect()
     }
 
+    /// The tab a tap opens: the one with the most waiting, Finances on a tie, and
+    /// Settings when only alerts or the budget line are listed.
+    pub fn tab(&self) -> &'static str {
+        let finances = self.batches.len() + self.unmatched.len();
+        let candidates = [
+            (finances, "finances"),
+            (self.suggestions.len(), "assistant"),
+            (self.purge.len(), "archive"),
+        ];
+        candidates
+            .into_iter()
+            .filter(|(n, _)| *n > 0)
+            .fold(None, |best: Option<(usize, &str)>, c| match best {
+                Some(b) if b.0 >= c.0 => Some(b),
+                _ => Some(c),
+            })
+            .map_or("settings", |(_, tab)| tab)
+    }
+
     /// One line per screen, naming only what is non-zero.
     pub fn message(&self) -> String {
         let mut lines = Vec::new();
@@ -269,6 +288,7 @@ impl SummaryJob {
                     message: waiting.message(),
                     priority: Priority::Low,
                     tags: Vec::new(),
+                    click: Some(crate::notify::app_link(waiting.tab())),
                 };
                 match self.notifier.send(&n).await {
                     Ok(()) => {
@@ -372,6 +392,24 @@ mod tests {
             w.message(),
             "Finances: 3 to review, 1 unmatched\nArchive: 2 due for purge"
         );
+    }
+
+    #[test]
+    fn a_tap_opens_the_tab_with_the_most_waiting() {
+        let w = Waiting {
+            batches: set(&["a"]),
+            unmatched: set(&["t1"]),
+            suggestions: set(&["p1", "p2", "p3"]),
+            ..Default::default()
+        };
+        assert_eq!(w.tab(), "assistant");
+        let tie = Waiting {
+            batches: set(&["a"]),
+            purge: set(&["d"]),
+            ..Default::default()
+        };
+        assert_eq!(tie.tab(), "finances", "Finances wins a tie");
+        assert_eq!(Waiting::default().tab(), "settings");
     }
 
     #[test]

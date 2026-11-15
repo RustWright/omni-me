@@ -496,9 +496,33 @@ pub fn run() {
             builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
         }
     }
+    // `omni-me://<tab>` from a notification tap (`commands::deep_link`).
+    #[cfg(mobile)]
+    {
+        builder = builder.plugin(tauri_plugin_deep_link::init());
+    }
 
     builder
+        .manage(commands::deep_link::PendingDeepLink::default())
         .setup(|app| {
+            #[cfg(mobile)]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                let pending = app.state::<commands::deep_link::PendingDeepLink>();
+                if let Ok(Some(urls)) = app.deep_link().get_current() {
+                    for url in urls {
+                        pending.offer(url.as_str());
+                    }
+                }
+                let handle = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    let pending = handle.state::<commands::deep_link::PendingDeepLink>();
+                    let any = event.urls().iter().fold(false, |any, url| pending.offer(url.as_str()) || any);
+                    if any {
+                        let _ = handle.emit("deep-link:open", ());
+                    }
+                });
+            }
             // Store DB in the OS app data dir (e.g. ~/.local/share/com.omni-me.app/)
             // instead of inside src-tauri/ where Tauri's file watcher would trigger
             // infinite rebuild loops on every LOCK/WAL write.
@@ -920,6 +944,7 @@ pub fn run() {
             commands::documents::preview_document_purge,
             commands::documents::preview_document_delete,
             commands::documents::confirm_document_purge,
+            commands::deep_link::take_deep_link_tab,
             commands::jobs::list_jobs,
             commands::jobs::list_job_runs,
             // Auto-import observability (Phase 3.9)

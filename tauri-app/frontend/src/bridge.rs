@@ -4121,6 +4121,20 @@ fn mock_jobs() -> crate::types::JobsView {
     .expect("mock jobs decode")
 }
 
+/// The tab an `omni-me://<tab>` link asked for, once; `None` when there is none.
+pub async fn invoke_take_deep_link_tab() -> Result<Option<String>, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(None)
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("take_deep_link_tab", &Args {}).await
+    }
+}
+
 pub async fn invoke_list_jobs() -> Result<crate::types::JobsView, String> {
     #[cfg(feature = "mock")]
     {

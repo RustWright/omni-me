@@ -23,6 +23,13 @@ pub struct Notification {
     pub message: String,
     pub priority: Priority,
     pub tags: Vec<String>,
+    /// Opened on tap: an `omni-me://<tab>` link lands on that tab of the app.
+    pub click: Option<String>,
+}
+
+/// The link that opens the app on `tab` (the frontend's tab key).
+pub fn app_link(tab: &str) -> String {
+    format!("omni-me://{tab}")
 }
 
 #[async_trait]
@@ -47,6 +54,8 @@ struct NtfyMessage<'a> {
     message: &'a str,
     priority: u8,
     tags: &'a [String],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    click: Option<&'a str>,
 }
 
 impl NtfyNotifier {
@@ -90,6 +99,7 @@ impl Notifier for NtfyNotifier {
             message: &n.message,
             priority: n.priority as u8,
             tags: &n.tags,
+            click: n.click.as_deref(),
         };
         let mut req = self.http.post(format!("{}/", self.base_url)).json(&body);
         if let Some(token) = &self.token {
@@ -119,6 +129,7 @@ mod tests {
             message: "gmail: app password revoked".into(),
             priority: Priority::High,
             tags: vec!["warning".into()],
+            click: Some(app_link("settings")),
         }
     }
 
@@ -130,7 +141,7 @@ mod tests {
             .and(header("authorization", "Bearer tk_x"))
             .and(body_partial_json(json!({
                 "topic": "omni-alerts", "priority": 4, "tags": ["warning"],
-                "title": "Mail import needs you"
+                "title": "Mail import needs you", "click": "omni-me://settings"
             })))
             .respond_with(ResponseTemplate::new(200))
             .expect(1)

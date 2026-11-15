@@ -920,6 +920,36 @@ fn App() -> Element {
         }
     });
 
+    // `omni-me://<tab>` from a notification tap: taken at mount (a cold start) and
+    // on each `deep-link:open` (the app was running). A tab this launch does not
+    // render is ignored, as a share intent's is.
+    use_hook(move || {
+        let (tx, mut rx) = futures::channel::mpsc::unbounded::<()>();
+        let _ = tx.unbounded_send(());
+        bridge::listen_backend_event("deep-link:open", move || {
+            let _ = tx.unbounded_send(());
+        });
+        spawn(async move {
+            while rx.next().await.is_some() {
+                let Ok(Some(key)) = bridge::invoke_take_deep_link_tab().await else {
+                    continue;
+                };
+                while feature_set.peek().is_none() {
+                    timer::sleep_ms(20).await;
+                }
+                match Tab::from_key(&key) {
+                    Some(tab) if tab.visible(&feature_set.peek().clone().unwrap_or_default()) => {
+                        share_claimed_tab.set(true);
+                        active_tab.set(tab);
+                    }
+                    _ => web_sys::console::warn_1(
+                        &format!("deep link to {key}, which this launch does not show").into(),
+                    ),
+                }
+            }
+        });
+    });
+
     rsx! {
         // Required for Dioxus 0.7 Tailwind integration
         link { rel: "stylesheet", href: asset!("/assets/tailwind.css") }

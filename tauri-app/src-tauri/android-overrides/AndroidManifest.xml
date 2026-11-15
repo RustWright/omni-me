@@ -42,6 +42,15 @@
                 <!-- AndroidTV support -->
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
+            <!-- omni-me://<tab> from a notification tap. The deep-link plugin reads it;
+                 this filter is what routes it here, since this file replaces the
+                 generated manifest the CLI would otherwise have put it in. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="omni-me" />
+            </intent-filter>
             <!-- Phase 3.3: share-target for receipts (image/*) and statements (PDF). -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
