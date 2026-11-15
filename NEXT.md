@@ -4,10 +4,10 @@
 live in `project.md` § Decisions in force, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`),
 rationale in `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
-## ▶ NEXT ACTION — his check of the assistant demo and draft [0085], then the archive demo [0088]
-Demo minimums and order: `project.md` § Agent framework (2026-11-15). The assistant page builds
-locally (scratchpad `demo-build.sh assistant`, base path `demos/omni-me/assistant`); draft 1 is
-`logbook/_drafts/assistant-asks-before-it-acts.md`. Nothing staged in mylearnbase yet.
+## ▶ NEXT ACTION — his check of the archive demo and draft [0088], then publish it
+[0085] is live (mylearnbase `2c8bd13`, by hand: Zola installed, no logbook tools, CI run as the
+test evidence). Archive: demo builds with `demo-build.sh archive`; draft 1 is
+`logbook/_drafts/document-archive.md`. Then [0087] search, his call (port or screenshot).
 Dev's first daily summary (19:00 check-in time) is the ntfy end-to-end check.
 - The audit trail for the stretch: overlay `DECISION_LOG_2026-11-13.md`.
 - Logbooks: load `writing-posts` (from `~/.dotfiles/claude/skills/`, not linked on the WSL box).
