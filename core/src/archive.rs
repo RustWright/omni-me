@@ -403,7 +403,7 @@ pub async fn ingest_email(
 ///
 /// ⚠️ Path separators and control characters only. A subject is the one human
 /// label the message has, so stripping punctuation or transliterating emoji
-/// would trade a real identifier for a tidy one — and `📫 oxio invoice` is an
+/// would trade a real identifier for a tidy one — and `📫 isp invoice` is an
 /// actual fixture.
 fn sanitize_filename(subject: &str) -> String {
     const MAX: usize = 120;
@@ -740,9 +740,9 @@ mod tests {
     #[test]
     fn a_subject_stays_recognisable_but_cannot_escape_its_directory() {
         assert_eq!(sanitize_filename("a/b\\c"), "a-b-c");
-        // ⚠️ An actual fixture is named `📫 oxio invoice available.` — dropping
+        // ⚠️ An actual fixture is named `📫 isp invoice available.` — dropping
         // non-ASCII would trade a real identifier for a tidy one.
-        assert_eq!(sanitize_filename("📫 oxio invoice"), "📫 oxio invoice");
+        assert_eq!(sanitize_filename("📫 isp invoice"), "📫 isp invoice");
         assert_eq!(sanitize_filename("  padded  "), "padded");
         // Truncation counts chars, not bytes: byte slicing would panic here.
         let long = "📫".repeat(200);

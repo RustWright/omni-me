@@ -1038,7 +1038,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let entry = "2026-10-11 Tim Hortons lunch\n    Expenses:Food  14.50 CAD\n    \
+        let entry = "2026-10-11 Maple Cafe lunch\n    Expenses:Food  14.50 CAD\n    \
                      Assets:Cash  -14.50 CAD\n";
         let llm = ScriptedLlm::new(vec![
             tool_turn(
@@ -1047,7 +1047,7 @@ mod tests {
                 json!({
                     "action": "transaction.record",
                     "args": { "entry": entry },
-                    "rationale": "Lunch at Tim Hortons.",
+                    "rationale": "Lunch at Maple Cafe.",
                 }),
             ),
             prose_turn("I could not record it under an account you use."),

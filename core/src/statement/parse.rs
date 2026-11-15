@@ -826,7 +826,7 @@ mod tests {
     #[test]
     fn ported_basic_rows_match_the_old_parser() {
         let csv = "\
-2026-05-15,Loblaws Groceries,42.18,
+2026-05-15,Greenfield Groceries,42.18,
 2026-05-16,Payroll Deposit,,2500.00
 2026-05-17,Hydro Bill,87.50,";
         let p = parse_chequing_statement(csv).unwrap();
@@ -852,7 +852,7 @@ mod tests {
     fn ported_pasted_header_row_is_structural_not_a_finding() {
         let csv = "\
 Date,Description,Debit,Credit
-2026-05-15,Loblaws,42.18,";
+2026-05-15,Greenfield,42.18,";
         let p = parse_chequing_statement(csv).unwrap();
         assert_eq!(p.rows.len(), 1);
         assert!(

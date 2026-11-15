@@ -3,7 +3,7 @@
 > Status: **built 2026-09-23, not yet run against a live mailbox.** The grouping described here
 > is exercised by unit tests over a real database in `core/src/events/auto_import_projection.rs`
 > and `core/src/auto_import/receipts.rs`. The two decisions behind it were the user's, taken
-> after a real Walmart order produced six review items.
+> after a real retail order produced six review items.
 
 omni-me can watch a mailbox, read what arrives and offer the transactions it finds. Nothing is
 ever booked without a person accepting it, which is the subject of a different page. This one is
@@ -94,7 +94,7 @@ missing transaction is neither.
 
 The extractor reads only the email's text, so an amount that text does not print came from the
 model, not the vendor. A promotional mail whose plain-text part was a single `.` came back as a
-complete Amazon order priced 12.34, 5.67 and 1.23, labelled a receipt (2026-10-07). When **no**
+complete online-store order priced 12.34, 5.67 and 1.23, labelled a receipt (2026-10-07). When **no**
 amount in a reading is printed in the email, the reading is invented, label included, and nothing
 is proposed; the mail stays in the archive. When only **some** are missing it is proposed with
 the missing ones named, because a tax line the model worked out is legitimately absent too.

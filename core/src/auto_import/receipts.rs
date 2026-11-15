@@ -169,7 +169,7 @@ fn printed_numbers(text: &str) -> HashSet<Decimal> {
 /// The non-zero posting amounts the text does not print anywhere.
 ///
 /// The extractor sees only this text, so on this path an amount it does not
-/// contain was made up. Handed an empty promo it returned a whole Amazon order
+/// contain was made up. Handed an empty promo it returned a whole online-store order
 /// in placeholder prices (12.34, 5.67), 2026-10-07.
 fn unprinted_amounts(result: &ExtractionResult, text: &str) -> Vec<Decimal> {
     let printed = printed_numbers(text);
@@ -512,7 +512,7 @@ impl ImapHandler for ReceiptHandler {
         }
         let drafts = receipt_extraction_to_drafts(&result, &source_prefix);
         // With no drafts, only a receipt still reaches review, where it can be
-        // entered by hand (a KDP royalty notice did this). Order and shipping
+        // entered by hand (a royalty notice did this). Order and shipping
         // mail with nothing in it stays archive-only (his ruling, 2026-10-02).
         if drafts.is_empty() && result.kind() != Some(DocumentKind::Receipt) {
             return Ok(vec![]);
@@ -755,8 +755,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn handles_audible_inline_body_eml() {
-        let body = match fixture_eml("Thanks, your order is complete_audible.eml") {
+    async fn handles_audiobook_inline_body_eml() {
+        let body = match fixture_eml("inline-body-audiobook-order.eml") {
             Some(b) => b,
             None => {
                 eprintln!("fixture missing — skipping");
@@ -764,19 +764,19 @@ mod tests {
             }
         };
         let extractor = Arc::new(crate::extraction::null::NullExtractor);
-        let handler = ReceiptHandler::new("audible", "device-test", extractor);
-        let msg = imap_msg_from("donotreply@audible.ca", body);
+        let handler = ReceiptHandler::new("audiobooks", "device-test", extractor);
+        let msg = imap_msg_from("donotreply@audiobooks.example", body);
         let events = handler
             .handle(&msg)
             .await
-            .expect("audible handler should succeed");
+            .expect("audiobook handler should succeed");
         // NullExtractor → empty events; the point is the pipeline doesn't error.
         assert!(events.is_empty());
     }
 
     #[tokio::test]
-    async fn handles_oxio_inline_body_eml() {
-        let body = match fixture_eml("📫 oxio invoice available..eml") {
+    async fn handles_isp_inline_body_eml() {
+        let body = match fixture_eml("📫 isp invoice available..eml") {
             Some(b) => b,
             None => {
                 eprintln!("fixture missing — skipping");
@@ -784,12 +784,12 @@ mod tests {
             }
         };
         let extractor = Arc::new(crate::extraction::null::NullExtractor);
-        let handler = ReceiptHandler::new("oxio", "device-test", extractor);
-        let msg = imap_msg_from("billing@oxio.com", body);
+        let handler = ReceiptHandler::new("isp", "device-test", extractor);
+        let msg = imap_msg_from("billing@isp.example", body);
         let events = handler
             .handle(&msg)
             .await
-            .expect("oxio handler should succeed");
+            .expect("isp handler should succeed");
         assert!(events.is_empty());
     }
 
@@ -945,7 +945,7 @@ mod tests {
         handler.handle(&msg).await.expect("handler ok").len()
     }
 
-    /// One Walmart order produced six batches because every message from a
+    /// One retail order produced six batches because every message from a
     /// listed sender became a transaction, a satisfaction survey included.
     #[tokio::test]
     async fn a_feedback_request_proposes_nothing() {
@@ -974,8 +974,8 @@ mod tests {
         assert_eq!(events_for(Some("receipt"), "0.00").await, 1);
     }
 
-    /// Zero postings, not a zero amount: the shape a real KDP royalty notice and
-    /// a real Instacart confirmation both had. Only the receipt reaches review,
+    /// Zero postings, not a zero amount: the shape a real royalty notice and a
+    /// real grocery-delivery confirmation both had. Only the receipt reaches review,
     /// to be entered by hand; the confirmation stays archive-only (2026-10-02).
     #[tokio::test]
     async fn with_no_postings_only_a_receipt_reaches_review() {
@@ -1148,7 +1148,7 @@ mod tests {
         assert_eq!(meta[ORDER_GROUP_KEY].as_str(), Some("118762884"));
     }
 
-    /// L-W1: 01:30 UTC on the 13th is the evening of the 12th in Winnipeg. A
+    /// L-W1: 01:30 UTC on the 13th is the evening of the 12th in Chicago. A
     /// receipt with no readable date takes the day it arrived where the user is.
     #[tokio::test]
     async fn the_arrival_day_is_the_users_not_utcs() {
@@ -1160,7 +1160,7 @@ mod tests {
         let set = NewEvent::config_set(
             "d1",
             ConfigKey::AssistantCheckInTimezone,
-            Some(ConfigValue::Text("America/Winnipeg".into())),
+            Some(ConfigValue::Text("America/Chicago".into())),
         )
         .unwrap();
         let stored = SurrealEventStore::new(db.clone())
@@ -1246,7 +1246,7 @@ mod tests {
             .to_vec()
     }
 
-    /// The 2026-10-07 shape: a promo with no money in it, read as an Amazon order
+    /// The 2026-10-07 shape: a promo with no money in it, read as an online-store order
     /// in placeholder prices. A receipt label does not save it; the label was
     /// invented with the rest.
     #[tokio::test]

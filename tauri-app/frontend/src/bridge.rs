@@ -2076,7 +2076,7 @@ pub async fn invoke_extract_document(
         let unverified = hint == "paystub";
         Ok(ExtractedDraft {
             date: Some("2026-05-17".into()),
-            description: Some("Loblaws — Groceries".into()),
+            description: Some("Greenfield — Groceries".into()),
             postings: vec![
                 ExtractedPostingView {
                     account_hint: Some("Expenses:Groceries".into()),
@@ -2210,11 +2210,11 @@ pub async fn invoke_record_transaction(draft: TransactionFormDraft) -> Result<()
 /// uncategorized transfer (so empty-category state is visible), one image
 /// attachment (whose bytes are served by `invoke_fetch_attachment` below).
 #[cfg(feature = "mock")]
-const LOBLAWS_RECEIPT_SHA256: &str =
+const GREENFIELD_RECEIPT_SHA256: &str =
     "0000000000000000000000000000000000000000000000000000000000000001";
 
 #[cfg(feature = "mock")]
-const LOBLAWS_RECEIPT_BYTES: &[u8] = include_bytes!("mocks/receipt-loblaws.png");
+const GREENFIELD_RECEIPT_BYTES: &[u8] = include_bytes!("mocks/receipt-greenfield.png");
 /// A stand-in for a photographed page, so the archive's image branch renders
 /// something real rather than a broken-image icon during UI work.
 #[cfg(feature = "mock")]
@@ -2236,7 +2236,7 @@ fn mock_transactions() -> Vec<TransactionView> {
     }
     fn attachment(filename: &str, mime: &str, size: u64) -> serde_json::Value {
         serde_json::json!({
-            "sha256": LOBLAWS_RECEIPT_SHA256,
+            "sha256": GREENFIELD_RECEIPT_SHA256,
             "filename": filename,
             "mime_type": mime,
             "size": size,
@@ -2245,17 +2245,17 @@ fn mock_transactions() -> Vec<TransactionView> {
 
     vec![
         TransactionView {
-            id: "mock-loblaws".into(),
+            id: "mock-greenfield".into(),
             date: "2026-05-18".into(),
-            description: "Loblaws — weekly groceries".into(),
+            description: "Greenfield — weekly groceries".into(),
             postings: serde_json::Value::Array(vec![
                 posting("Expenses:Groceries", "42.18", "CAD"),
                 posting("Assets:Northwind:Cash", "-42.18", "CAD"),
             ]),
             attachment: Some(attachment(
-                "loblaws-2026-05-18.png",
+                "greenfield-2026-05-18.png",
                 "image/png",
-                LOBLAWS_RECEIPT_BYTES.len() as u64,
+                GREENFIELD_RECEIPT_BYTES.len() as u64,
             )),
             category: Some("groceries".into()),
             tags_top: vec!["food".into(), "recurring".into()],
@@ -2583,8 +2583,8 @@ pub async fn invoke_get_transaction(txn_id: &str) -> Result<Option<TransactionVi
 pub async fn invoke_fetch_attachment(sha256: &str) -> Result<Vec<u8>, String> {
     #[cfg(feature = "mock")]
     {
-        if sha256 == LOBLAWS_RECEIPT_SHA256 {
-            Ok(LOBLAWS_RECEIPT_BYTES.to_vec())
+        if sha256 == GREENFIELD_RECEIPT_SHA256 {
+            Ok(GREENFIELD_RECEIPT_BYTES.to_vec())
         } else if let Some(bytes) = mock_document_bytes(sha256) {
             Ok(bytes)
         } else {

@@ -4,10 +4,10 @@
 live in `project.md` § Decisions in force, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`),
 rationale in `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
-## ▶ NEXT ACTION — his pick: the identity scrub [0072], or the logbooks [0085]–[0088]
-Notifications are built through slice 4 (his ruling 2026-11-15, `project.md` § Notifications).
-Dev runs it all with ntfy on (`omni-dev-alerts`); its first daily summary, 19:00 check-in time,
-is the end-to-end check.
+## ▶ NEXT ACTION — ask him: logbook groundwork, or hold until 1.2.4
+Notifications are built through slice 4 and the identity scrub [0072] is done (CI on the
+pushed head). Dev runs it all with ntfy on (`omni-dev-alerts`); its first daily summary,
+19:00 check-in time, is the end-to-end check.
 - The audit trail for the stretch: overlay `DECISION_LOG_2026-11-13.md`.
 - Logbooks: load `writing-posts` (from `~/.dotfiles/claude/skills/`, not linked on the WSL box).
 
@@ -22,6 +22,7 @@ and writes to live data are his to run (the permission check refuses mine), so h
 from the paired branch, with `ci.yml -f public_ref=<full SHA>` before any build. Live tools: `~/omni-dev-tools/`.
 
 ## ⛔ Waiting on him
+- **Rename four real fixtures** on the machine holding `.reference/`, [0093]: commands in the overlay log.
 - **Logbook prose** from the four scaffolds in `logbook/_drafts/` (gitignored, on the WSL box only).
 - **His decisions, `tasks.md` § Waiting on his decision:** [0003]–[0016], unchanged.
 - **Promoting ~11 general feedback notes to `~/.claude/rules/`:** the always-loaded tier is at 315 of

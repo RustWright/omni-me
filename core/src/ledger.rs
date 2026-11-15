@@ -466,7 +466,7 @@ account Assets:Cash  ; commodity:CAD
         let cases = [
             ("status marker", "**SAMPLE PAYEE - GENERIC MEMO**"),
             ("pending marker", "!URGENT VENDOR"),
-            ("leading code paren", "(refund) Amazon"),
+            ("leading code paren", "(refund) Shopwell"),
             ("embedded semicolon", "VENDOR ;ETF: Bought 2.0000 shares"),
             ("embedded newline", "LINE ONE\nLINE TWO"),
             ("empty", ""),

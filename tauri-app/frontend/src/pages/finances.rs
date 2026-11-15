@@ -2539,7 +2539,7 @@ fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -
                 input {
                     class: "w-full px-3 py-2 bg-obsidian-sidebar border border-obsidian-border/10 rounded-md text-obsidian-text outline-none focus:border-obsidian-accent",
                     r#type: "text",
-                    placeholder: "Loblaws — Groceries",
+                    placeholder: "Greenfield — Groceries",
                     value: "{description.read()}",
                     oninput: move |e| description.set(e.value().clone()),
                 }
@@ -8612,7 +8612,7 @@ mod tests {
         DraftTransactionView {
             external_id: String::new(),
             date: "2026-09-26".into(),
-            description: "Walmart".into(),
+            description: "Brightmart".into(),
             postings: postings
                 .iter()
                 .map(|(account, amount)| PostingInput {
@@ -8625,7 +8625,7 @@ mod tests {
         }
     }
 
-    /// The shapes of a real Walmart order's emails: a priced confirmation and a
+    /// The shapes of a real retail order's emails: a priced confirmation and a
     /// shipping notice whose only leg is `Unmatched -0`.
     #[test]
     fn charge_total_sums_the_charge_side_and_says_none_for_an_empty_email() {

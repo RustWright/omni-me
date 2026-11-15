@@ -396,7 +396,7 @@ mod tests {
 
     #[test]
     fn the_payee_is_the_first_real_word() {
-        assert_eq!(payee_word("Tim Hortons lunch").as_deref(), Some("tim"));
+        assert_eq!(payee_word("Maple Cafe lunch").as_deref(), Some("maple"));
         assert_eq!(payee_word("UBER *TRIP").as_deref(), Some("uber"));
         assert_eq!(payee_word("A b"), None);
     }
@@ -420,7 +420,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let entry = "2026-10-11 Tim Hortons lunch\n    Expenses:Food  14.50 CAD\n    \
+        let entry = "2026-10-11 Maple Cafe lunch\n    Expenses:Food  14.50 CAD\n    \
                      Assets:Cash  -14.50 CAD\n";
         let err = check_record(
             &db,
@@ -433,7 +433,7 @@ mod tests {
         assert_eq!(unknown.len(), 2);
         assert_eq!(unknown[0]["closest"][0], "Expenses:Food:Dining");
 
-        let ok = "2026-10-11 Tim Hortons lunch\n    Expenses:Food:Dining  14.50 CAD\n    \
+        let ok = "2026-10-11 Maple Cafe lunch\n    Expenses:Food:Dining  14.50 CAD\n    \
                   Assets:NonRegistered:CAD  -14.50 CAD\n";
         assert!(
             check_record(

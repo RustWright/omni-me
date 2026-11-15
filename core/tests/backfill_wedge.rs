@@ -27,7 +27,7 @@ const REPORT_EVERY: usize = 250;
 /// a mailbox backfill is where they come from — a uniform stream of small notes
 /// is not what the phone was actually applying.
 const DOCUMENT_EVERY: usize = 40;
-/// Matches the archived Walmart/Instacart `.eml` payloads.
+/// Matches the archived retail and grocery-delivery `.eml` payloads.
 const DOCUMENT_TEXT_BYTES: usize = 38_000;
 
 fn synthetic_events(count: usize) -> Vec<Event> {

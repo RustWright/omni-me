@@ -467,7 +467,7 @@ mod tests {
         let body = r#"{
             "data": {
                 "transactions": [
-                    {"date": "2026-06-15", "amount": "-87.42", "memo": "Loblaws", "ref": "T1"},
+                    {"date": "2026-06-15", "amount": "-87.42", "memo": "Greenfield", "ref": "T1"},
                     {"date": "2026-06-16", "amount": 1200.00, "memo": "Paycheck", "ref": "T2"}
                 ]
             }
@@ -480,7 +480,7 @@ mod tests {
         assert_eq!(drafts.len(), 2);
         let d0 = &drafts[0];
         assert_eq!(d0.date, NaiveDate::from_ymd_opt(2026, 6, 15).unwrap());
-        assert_eq!(d0.description, "Loblaws");
+        assert_eq!(d0.description, "Greenfield");
         assert_eq!(d0.external_id, "my-rest-T1");
         assert_eq!(d0.postings[0].account, "Assets:MyBank:Checking");
         assert_eq!(d0.postings[0].amount, Decimal::from_str("-87.42").unwrap());
@@ -505,7 +505,7 @@ mod tests {
 
     #[test]
     fn fallback_external_id_is_stable_without_id_field() {
-        let body = r#"[{"date": "2026-06-15", "amount": "-87.42", "memo": "Loblaws"}]"#;
+        let body = r#"[{"date": "2026-06-15", "amount": "-87.42", "memo": "Greenfield"}]"#;
         let f = fields(None);
         let a = parse_json(body, &cfg(&f, "")).unwrap().drafts;
         let b = parse_json(body, &cfg(&f, "")).unwrap().drafts;

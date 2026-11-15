@@ -140,7 +140,7 @@ Each element is a `DraftTransaction` (the same type the review screen already st
 {
   "external_id": "northwind-txn-abc-123",
   "date": "2026-06-15",
-  "description": "Loblaws",
+  "description": "Greenfield",
   "postings": [
     {"account":"Assets:Northwind:Cash","commodity":"CAD","amount":"-87.42","fx_rate":null,"tags":[]},
     {"account":"Unmatched","commodity":"CAD","amount":"87.42","fx_rate":null,"tags":[]}

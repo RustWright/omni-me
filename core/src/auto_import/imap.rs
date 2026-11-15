@@ -693,7 +693,7 @@ mod tests {
             }),
             Box::new(NeedleHandler {
                 name: "receipts".into(),
-                needle: "@amazon.ca".into(),
+                needle: "@shopwell.example".into(),
             }),
         ];
         let msg = make_message(101, "noreply@meridian.example");
@@ -733,7 +733,7 @@ mod tests {
         fetcher.push_response(
             vec![
                 make_message(101, "noreply@meridian.example"), // routes to meridian
-                make_message(102, "ship@amazon.ca"),           // routes to receipts
+                make_message(102, "ship@shopwell.example"),    // routes to receipts
                 make_message(103, "random@example.com"),       // no handler
             ],
             Some(103),
@@ -745,7 +745,7 @@ mod tests {
             }),
             Box::new(NeedleHandler {
                 name: "receipts".into(),
-                needle: "@amazon.ca".into(),
+                needle: "@shopwell.example".into(),
             }),
         ];
         let cursor = FetchCursor {
@@ -779,13 +779,13 @@ mod tests {
         fetcher.push_response(
             vec![
                 make_message(101, "Facebook <notification@facebookmail.com>"),
-                make_message(102, "ship@amazon.ca"),
+                make_message(102, "ship@shopwell.example"),
             ],
             Some(102),
         );
         let handlers: Vec<Box<dyn ImapHandler>> = vec![Box::new(NeedleHandler {
             name: "receipts".into(),
-            needle: "@amazon.ca".into(),
+            needle: "@shopwell.example".into(),
         })];
         let cursor = FetchCursor {
             last_seen_uid: Some(100),

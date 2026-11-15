@@ -215,7 +215,7 @@ entry stays in `tasks.md` · **SUPERSEDED** overtaken by events, with the reason
 
 - [ ] **ANDROID SHOWS THE WRONG DAY: "Today" resolves to the UTC date, not the local one.**
   Caught by comparing the two platforms side by side at 23:42 CDT on 2026-08-30 — both devices
-  report `America/Winnipeg`, both agree at the OS level (`adb shell date` → `Sun Aug 30 23:42
+  report the local zone, both agree at the OS level (`adb shell date` → `Sun Aug 30 23:42
   CDT 2026`), but:
   **phone app "Today" = `2026-08-31`** (the UTC date) vs **desktop app "Today" = `2026-08-30`**
   (correct). So from ~19:00 local onward, every journal entry written on the phone is filed
@@ -230,7 +230,7 @@ entry stays in `tasks.md` · **SUPERSEDED** overtaken by events, with the reason
   write-through effect, so the next launch restores it and "the error outlived the fix."
   **Not yet root-caused — do not assume which half fails.** Candidates, in order: (1) the
   frontend `tz_signal` never resolves on Android, so the re-anchor has nothing to fire on — note
-  the BACKEND does know the zone (`App initialized ... timezone=America/Winnipeg` in logcat), so
+  the BACKEND does know the zone (`App initialized ... timezone=<local zone>` in logcat), so
   the gap would be the invoke, not detection; (2) the re-anchor fires but the
   `selected_date.peek() == anchor` guard declines to move it; (3) nav restore re-seeds the bad
   date before the effect runs. Diagnose live with WebView DevTools over adb
@@ -398,29 +398,29 @@ entry stays in `tasks.md` · **SUPERSEDED** overtaken by events, with the reason
 
 
 
-## [DONE] Wise proposed 4 already-ledgered rows (wipe sequencing)
+## [DONE] Globepay proposed 4 already-ledgered rows (wipe sequencing)
 
 *Archived from `tasks.md` lines 488-513.*
 
-- [x] **Wise proposed 4 rows already in the ledger — NOT a dedup bug. A wipe-sequencing artifact,
+- [x] **Globepay proposed 4 rows already in the ledger — NOT a dedup bug. A wipe-sequencing artifact,
   and the runbook lesson is the keeper.** Reported from the review inbox: one correct new row
   (2026-08-31 transfer) alongside four already-recorded ones from 2026-08-28 and earlier.
   **What the timestamps prove:** the poller ticked at **06:41:11**, seconds after the container
   restarted on the freshly wiped volume, when the box held **zero** events. The imported ledger
   did not land until **06:55:36** (the seed push). So all three of the source's dedup filters were
-  blind by construction — no `wise-id:` tags yet, no `autoimport-id:` provenance, no prior
+  blind by construction — no `globepay-id:` tags yet, no `autoimport-id:` provenance, no prior
   proposals (the wipe erased those). The **08:41:18 tick appended 0 events**, confirming dedup
-  works now that the 150 `wise-id`-tagged transactions are present.
+  works now that the 150 `globepay-id`-tagged transactions are present.
   **RUNBOOK — for any future wipe: pause the auto-import sources before wiping, or seed the box
   before the first poll.** The gap between "container healthy" and "seed pushed" was ~14 minutes,
   and a source on a 30-min interval fires inside it. The health gate passing is not the same as
   the box being ready for a poller.
   **Two dead ends recorded so they are not re-walked.** (1) `budget.journal` shows only 5
-  `wise-id` strings against 155 in the ledger, which looks exactly like the importer dropping
+  `globepay-id` strings against 155 in the ledger, which looks exactly like the importer dropping
   header tags — it is not: the rendered projection simply does not emit top-level tags, and the DB
   is the artifact that matters. Verified in the event payloads: `tags:
-  ["wise-id:BALANCE-5957939544"]`, **150** events carrying a `wise-id` top tag, matching the count
-  `wise.rs` documents. (2) The repeated `BALANCE-…`/`CARD-…` external ids in one batch are not
+  ["globepay-id:BALANCE-0000000001"]`, **150** events carrying a `globepay-id` top tag, matching the count
+  `globepay.rs` documents. (2) The repeated `BALANCE-…`/`CARD-…` external ids in one batch are not
   duplicates but the **two legs** of currency-crossing transactions (`-404.83 USD` / `+559.47 CAD`;
   a card charge funded from both balances). Each leg is a real balance movement.
   **Latent risk worth keeping in view:** dedup keys on the *reference number*, which multi-leg
@@ -592,7 +592,7 @@ the archive. Step 9 is below.
      collisions + 19 scan errors. Reconcile **0 diffs** again on the real DB; `probe_realdb` all
      anchors OK, net worth **83 290.52 CAD** over 17 accounts, the same 2 known drops, 0 partials.
      (5) **Seed** — `push_local` sent **12 277**; an independent `/sync/pull` probe reads **12 278**
-     on the box under a single device id. The extra is genuine: the Wise poller proposed a real
+     on the box under a single device id. The extra is genuine: the Globepay poller proposed a real
      draft seconds after the container restarted. No test-phone events, no stale poller events.
      The brokerage source correctly reports `needs_reauth` — `ws-session.json` lived on the volume,
      so it needs an in-app **Reconnect** with the OTP once the phone is up.

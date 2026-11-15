@@ -2426,7 +2426,7 @@ mod tests {
         let payload = serde_json::json!({
             "txn_id": "01JKTXN0000000000000000000",
             "date": "2026-05-16",
-            "description": "Loblaws grocery run",
+            "description": "Greenfield grocery run",
             "postings": [
                 {
                     "account": "Assets:Checking:Northwind",
@@ -2443,7 +2443,7 @@ mod tests {
             ],
             "attachment": {
                 "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-                "filename": "loblaws-2026-05-16.jpg",
+                "filename": "greenfield-2026-05-16.jpg",
                 "mime_type": "image/jpeg",
                 "size": 184320
             }
@@ -2547,7 +2547,7 @@ mod tests {
     fn validate_transaction_updated() {
         let payload = serde_json::json!({
             "txn_id": "01JKTXN0000000000000000000",
-            "changes": { "description": "Loblaws — corrected" }
+            "changes": { "description": "Greenfield — corrected" }
         });
         assert!(validate_payload(&EventType::TransactionUpdated, &payload).is_ok());
     }

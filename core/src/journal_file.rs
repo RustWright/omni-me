@@ -374,8 +374,8 @@ fn unrenderable_reason(t: &TransactionRecordedPayload) -> Option<String> {
 ///   dominant bank-statement shape — parses as status `*` plus payee `*PAYEE**`,
 ///   and `ledger-parser` v6 rejects a marker not followed by whitespace, which
 ///   aborts the whole file);
-/// * a leading `(` opens a transaction code, so `(refund) Amazon` re-parses as
-///   code `refund` with the payee reduced to `Amazon`;
+/// * a leading `(` opens a transaction code, so `(refund) Shopwell` re-parses as
+///   code `refund` with the payee reduced to `Shopwell`;
 /// * a `;` starts a header comment, silently truncating the payee;
 /// * an embedded newline ends the entry, orphaning the postings that follow;
 /// * an empty description leaves `preceded(space1, parse_payee)` nothing to
@@ -773,7 +773,7 @@ mod tests {
         let t = TransactionRecordedPayload {
             txn_id: "01JKTXN".into(),
             date: NaiveDate::from_ymd_opt(2026, 5, 16).unwrap(),
-            description: "Loblaws grocery run".into(),
+            description: "Greenfield grocery run".into(),
             postings: vec![
                 cad("-87.42"),
                 expense_posting("Expenses:Groceries", "87.42", vec![]),
@@ -784,7 +784,7 @@ mod tests {
         };
         let rendered = render_transaction(&t);
         let expected = "\
-2026-05-16 Loblaws grocery run
+2026-05-16 Greenfield grocery run
     ; txn_id:01JKTXN
     Assets:Checking:Northwind  -87.42 CAD
     Expenses:Groceries  87.42 CAD
@@ -798,7 +798,7 @@ mod tests {
         let t = TransactionRecordedPayload {
             txn_id: "01JKTXN".into(),
             date: NaiveDate::from_ymd_opt(2026, 5, 16).unwrap(),
-            description: "Loblaws".into(),
+            description: "Greenfield".into(),
             postings: vec![
                 cad("-5.00"),
                 expense_posting("Expenses:Snacks", "5.00", vec![]),

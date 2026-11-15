@@ -419,7 +419,8 @@ mod tests {
 
     #[test]
     fn header_mapped_rows_become_balanced_drafts() {
-        let content = "Date,Amount,Memo\n2026-06-15,-87.42,Loblaws\n2026-06-16,1200.00,Paycheck\n";
+        let content =
+            "Date,Amount,Memo\n2026-06-15,-87.42,Greenfield\n2026-06-16,1200.00,Paycheck\n";
         let columns = cols(None);
         let drafts = parse_csv(content, &cfg(&columns, true, DEFAULT_DATE_FORMAT))
             .unwrap()
@@ -428,7 +429,7 @@ mod tests {
         assert_eq!(drafts.len(), 2);
         let d0 = &drafts[0];
         assert_eq!(d0.date, NaiveDate::from_ymd_opt(2026, 6, 15).unwrap());
-        assert_eq!(d0.description, "Loblaws");
+        assert_eq!(d0.description, "Greenfield");
         assert_eq!(d0.postings.len(), 2);
         assert_eq!(d0.postings[0].account, "Assets:MyBank:Checking");
         assert_eq!(d0.postings[0].amount, Decimal::from_str("-87.42").unwrap());
@@ -440,7 +441,7 @@ mod tests {
 
     #[test]
     fn id_column_drives_external_id() {
-        let content = "Date,Amount,Memo,Ref\n2026-06-15,-87.42,Loblaws,TXN-001\n";
+        let content = "Date,Amount,Memo,Ref\n2026-06-15,-87.42,Greenfield,TXN-001\n";
         let columns = CsvColumns {
             date: "Date".into(),
             amount: "Amount".into(),
@@ -455,7 +456,7 @@ mod tests {
 
     #[test]
     fn external_id_is_stable_across_reparse_without_id_column() {
-        let content = "Date,Amount,Memo\n2026-06-15,-87.42,Loblaws\n";
+        let content = "Date,Amount,Memo\n2026-06-15,-87.42,Greenfield\n";
         let columns = cols(None);
         let a = parse_csv(content, &cfg(&columns, true, DEFAULT_DATE_FORMAT))
             .unwrap()
@@ -470,7 +471,7 @@ mod tests {
 
     #[test]
     fn no_header_uses_numeric_indices() {
-        let content = "2026-06-15,-87.42,Loblaws\n";
+        let content = "2026-06-15,-87.42,Greenfield\n";
         let columns = CsvColumns {
             date: "0".into(),
             amount: "1".into(),
@@ -481,7 +482,7 @@ mod tests {
             .unwrap()
             .drafts;
         assert_eq!(drafts.len(), 1);
-        assert_eq!(drafts[0].description, "Loblaws");
+        assert_eq!(drafts[0].description, "Greenfield");
         assert_eq!(
             drafts[0].postings[0].amount,
             Decimal::from_str("-87.42").unwrap()
@@ -490,7 +491,7 @@ mod tests {
 
     #[test]
     fn missing_header_column_is_not_configured() {
-        let content = "Date,Amount,Memo\n2026-06-15,-87.42,Loblaws\n";
+        let content = "Date,Amount,Memo\n2026-06-15,-87.42,Greenfield\n";
         let columns = CsvColumns {
             date: "Date".into(),
             amount: "NoSuchCol".into(),
@@ -538,7 +539,7 @@ mod tests {
 
     #[test]
     fn custom_date_format_is_honored() {
-        let content = "Date,Amount,Memo\n06/15/2026,-87.42,Loblaws\n";
+        let content = "Date,Amount,Memo\n06/15/2026,-87.42,Greenfield\n";
         let columns = cols(None);
         let drafts = parse_csv(content, &cfg(&columns, true, "%m/%d/%Y"))
             .unwrap()

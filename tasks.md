@@ -37,6 +37,9 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 - [0079] **Slice 1's live half:** ntfy is up on the box (2026-11-15), both logins made, the token
   in both credentials files, the phone subscribed. Left: live's two `.env` lines (overlay
   `deploy/ntfy/README.md` step 3) at the 1.2.4 deploy, [0002]. [S, USER]
+- [0093] **Rename four real fixtures in `.reference/imap poller/`** on the machine that holds
+  them, to the role names the tests now read ([0072], 2026-11-15). Commands in the overlay's
+  `DECISION_LOG_2026-11-13.md`; until then those tests skip there. [XS, USER]
 - [0085] **Logbook: the assistant asks before it acts.** Scaffold in `logbook/_drafts/` (device-
   local, gitignored). Demo: push `demo/assistant`; [0084] held at 1.5 MB brotli. Jan deadline. [M]
 - [0086] **Logbook: receipts from email.** Scaffold in `logbook/_drafts/`. Evidence: a Settings →
@@ -227,12 +230,6 @@ generic IMAP config source.
 - [0071] **Staleness signals for artifacts beyond `NEXT.md`.** The `tasks.md` size cap
   (dotfiles `944036d`) is the first one. Too
   many canaries and they get skimmed, so thresholds differ per artifact. [S]
-- [0072] **Scrub the private identity from this PUBLIC repo** (authorised; at the end of an
-  autonomous session, never first). Known sites: `docs/src/auto-import.md:6` and the doc
-  comments and fixtures in `core/src/auto_import/receipts.rs`. Sweep `docs/` and `.archive/`.
-  Rewrite each name to the role it plays, and check every fixture's assertion too. Sized
-  2026-11-13: ~90 hits in 28 files (merchants, the city, its utility), plus the mock image
-  `mocks/receipt-loblaws.png`; the denylist catches none of them. Its own pass. [L]
 - [0073] **Revise the comment convention** (own session, design-first), then the sweep it
   gates. The routing is right; the length and voice failed. [L]
 

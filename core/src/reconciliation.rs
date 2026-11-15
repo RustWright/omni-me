@@ -409,11 +409,11 @@ mod tests {
     #[test]
     fn finds_obvious_pair_same_amount_opposite_sign_same_day() {
         let txns = vec![
-            u("a", "2026-05-15", "Loblaws Groceries", "42.18", None),
+            u("a", "2026-05-15", "Greenfield Groceries", "42.18", None),
             u(
                 "b",
                 "2026-05-15",
-                "LOBLAWS",
+                "GREENFIELD",
                 "-42.18",
                 Some("summit-2026-05"),
             ),
@@ -426,7 +426,7 @@ mod tests {
         assert!(cands[0].signals.sign_inversion);
         assert_eq!(cands[0].signals.days_apart, 0);
         assert!(cands[0].clears_statement);
-        // Same-day perfect amount + token-overlap on "loblaws" gives high score.
+        // Same-day perfect amount + token-overlap on "greenfield" gives high score.
         assert!(cands[0].score > 0.8);
     }
 
@@ -549,7 +549,7 @@ mod tests {
     #[test]
     fn description_similarity_full_overlap_is_one() {
         assert_eq!(
-            jaccard_token_similarity("Loblaws Groceries", "loblaws groceries"),
+            jaccard_token_similarity("Greenfield Groceries", "greenfield groceries"),
             1.0
         );
     }
@@ -561,10 +561,10 @@ mod tests {
 
     #[test]
     fn description_similarity_partial_overlap() {
-        // {loblaws, groceries} ∩ {loblaws, market} = {loblaws} = 1
-        // {loblaws, groceries, market}                          = 3
+        // {greenfield, groceries} ∩ {greenfield, market} = {greenfield} = 1
+        // {greenfield, groceries, market}                                 = 3
         // → 1/3 ≈ 0.333
-        let s = jaccard_token_similarity("Loblaws Groceries", "Loblaws Market");
+        let s = jaccard_token_similarity("Greenfield Groceries", "Greenfield Market");
         assert!((s - 1.0 / 3.0).abs() < 1e-9);
     }
 

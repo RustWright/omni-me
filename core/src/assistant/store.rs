@@ -1274,7 +1274,7 @@ mod tests {
         for (id, date, d) in [
             ("t1", "2026-09-02", "UBER *TRIP"),
             ("t2", "2026-09-25", "Uber trip home"),
-            ("t3", "2026-09-30", "Tim Hortons"),
+            ("t3", "2026-09-30", "Maple Cafe"),
         ] {
             seed_transaction(&db, id, d, false).await;
             db.query("UPDATE type::record('transactions', $id) SET date = $date")

@@ -287,7 +287,7 @@ mod tests {
         ExtractionResult {
             date: NaiveDate::from_ymd_opt(2026, 5, 16),
             date_as_printed: None,
-            description: Some("Loblaws".into()),
+            description: Some("Greenfield".into()),
             postings,
             total,
             confidence: conf,

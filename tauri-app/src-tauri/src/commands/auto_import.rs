@@ -887,14 +887,14 @@ mod tests {
         let mut rows = vec![
             DraftCorrection {
                 index: 7,
-                description: "  KDP royalty ".into(),
+                description: "  Royalty payment ".into(),
                 ..correction(0, "Income:Royalties")
             },
             correction(3, "Expenses:Health"),
         ];
         check_added(&mut rows).unwrap();
         assert_eq!((rows[0].index, rows[1].index), (0, 1));
-        assert_eq!(rows[0].description, "KDP royalty");
+        assert_eq!(rows[0].description, "Royalty payment");
 
         let mut lopsided = vec![correction(0, "Expenses:Health")];
         lopsided[0].postings.pop();

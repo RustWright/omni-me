@@ -453,7 +453,7 @@ Features marked with 🔧 need external services. Features marked with 📱 are 
 **Reverse geocoding service:** HERE Maps (250K requests/month free, no billing setup, better privacy than Google).
 - Raw coordinates captured instantly from Tauri GPS plugin (no network needed)
 - HERE API called in background when online → returns human-readable address
-- Both stored: `{lat, lon, place_name: "Tim Hortons, 277 King St W, Toronto"}`
+- Both stored: `{lat, lon, place_name: "Maple Cafe, 277 King St W, Toronto"}`
 - Coordinates are ground truth; place name is derived convenience (can re-geocode if wrong)
 
 **Map display:** Leaflet.js (open source, MIT) with OpenStreetMap tiles (free). Plots event dots on map. Tap dot → see all events from that location. Supports chronological and spatial views.

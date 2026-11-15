@@ -532,10 +532,10 @@ mod tests {
     fn receipt_mapping_uses_account_hint_when_present() {
         let result = result_with(
             NaiveDate::from_ymd_opt(2026, 5, 16),
-            Some("Audible"),
+            Some("Audiobook Store"),
             vec![posting(Some("Expenses:Books"), "CAD", "6.99")],
         );
-        let drafts = receipt_extraction_to_drafts(&result, "audible-uid-2105");
+        let drafts = receipt_extraction_to_drafts(&result, "audiobooks-uid-2105");
         assert_eq!(drafts.len(), 1);
         let p = &drafts[0].postings;
         assert_eq!(p[0].account, "Expenses:Books");
@@ -602,7 +602,7 @@ mod tests {
     fn a_model_supplied_payment_leg_becomes_one_draft_not_two() {
         let result = result_with(
             NaiveDate::from_ymd_opt(2026, 9, 18),
-            Some("Walmart order delivered"),
+            Some("Brightmart order delivered"),
             vec![
                 posting(Some("Expenses:Groceries"), "CAD", "99.93"),
                 posting(Some("Liabilities:Mastercard"), "CAD", "-99.93"),
@@ -629,7 +629,7 @@ mod tests {
     fn ordinary_line_items_are_unaffected_by_the_balanced_path() {
         let result = result_with(
             NaiveDate::from_ymd_opt(2026, 9, 18),
-            Some("Walmart"),
+            Some("Brightmart"),
             vec![
                 posting(None, "CAD", "4.49"),
                 posting(None, "CAD", "6.79"),
@@ -666,7 +666,7 @@ mod tests {
     fn a_balanced_draft_keeps_the_deterministic_id_shape() {
         let result = result_with(
             NaiveDate::from_ymd_opt(2026, 9, 18),
-            Some("Walmart"),
+            Some("Brightmart"),
             vec![
                 posting(Some("Expenses:Groceries"), "CAD", "99.93"),
                 posting(Some("Liabilities:Mastercard"), "CAD", "-99.93"),
@@ -680,13 +680,13 @@ mod tests {
 
     /// Two currencies that happen to cancel numerically are not one balanced
     /// transaction. `already_balanced` is per-commodity, and this pins it.
-    /// The oxio refund of 2026-09-29 was booked as a 57.46 charge, the same
+    /// An internet provider's refund of 2026-09-29 was booked as a 57.46 charge, the same
     /// sign as the bank's deposit, so the two could never pair.
     #[test]
     fn a_refund_runs_backwards() {
         let mut result = result_with(
             NaiveDate::from_ymd_opt(2026, 9, 29),
-            Some("Refund from oxio"),
+            Some("Refund from the ISP"),
             vec![posting(Some("Expenses:Utilities:Internet"), "CAD", "57.46")],
         );
         result.refund = Some(true);

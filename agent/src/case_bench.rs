@@ -75,7 +75,7 @@ const CASES: &[Case] = &[
     },
     Case {
         id: "R3-5 R4-2 record",
-        request: "I paid 14.50 CAD cash at Tim Hortons today for lunch. Record it.",
+        request: "I paid 14.50 CAD cash at Maple Cafe today for lunch. Record it.",
         checks: &[
             Check::Proposes("transaction.record", 1),
             Check::EntryDatedToday,
@@ -482,7 +482,7 @@ mod tests {
 
     #[test]
     fn an_entry_yields_its_date_and_every_posting_account() {
-        let entry = "2026-10-11 Tim Hortons\n    Expenses:Food:Dining  14.50 CAD\n    \
+        let entry = "2026-10-11 Maple Cafe\n    Expenses:Food:Dining  14.50 CAD\n    \
                      Assets:Cash\n    ; a comment\n";
         let (date, accounts) = entry_parts(entry);
         assert_eq!(date.as_deref(), Some("2026-10-11"));

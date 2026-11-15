@@ -100,7 +100,7 @@ pub fn parse_eml(bytes: &[u8]) -> Result<ParsedMessage, MimeError> {
         .filter(readable);
     // The HTML part too when the text part is empty of words: one promo sender
     // ships a text part of just ".", and the extractor, handed nothing, invented a
-    // whole Amazon order (2026-10-07).
+    // whole online-store order (2026-10-07).
     let body_text = plain
         .or_else(|| {
             msg.body_html(0)
@@ -253,13 +253,15 @@ mod tests {
 
     /// ⚠️ Three of the five real fixtures carry no attachment at all — the
     /// receipt is the body. This is why the email itself has to be archived:
-    /// attachment-only archiving files nothing for these.
+    /// attachment-only archiving files nothing for these. The real files are
+    /// named for their role, not their sender, to keep the sender out of this
+    /// public repo; a copy under its original name skips here.
     #[test]
     fn an_inline_body_receipt_has_nothing_to_catalogue_but_itself() {
         for name in [
-            "Thanks, your order is complete_audible.eml",
-            "Your Walmart order was delivered.eml",
-            "Manitoba Hydro Online Account - New Online Bill.eml",
+            "inline-body-audiobook-order.eml",
+            "inline-body-retail-delivery.eml",
+            "inline-body-utility-bill.eml",
         ] {
             let Some(bytes) = read_fixture(name) else {
                 eprintln!("fixture {name} missing — skipping");
@@ -328,44 +330,39 @@ mod tests {
     }
 
     #[test]
-    fn parses_inline_body_audible_eml() {
-        let bytes = match read_fixture("Thanks, your order is complete_audible.eml") {
+    fn parses_inline_body_audiobook_eml() {
+        let bytes = match read_fixture("inline-body-audiobook-order.eml") {
             Some(b) => b,
             None => {
                 eprintln!("fixture missing — skipping");
                 return;
             }
         };
-        let parsed = parse_eml(&bytes).expect("audible eml parses");
+        let parsed = parse_eml(&bytes).expect("audiobook eml parses");
+        assert!(parsed.from.contains('@'), "from: {}", parsed.from);
         assert!(
-            parsed.from.to_lowercase().contains("audible"),
-            "from: {}",
-            parsed.from
+            !parsed.body_text.is_empty(),
+            "audiobook body must yield text"
         );
-        assert!(!parsed.body_text.is_empty(), "audible body must yield text");
         // Body should contain the order detail somewhere
         let body_lower = parsed.body_text.to_lowercase();
         assert!(
-            body_lower.contains("audible") || body_lower.contains("order"),
-            "audible body missing expected content"
+            body_lower.contains("order"),
+            "audiobook body missing expected content"
         );
     }
 
     #[test]
-    fn parses_oxio_invoice_eml() {
-        let bytes = match read_fixture("📫 oxio invoice available..eml") {
+    fn parses_isp_invoice_eml() {
+        let bytes = match read_fixture("📫 isp invoice available..eml") {
             Some(b) => b,
             None => {
                 eprintln!("fixture missing — skipping");
                 return;
             }
         };
-        let parsed = parse_eml(&bytes).expect("oxio eml parses");
-        assert!(
-            parsed.from.to_lowercase().contains("oxio"),
-            "oxio from: {}",
-            parsed.from
-        );
+        let parsed = parse_eml(&bytes).expect("isp eml parses");
+        assert!(parsed.from.contains('@'), "isp from: {}", parsed.from);
         assert!(!parsed.body_text.is_empty());
     }
 
@@ -375,12 +372,12 @@ mod tests {
         let pad = "\u{034F} ".repeat(33);
         let text = format!(
             "<body></body>{pad}\n{pad}\n{pad}\n\n\n \n\n----\nYour payment is complete\n\
-             Amount: $48.79\nFrom: General Checking \nTo: MANITOBA HYDRO\n\n\n\n \n\n----"
+             Amount: $48.79\nFrom: General Checking \nTo: CITY POWER\n\n\n\n \n\n----"
         );
         let clean = strip_invisible_padding(&text);
         assert!(!clean.contains('\u{034F}'));
         assert!(clean.len() < 200, "padding survived: {} bytes", clean.len());
-        assert!(clean.contains("Amount: $48.79\nFrom: General Checking\nTo: MANITOBA HYDRO"));
+        assert!(clean.contains("Amount: $48.79\nFrom: General Checking\nTo: CITY POWER"));
         assert!(!clean.contains("\n\n\n"));
     }
 
