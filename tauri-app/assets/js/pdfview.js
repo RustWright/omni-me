@@ -22,7 +22,13 @@ import * as pdfjsLib from "pdfjs-dist";
 // for desktop and the Android assets dir. A copy step that updates one leaves
 // the other rendering an older build, which is how a fixed bug reappears on one
 // platform only.
-pdfjsLib.GlobalWorkerOptions.workerSrc = "/assets/js/pdf.worker.bundle.js";
+//
+// Resolved beside this script's own URL, so a demo page served under a base path
+// finds it too. `currentScript` is only set while the bundle's top level runs.
+const ownSrc = document.currentScript && document.currentScript.src;
+pdfjsLib.GlobalWorkerOptions.workerSrc = ownSrc
+  ? new URL("pdf.worker.bundle.js", ownSrc).href
+  : "/assets/js/pdf.worker.bundle.js";
 
 // Pages are rendered at this CSS width; the canvas backing store is multiplied
 // by devicePixelRatio on top, so text stays sharp on a phone.

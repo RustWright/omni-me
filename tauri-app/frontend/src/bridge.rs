@@ -6025,7 +6025,12 @@ pub async fn invoke_correct_document_field(
 ) -> Result<(), String> {
     #[cfg(feature = "mock")]
     {
-        let _ = (document_id, key, value);
+        // Kept, so the corrected value is what the page reads back.
+        MOCK_CORRECTIONS.with(|c| {
+            let mut c = c.borrow_mut();
+            c.retain(|(d, k, _)| d != document_id || k != key);
+            c.push((document_id.into(), key.into(), value.into()));
+        });
         Ok(())
     }
     #[cfg(not(feature = "mock"))]
@@ -6306,7 +6311,40 @@ pub async fn invoke_confirm_document_purge(
 }
 
 #[cfg(feature = "mock")]
+thread_local! {
+    /// Corrections made in this page's lifetime, as `(document, key, value)`.
+    static MOCK_CORRECTIONS: std::cell::RefCell<Vec<(String, String, String)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The seeded documents with this session's corrections laid over them, the way
+/// core folds them: a person's value is `human` and verified, and an empty value
+/// removes the field.
+#[cfg(feature = "mock")]
 fn mock_documents() -> Vec<DocumentItem> {
+    let mut docs = mock_documents_seed();
+    MOCK_CORRECTIONS.with(|c| {
+        for (id, key, value) in c.borrow().iter() {
+            let Some(doc) = docs.iter_mut().find(|d| &d.document_id == id) else {
+                continue;
+            };
+            let fields = doc.fields.get_or_insert_with(Vec::new);
+            fields.retain(|f| &f.key != key);
+            if !value.is_empty() {
+                fields.push(crate::types::DocumentField {
+                    key: key.clone(),
+                    value: value.clone(),
+                    source: "human".into(),
+                    verified: true,
+                });
+            }
+        }
+    });
+    docs
+}
+
+#[cfg(feature = "mock")]
+fn mock_documents_seed() -> Vec<DocumentItem> {
     use crate::types::DocumentField;
 
     let parsed = |key: &str, value: &str, verified: bool| DocumentField {
