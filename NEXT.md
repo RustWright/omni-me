@@ -4,10 +4,11 @@
 live in `project.md` § Decisions in force, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`),
 rationale in `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
-## ▶ NEXT ACTION — [0087] search logbook: his call on the demo (port the ranking, or a screenshot)
-[0085] and [0088] are live on mylearnbase (`2c8bd13`, `c556942`), published by hand. Pattern: I
-draft from the scaffold in `logbook/_drafts/`, he edits, I publish. Prose must be plain from the
-first draft (mylearnbase `editorial/editing.md` § House style). Then [0086] receipts (no demo).
+## ▶ NEXT ACTION — his check of the [0087] search draft, then publish it
+Draft 1 is `logbook/_drafts/search-by-meaning.md`, with `search-answers.png` beside it (a
+screenshot, not a demo: `project.md` § Agent framework). [0085] and [0088] are live on
+mylearnbase (`2c8bd13`, `c556942`). Pattern: I draft, he edits, I publish by hand. Prose must be
+plain from the first draft (mylearnbase `editorial/editing.md` § House style). Then [0086].
 Dev's first daily summary (19:00 check-in time) is the ntfy end-to-end check.
 - The audit trail for the stretch: overlay `DECISION_LOG_2026-11-13.md`.
 - Logbooks: load `writing-posts` (from `~/.dotfiles/claude/skills/`, not linked on the WSL box).
