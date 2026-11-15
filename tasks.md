@@ -25,7 +25,8 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 - [0002] **Release 1.2.4, after [0001], his go.** Queue: `63728f7` (tax-authority notices
   file as statements; server) and `918a9d5` (retention review shows the counted-from date;
   server + app). Also on the branch since: the job contract and Settings → Jobs (`d6ded9e`),
-  ntfy alerts and quiet hours (`a9cd960`), the demo build (`dd0bc0c`), the daily summary. The
+  ntfy alerts and quiet hours (`a9cd960`), the demo build (`dd0bc0c`), the daily summary and
+  per-kind alert tiers with the weekly budget line. The
   server now folds the assistant projection: one ~4 min replay at that deploy, inside the gate.
   Add each new fix here. A fast-forward of public `main` closes the draft PR
   (#8), so open a new one after. [M, USER]
@@ -42,7 +43,6 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 - [0087] **Logbook: search by meaning.** Scaffold drafted. The mock bridge returns canned search
   results, so the demo needs a decision: port fusion to the browser, or lead with the bench. [M]
 - [0088] **Logbook: the document archive.** Scaffold drafted. Demo: push `demo/archive`. [M]
-- [0081] **Slice 3:** measure critical's weekly budget; over it, the summary asks to demote. [S]
 - [0082] **Slice 4, each ruled on its own:** large charge (threshold setting), new merchant
   (on/off), penalty-dated bills (no due date is modelled yet). Statement mismatch is [0050]. [L]
 

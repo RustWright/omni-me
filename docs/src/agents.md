@@ -241,6 +241,11 @@ last one sent. "New" is a difference of sets of ids, not of counts, because a cl
 a new one would cancel out in a count. It runs on the server, which therefore folds the
 assistant's proposals as well; the placement test enforces that.
 
+Critical has a budget of about three a week, measured and never enforced: alerts over it still
+go. When the last seven days sent more, the summary says so and names the noisiest kind. Each
+kind has a Critical or Review setting, and a kind set to Review stops interrupting and is listed
+in the summary instead. The measurement reads the stored episodes, so it needed no new storage.
+
 **The status view** is Settings → Jobs: one line per job with its health and last run, the last
 20 runs when expanded, and the jobs not yet on the contract listed beneath.
 

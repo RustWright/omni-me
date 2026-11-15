@@ -368,8 +368,9 @@ fn group_meta(group: ConfigGroup) -> (&'static str, Option<&'static str>) {
                 "Urgent alerts, such as a source that needs a code, are held during \
                  these hours and sent when they end. Once a day, at the summary hour, \
                  one silent notification lists what is waiting on review, and none \
-                 is sent when nothing new has arrived. Hours are in the check-in time \
-                 zone. Sent by the server through ntfy.",
+                 is sent when nothing new has arrived. An alert kind set to Review \
+                 waits for that summary instead of interrupting. Hours are in the \
+                 check-in time zone. Sent by the server through ntfy.",
             ),
         ),
         // Not "Assistant retrieval" any more: the turn budget governs the loop,

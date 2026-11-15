@@ -32,6 +32,12 @@ pub struct Waiting {
     pub suggestions: BTreeSet<String>,
     pub unmatched: BTreeSet<String>,
     pub purge: BTreeSet<String>,
+    /// Open alerts of a kind set to Review, by alert id, each with its line.
+    #[serde(default)]
+    pub alerts: BTreeMap<String, String>,
+    /// Set when the last 7 days sent more critical alerts than the budget.
+    #[serde(default)]
+    pub over_budget: Option<String>,
 }
 
 impl Waiting {
@@ -78,6 +84,11 @@ impl Waiting {
                 .map_err(|e| err(&e))?;
             w.purge = due.into_iter().map(|c| c.document_id).collect();
         }
+        for a in super::alerts::open_review_alerts(db).await? {
+            w.alerts
+                .insert(a.alert_id, format!("{}: {}", a.title, a.subject));
+        }
+        w.over_budget = super::alerts::over_budget(db, now).await?;
         Ok(w)
     }
 
@@ -86,14 +97,19 @@ impl Waiting {
             && self.suggestions.is_empty()
             && self.unmatched.is_empty()
             && self.purge.is_empty()
+            && self.alerts.is_empty()
+            && self.over_budget.is_none()
     }
 
-    /// Whether anything is here that the last summary did not list.
+    /// Whether anything is here that the last summary did not list. A changed
+    /// over-budget line is new: it carries this week's count.
     pub fn has_new_since(&self, last: &Waiting) -> bool {
         !self.batches.is_subset(&last.batches)
             || !self.suggestions.is_subset(&last.suggestions)
             || !self.unmatched.is_subset(&last.unmatched)
             || !self.purge.is_subset(&last.purge)
+            || self.alerts.keys().any(|id| !last.alerts.contains_key(id))
+            || (self.over_budget.is_some() && self.over_budget != last.over_budget)
     }
 
     pub fn counts(&self) -> BTreeMap<String, u64> {
@@ -102,6 +118,8 @@ impl Waiting {
             ("suggestions", self.suggestions.len()),
             ("unmatched", self.unmatched.len()),
             ("purge", self.purge.len()),
+            ("alerts", self.alerts.len()),
+            ("over_budget", usize::from(self.over_budget.is_some())),
         ]
         .into_iter()
         .map(|(k, v)| (k.to_string(), v as u64))
@@ -128,6 +146,8 @@ impl Waiting {
         if !self.purge.is_empty() {
             lines.push(format!("Archive: {} due for purge", self.purge.len()));
         }
+        lines.extend(self.alerts.values().cloned());
+        lines.extend(self.over_budget.clone());
         lines.join("\n")
     }
 }
@@ -175,7 +195,8 @@ impl SummaryJob {
             .map_err(|e| format!("init job_summary_state: {e}"))?
             .check()
             .map_err(|e| format!("init job_summary_state: {e}"))?;
-        Ok(())
+        // The summary reads the alerts table, and may start before the engine.
+        super::alerts::init_schema(&self.db).await
     }
 
     async fn load(&self) -> State {

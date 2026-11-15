@@ -19,6 +19,106 @@ use crate::notify::{Notification, Notifier, Priority};
 /// How often held and failed sends are retried.
 pub const FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(300);
 
+/// Critical's weekly budget, measured and never enforced (`project.md` § Notifications).
+pub const CRITICAL_PER_WEEK: usize = 3;
+
+/// The setting that tiers one alert kind. `None` for a kind with no setting yet,
+/// which stays critical.
+pub fn tier_key(job: &str, kind: &str) -> Option<ConfigKey> {
+    match (job, kind) {
+        (super::MAIL_IMPORT, "needs_user") => Some(ConfigKey::NotifyTierMailNeedsUser),
+        (super::MAIL_IMPORT, "failing") => Some(ConfigKey::NotifyTierMailFailing),
+        (super::BANK_IMPORT, "needs_user") => Some(ConfigKey::NotifyTierBankNeedsUser),
+        (super::BANK_IMPORT, "failing") => Some(ConfigKey::NotifyTierBankFailing),
+        _ => None,
+    }
+}
+
+/// Idempotent. Both the engine and the summary call it, since either may start first.
+pub async fn init_schema(db: &Database) -> Result<(), String> {
+    db.query(
+        "DEFINE TABLE IF NOT EXISTS job_alerts SCHEMAFULL;
+         DEFINE FIELD IF NOT EXISTS alert_id ON job_alerts TYPE string;
+         DEFINE FIELD IF NOT EXISTS job ON job_alerts TYPE string;
+         DEFINE FIELD IF NOT EXISTS subject ON job_alerts TYPE string;
+         DEFINE FIELD IF NOT EXISTS kind ON job_alerts TYPE string;
+         DEFINE FIELD IF NOT EXISTS title ON job_alerts TYPE string;
+         DEFINE FIELD IF NOT EXISTS message ON job_alerts TYPE string;
+         DEFINE FIELD IF NOT EXISTS opened_at ON job_alerts TYPE string;
+         DEFINE FIELD IF NOT EXISTS due_at ON job_alerts TYPE string;
+         DEFINE FIELD IF NOT EXISTS sent_at ON job_alerts TYPE option<string>;
+         DEFINE FIELD IF NOT EXISTS closed_at ON job_alerts TYPE option<string>;
+         -- NONE on rows from before tiers existed, which were all critical.
+         DEFINE FIELD IF NOT EXISTS tier ON job_alerts TYPE option<string>;
+         DEFINE INDEX IF NOT EXISTS job_alerts_open ON job_alerts FIELDS job, subject, closed_at;",
+    )
+    .await
+    .map_err(|e| format!("init job_alerts: {e}"))?
+    .check()
+    .map_err(|e| format!("init job_alerts: {e}"))?;
+    Ok(())
+}
+
+/// An open alert of a demoted kind, for the daily summary to list.
+#[derive(Debug, Clone, PartialEq, Eq, SurrealValue)]
+pub struct ReviewAlert {
+    pub alert_id: String,
+    pub title: String,
+    pub subject: String,
+}
+
+pub async fn open_review_alerts(db: &Database) -> Result<Vec<ReviewAlert>, String> {
+    let mut resp = db
+        .query(
+            "SELECT alert_id, title, subject FROM job_alerts \
+             WHERE tier = 'review' AND closed_at IS NONE ORDER BY opened_at",
+        )
+        .await
+        .map_err(|e| format!("read job_alerts: {e}"))?;
+    resp.take(0).map_err(|e| format!("decode job_alerts: {e}"))
+}
+
+#[derive(Debug, SurrealValue)]
+struct SentKind {
+    job: String,
+    kind: String,
+}
+
+/// When the last 7 days sent more critical alerts than the budget: the line the
+/// summary carries, naming the noisiest kind and the setting that demotes it.
+pub async fn over_budget(db: &Database, now: DateTime<Utc>) -> Result<Option<String>, String> {
+    let mut resp = db
+        .query("SELECT job, kind FROM job_alerts WHERE sent_at IS NOT NONE AND sent_at >= $since")
+        .bind(("since", stamp(now - Duration::days(7))))
+        .await
+        .map_err(|e| format!("read job_alerts: {e}"))?;
+    let sent: Vec<SentKind> = resp
+        .take(0)
+        .map_err(|e| format!("decode job_alerts: {e}"))?;
+    if sent.len() <= CRITICAL_PER_WEEK {
+        return Ok(None);
+    }
+    let mut by_kind: std::collections::BTreeMap<(String, String), usize> = Default::default();
+    for s in &sent {
+        *by_kind.entry((s.job.clone(), s.kind.clone())).or_default() += 1;
+    }
+    let ((job, kind), n) = by_kind
+        .into_iter()
+        .max_by_key(|(_, n)| *n)
+        .expect("more sent than the budget, so at least one kind");
+    let name = match tier_key(&job, &kind) {
+        Some(key) => format!(
+            "{} ({n}). Set it to Review in Settings, Notifications?",
+            key.label()
+        ),
+        None => format!("{job} {kind} ({n})"),
+    };
+    Ok(Some(format!(
+        "Critical alerts this week: {}, target {CRITICAL_PER_WEEK}. Noisiest: {name}",
+        sent.len()
+    )))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
     NeedsUser,
@@ -69,6 +169,17 @@ fn stamp(t: DateTime<Utc>) -> String {
     t.to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
+/// The end of the current quiet window under `config`.
+fn hold_until(config: &ResolvedConfig, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    let tz: Tz = config
+        .text_of(ConfigKey::AssistantCheckInTimezone)
+        .parse()
+        .ok()?;
+    let start = config.int_of(ConfigKey::NotifyQuietStart).clamp(0, 23) as u32;
+    let end = config.int_of(ConfigKey::NotifyQuietEnd).clamp(0, 23) as u32;
+    quiet_until(now, tz, start, end)
+}
+
 #[derive(Debug, SurrealValue)]
 struct Pending {
     alert_id: String,
@@ -88,26 +199,7 @@ impl AlertEngine {
     }
 
     pub async fn init_schema(&self) -> Result<(), String> {
-        self.db
-            .query(
-                "DEFINE TABLE IF NOT EXISTS job_alerts SCHEMAFULL;
-                 DEFINE FIELD IF NOT EXISTS alert_id ON job_alerts TYPE string;
-                 DEFINE FIELD IF NOT EXISTS job ON job_alerts TYPE string;
-                 DEFINE FIELD IF NOT EXISTS subject ON job_alerts TYPE string;
-                 DEFINE FIELD IF NOT EXISTS kind ON job_alerts TYPE string;
-                 DEFINE FIELD IF NOT EXISTS title ON job_alerts TYPE string;
-                 DEFINE FIELD IF NOT EXISTS message ON job_alerts TYPE string;
-                 DEFINE FIELD IF NOT EXISTS opened_at ON job_alerts TYPE string;
-                 DEFINE FIELD IF NOT EXISTS due_at ON job_alerts TYPE string;
-                 DEFINE FIELD IF NOT EXISTS sent_at ON job_alerts TYPE option<string>;
-                 DEFINE FIELD IF NOT EXISTS closed_at ON job_alerts TYPE option<string>;
-                 DEFINE INDEX IF NOT EXISTS job_alerts_open ON job_alerts FIELDS job, subject, closed_at;",
-            )
-            .await
-            .map_err(|e| format!("init job_alerts: {e}"))?
-            .check()
-            .map_err(|e| format!("init job_alerts: {e}"))?;
-        Ok(())
+        init_schema(&self.db).await
     }
 
     async fn is_open(&self, run: &RunRecord, kind: Kind) -> Result<bool, String> {
@@ -137,15 +229,24 @@ impl AlertEngine {
             return Ok(());
         }
         let now = Utc::now();
-        let due = self.hold_until(now).await.unwrap_or(now);
+        let config = crate::events::load_persisted(&self.db)
+            .await
+            .map(|global| ResolvedConfig::new(global, Default::default()))
+            .unwrap_or_default();
+        let due = hold_until(&config, now).unwrap_or(now);
+        let tier = match tier_key(&run.job, kind.as_str()) {
+            Some(key) if config.text_of(key) == "review" => "review",
+            _ => "critical",
+        };
         self.db
             .query(
                 "CREATE type::record('job_alerts', $id) CONTENT {
                     alert_id: $id, job: $job, subject: $subject, kind: $kind,
-                    title: $title, message: $message,
+                    title: $title, message: $message, tier: $tier,
                     opened_at: $now, due_at: $due, sent_at: NONE, closed_at: NONE
                  }",
             )
+            .bind(("tier", tier))
             .bind(("id", ulid::Ulid::new().to_string()))
             .bind(("job", run.job.clone()))
             .bind(("subject", run.subject.clone()))
@@ -178,28 +279,16 @@ impl AlertEngine {
         Ok(())
     }
 
-    /// The end of the current quiet window, read from config each time.
-    async fn hold_until(&self, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
-        let global = crate::events::load_persisted(&self.db).await.ok()?;
-        let config = ResolvedConfig::new(global, Default::default());
-        let tz: Tz = config
-            .text_of(ConfigKey::AssistantCheckInTimezone)
-            .parse()
-            .ok()?;
-        let start = config.int_of(ConfigKey::NotifyQuietStart).clamp(0, 23) as u32;
-        let end = config.int_of(ConfigKey::NotifyQuietEnd).clamp(0, 23) as u32;
-        quiet_until(now, tz, start, end)
-    }
-
-    /// Send every open, unsent alert that is due. A failed send stays unsent and
-    /// is retried on the next flush.
+    /// Send every open, unsent critical alert that is due. A failed send stays
+    /// unsent and is retried on the next flush. Review-tier alerts wait for the summary.
     pub async fn flush(&self) {
         let now = stamp(Utc::now());
         let pending: Vec<Pending> = match self
             .db
             .query(
                 "SELECT alert_id, title, message FROM job_alerts \
-                 WHERE sent_at IS NONE AND closed_at IS NONE AND due_at <= $now",
+                 WHERE sent_at IS NONE AND closed_at IS NONE AND due_at <= $now \
+                 AND (tier IS NONE OR tier = 'critical')",
             )
             .bind(("now", now))
             .await
@@ -344,6 +433,12 @@ mod tests {
     /// Quiet hours set to an empty window, so every test sends at once whatever
     /// the clock says.
     async fn engine() -> (AlertEngine, Arc<SurrealRunStore>, Arc<Phone>) {
+        engine_with(&[]).await
+    }
+
+    async fn engine_with(
+        extra: &[(ConfigKey, crate::config::ConfigValue)],
+    ) -> (AlertEngine, Arc<SurrealRunStore>, Arc<Phone>) {
         use crate::config::ConfigValue;
         use crate::events::{
             ConfigProjection, EventStore, NewEvent, ProjectionRunner, SurrealEventStore,
@@ -351,11 +446,13 @@ mod tests {
         let db = crate::db::test_db().await;
         let runner = ProjectionRunner::new(db.clone(), vec![Box::new(ConfigProjection)]);
         runner.init_all().await.unwrap();
-        for (key, v) in [
-            (ConfigKey::NotifyQuietStart, 0),
-            (ConfigKey::NotifyQuietEnd, 0),
-        ] {
-            let set = NewEvent::config_set("d1", key, Some(ConfigValue::Int(v))).unwrap();
+        let mut settings = vec![
+            (ConfigKey::NotifyQuietStart, ConfigValue::Int(0)),
+            (ConfigKey::NotifyQuietEnd, ConfigValue::Int(0)),
+        ];
+        settings.extend(extra.iter().cloned());
+        for (key, v) in settings {
+            let set = NewEvent::config_set("d1", key, Some(v)).unwrap();
             let stored = SurrealEventStore::new(db.clone())
                 .append(set)
                 .await
@@ -446,5 +543,72 @@ mod tests {
         r.job = crate::jobs::MAIL_BACKFILL.into();
         engine.observe(&r).await;
         assert!(phone.0.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_kind_set_to_review_waits_for_the_summary() {
+        let review = crate::config::ConfigValue::Text("review".into());
+        let (engine, runs, phone) =
+            engine_with(&[(ConfigKey::NotifyTierMailNeedsUser, review)]).await;
+        let code = run(
+            0,
+            RunOutcome::NeedsUser {
+                reason: "otp".into(),
+            },
+        );
+        record(&engine, &runs, code).await;
+        engine.flush().await;
+        assert!(
+            phone.0.lock().unwrap().is_empty(),
+            "a review-tier alert never interrupts"
+        );
+        let listed = open_review_alerts(&engine.db).await.unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].title, "Mail import needs you");
+    }
+
+    #[tokio::test]
+    async fn over_budget_names_the_noisiest_kind() {
+        let (engine, _runs, _phone) = engine().await;
+        let now = Utc::now();
+        let sent = |job: &str, kind: &str, i: i64| {
+            let (job, kind) = (job.to_string(), kind.to_string());
+            let db = engine.db.clone();
+            async move {
+                db.query(
+                    "CREATE job_alerts CONTENT { alert_id: $id, job: $job, subject: 's', \
+                     kind: $kind, title: 't', message: 'm', opened_at: $at, due_at: $at, \
+                     sent_at: $at, closed_at: NONE, tier: 'critical' }",
+                )
+                .bind(("id", format!("a{i}")))
+                .bind(("job", job))
+                .bind(("kind", kind))
+                .bind(("at", stamp(now - Duration::hours(i))))
+                .await
+                .unwrap()
+                .check()
+                .unwrap();
+            }
+        };
+        for i in 0..3 {
+            sent(crate::jobs::MAIL_IMPORT, "failing", i).await;
+        }
+        assert_eq!(
+            over_budget(&engine.db, now).await.unwrap(),
+            None,
+            "3 is the budget"
+        );
+        sent(crate::jobs::BANK_IMPORT, "needs_user", 3).await;
+        // Older than a week: not counted.
+        sent(crate::jobs::BANK_IMPORT, "needs_user", 24 * 8).await;
+        let line = over_budget(&engine.db, now).await.unwrap().unwrap();
+        assert!(
+            line.starts_with("Critical alerts this week: 4, target 3."),
+            "{line}"
+        );
+        assert!(
+            line.contains("Alert: mail import failing 24 h (3)"),
+            "{line}"
+        );
     }
 }

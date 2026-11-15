@@ -43,7 +43,14 @@ pub enum ConfigKey {
     NotifyQuietStart,
     NotifyQuietEnd,
     NotifySummaryHour,
+    NotifyTierMailNeedsUser,
+    NotifyTierMailFailing,
+    NotifyTierBankNeedsUser,
+    NotifyTierBankFailing,
 }
+
+/// The tiers an alert kind can be set to. Review lists it in the daily summary.
+pub const TIER_VALUES: &[&str] = &["critical", "review"];
 
 /// Social notification senders: not records, and half the archive before this.
 pub const DEFAULT_SKIP_SENDERS: &str =
@@ -91,6 +98,10 @@ pub const ALL_KEYS: &[ConfigKey] = &[
     ConfigKey::NotifyQuietStart,
     ConfigKey::NotifyQuietEnd,
     ConfigKey::NotifySummaryHour,
+    ConfigKey::NotifyTierMailNeedsUser,
+    ConfigKey::NotifyTierMailFailing,
+    ConfigKey::NotifyTierBankNeedsUser,
+    ConfigKey::NotifyTierBankFailing,
 ];
 
 /// The theme values `appearance.theme` accepts. `System` follows
@@ -164,6 +175,10 @@ impl fmt::Display for ConfigKey {
             ConfigKey::NotifyQuietStart => "notify.quiet_start",
             ConfigKey::NotifyQuietEnd => "notify.quiet_end",
             ConfigKey::NotifySummaryHour => "notify.summary_hour",
+            ConfigKey::NotifyTierMailNeedsUser => "notify.tier.mail_needs_user",
+            ConfigKey::NotifyTierMailFailing => "notify.tier.mail_failing",
+            ConfigKey::NotifyTierBankNeedsUser => "notify.tier.bank_needs_user",
+            ConfigKey::NotifyTierBankFailing => "notify.tier.bank_failing",
         };
         write!(f, "{s}")
     }
@@ -199,6 +214,10 @@ impl FromStr for ConfigKey {
             "notify.quiet_start" => Ok(ConfigKey::NotifyQuietStart),
             "notify.quiet_end" => Ok(ConfigKey::NotifyQuietEnd),
             "notify.summary_hour" => Ok(ConfigKey::NotifySummaryHour),
+            "notify.tier.mail_needs_user" => Ok(ConfigKey::NotifyTierMailNeedsUser),
+            "notify.tier.mail_failing" => Ok(ConfigKey::NotifyTierMailFailing),
+            "notify.tier.bank_needs_user" => Ok(ConfigKey::NotifyTierBankNeedsUser),
+            "notify.tier.bank_failing" => Ok(ConfigKey::NotifyTierBankFailing),
             other => Err(format!("unknown config key: {other}")),
         }
     }
@@ -394,6 +413,11 @@ impl ConfigKey {
             ConfigKey::NotifyQuietEnd => ConfigValue::Int(8),
             // His ruling, 2026-11-12: one silent summary of what waits on review, at 19:00.
             ConfigKey::NotifySummaryHour => ConfigValue::Int(19),
+            // His ruling, 2026-11-13: every kind starts critical and is demoted by hand.
+            ConfigKey::NotifyTierMailNeedsUser
+            | ConfigKey::NotifyTierMailFailing
+            | ConfigKey::NotifyTierBankNeedsUser
+            | ConfigKey::NotifyTierBankFailing => ConfigValue::Text("critical".to_string()),
         }
     }
 
@@ -415,7 +439,11 @@ impl ConfigKey {
             | ConfigKey::AssistantCheckInPrompt
             | ConfigKey::AssistantCheckInTimezone
             | ConfigKey::ArchiveSkipSenders
-            | ConfigKey::ArchiveBackfillBefore => ValueKind::Text,
+            | ConfigKey::ArchiveBackfillBefore
+            | ConfigKey::NotifyTierMailNeedsUser
+            | ConfigKey::NotifyTierMailFailing
+            | ConfigKey::NotifyTierBankNeedsUser
+            | ConfigKey::NotifyTierBankFailing => ValueKind::Text,
             ConfigKey::AssistantCheckInHour
             | ConfigKey::AssistantMaxTurns
             | ConfigKey::AssistantChatArchiveDays
@@ -451,7 +479,11 @@ impl ConfigKey {
             // Read by the server each time an alert is about to go.
             | ConfigKey::NotifyQuietStart
             | ConfigKey::NotifyQuietEnd
-            | ConfigKey::NotifySummaryHour => true,
+            | ConfigKey::NotifySummaryHour
+            | ConfigKey::NotifyTierMailNeedsUser
+            | ConfigKey::NotifyTierMailFailing
+            | ConfigKey::NotifyTierBankNeedsUser
+            | ConfigKey::NotifyTierBankFailing => true,
             ConfigKey::FeatureJournal
             | ConfigKey::FeatureNotes
             | ConfigKey::FeatureRoutines
@@ -495,6 +527,10 @@ impl ConfigKey {
             ConfigKey::NotifyQuietStart => "Quiet hours start (hour)",
             ConfigKey::NotifyQuietEnd => "Quiet hours end (hour)",
             ConfigKey::NotifySummaryHour => "Daily review summary (hour)",
+            ConfigKey::NotifyTierMailNeedsUser => "Alert: mail import needs you",
+            ConfigKey::NotifyTierMailFailing => "Alert: mail import failing 24 h",
+            ConfigKey::NotifyTierBankNeedsUser => "Alert: bank import needs you",
+            ConfigKey::NotifyTierBankFailing => "Alert: bank import failing 24 h",
         }
     }
 
@@ -532,7 +568,11 @@ impl ConfigKey {
             | ConfigKey::ArchiveBackfillBatch
             | ConfigKey::NotifyQuietStart
             | ConfigKey::NotifyQuietEnd
-            | ConfigKey::NotifySummaryHour => None,
+            | ConfigKey::NotifySummaryHour
+            | ConfigKey::NotifyTierMailNeedsUser
+            | ConfigKey::NotifyTierMailFailing
+            | ConfigKey::NotifyTierBankNeedsUser
+            | ConfigKey::NotifyTierBankFailing => None,
         }
     }
 
@@ -566,7 +606,11 @@ impl ConfigKey {
             | ConfigKey::ArchiveBackfillBatch => ConfigGroup::Archive,
             ConfigKey::NotifyQuietStart
             | ConfigKey::NotifyQuietEnd
-            | ConfigKey::NotifySummaryHour => ConfigGroup::Notifications,
+            | ConfigKey::NotifySummaryHour
+            | ConfigKey::NotifyTierMailNeedsUser
+            | ConfigKey::NotifyTierMailFailing
+            | ConfigKey::NotifyTierBankNeedsUser
+            | ConfigKey::NotifyTierBankFailing => ConfigGroup::Notifications,
         }
     }
 
@@ -581,6 +625,10 @@ impl ConfigKey {
             ConfigKey::AppearanceAccent => Some(ACCENT_VALUES),
             ConfigKey::AssistantEmbedModel => Some(EMBED_MODEL_VALUES),
             ConfigKey::AssistantRerankModel => Some(RERANK_MODEL_VALUES),
+            ConfigKey::NotifyTierMailNeedsUser
+            | ConfigKey::NotifyTierMailFailing
+            | ConfigKey::NotifyTierBankNeedsUser
+            | ConfigKey::NotifyTierBankFailing => Some(TIER_VALUES),
             _ => None,
         }
     }
@@ -877,11 +925,15 @@ mod tests {
                 | ConfigKey::ArchiveBackfillBatch
                 | ConfigKey::NotifyQuietStart
                 | ConfigKey::NotifyQuietEnd
-                | ConfigKey::NotifySummaryHour => counted += 1,
+                | ConfigKey::NotifySummaryHour
+                | ConfigKey::NotifyTierMailNeedsUser
+                | ConfigKey::NotifyTierMailFailing
+                | ConfigKey::NotifyTierBankNeedsUser
+                | ConfigKey::NotifyTierBankFailing => counted += 1,
             }
         }
         assert_eq!(
-            counted, 25,
+            counted, 29,
             "ALL_KEYS does not list every ConfigKey variant"
         );
 

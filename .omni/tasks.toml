@@ -594,10 +594,9 @@ ref    = "tasks.md § Cycle 5 sequence"
 [[task]]
 id     = "omni-me-0081"
 title  = "Notifications slice 3: measure the critical budget"
-status = "blocked"
+status = "done"
 size   = "S"
 ref    = "tasks.md § Cycle 5 sequence"
-blocked_by = ["omni-me-0079"]
 
 [[task]]
 id     = "omni-me-0082"
