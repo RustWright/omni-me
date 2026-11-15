@@ -4,10 +4,10 @@
 live in `project.md` § Decisions in force, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`),
 rationale in `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
-## ▶ NEXT ACTION — his check of the archive demo and draft [0088], then publish it
-[0085] is live (mylearnbase `2c8bd13`, by hand: Zola installed, no logbook tools, CI run as the
-test evidence). Archive: demo builds with `demo-build.sh archive`; draft 1 is
-`logbook/_drafts/document-archive.md`. Then [0087] search, his call (port or screenshot).
+## ▶ NEXT ACTION — [0087] search logbook: his call on the demo (port the ranking, or a screenshot)
+[0085] and [0088] are live on mylearnbase (`2c8bd13`, `c556942`), published by hand. Pattern: I
+draft from the scaffold in `logbook/_drafts/`, he edits, I publish. Prose must be plain from the
+first draft (mylearnbase `editorial/editing.md` § House style). Then [0086] receipts (no demo).
 Dev's first daily summary (19:00 check-in time) is the ntfy end-to-end check.
 - The audit trail for the stretch: overlay `DECISION_LOG_2026-11-13.md`.
 - Logbooks: load `writing-posts` (from `~/.dotfiles/claude/skills/`, not linked on the WSL box).
@@ -24,7 +24,7 @@ from the paired branch, with `ci.yml -f public_ref=<full SHA>` before any build.
 
 ## ⛔ Waiting on him
 - **Rename four real fixtures** on the machine holding `.reference/`, [0093]: commands in the overlay log.
-- **Logbook prose** from the four scaffolds in `logbook/_drafts/` (gitignored, on the WSL box only).
+- **His review of each logbook draft** as I write it: [0087], then [0086].
 - **His decisions, `tasks.md` § Waiting on his decision:** [0003]–[0016], unchanged.
 - **Promoting ~11 general feedback notes to `~/.claude/rules/`:** the always-loaded tier is at 315 of
   320 lines, so promotion means compressing something. His call on what.

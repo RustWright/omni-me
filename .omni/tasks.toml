@@ -630,7 +630,7 @@ ref    = "tasks.md § Cycle 5 sequence"
 [[task]]
 id     = "omni-me-0085"
 title  = "Logbook: the assistant asks before it acts"
-status = "todo"
+status = "done"
 size   = "M"
 ref    = "tasks.md § Cycle 5 sequence"
 
@@ -651,7 +651,7 @@ ref    = "tasks.md § Cycle 5 sequence"
 [[task]]
 id     = "omni-me-0088"
 title  = "Logbook: the document archive"
-status = "todo"
+status = "done"
 size   = "M"
 ref    = "tasks.md § Cycle 5 sequence"
 
