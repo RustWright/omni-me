@@ -47,6 +47,9 @@ pub enum ConfigKey {
     NotifyTierMailFailing,
     NotifyTierBankNeedsUser,
     NotifyTierBankFailing,
+    NotifyLargeCharge,
+    NotifyTierLargeCharge,
+    NotifyChargesAtNight,
 }
 
 /// The tiers an alert kind can be set to. Review lists it in the daily summary.
@@ -102,6 +105,9 @@ pub const ALL_KEYS: &[ConfigKey] = &[
     ConfigKey::NotifyTierMailFailing,
     ConfigKey::NotifyTierBankNeedsUser,
     ConfigKey::NotifyTierBankFailing,
+    ConfigKey::NotifyLargeCharge,
+    ConfigKey::NotifyTierLargeCharge,
+    ConfigKey::NotifyChargesAtNight,
 ];
 
 /// The theme values `appearance.theme` accepts. `System` follows
@@ -179,6 +185,9 @@ impl fmt::Display for ConfigKey {
             ConfigKey::NotifyTierMailFailing => "notify.tier.mail_failing",
             ConfigKey::NotifyTierBankNeedsUser => "notify.tier.bank_needs_user",
             ConfigKey::NotifyTierBankFailing => "notify.tier.bank_failing",
+            ConfigKey::NotifyLargeCharge => "notify.large_charge",
+            ConfigKey::NotifyTierLargeCharge => "notify.tier.large_charge",
+            ConfigKey::NotifyChargesAtNight => "notify.charges_at_night",
         };
         write!(f, "{s}")
     }
@@ -218,6 +227,9 @@ impl FromStr for ConfigKey {
             "notify.tier.mail_failing" => Ok(ConfigKey::NotifyTierMailFailing),
             "notify.tier.bank_needs_user" => Ok(ConfigKey::NotifyTierBankNeedsUser),
             "notify.tier.bank_failing" => Ok(ConfigKey::NotifyTierBankFailing),
+            "notify.large_charge" => Ok(ConfigKey::NotifyLargeCharge),
+            "notify.tier.large_charge" => Ok(ConfigKey::NotifyTierLargeCharge),
+            "notify.charges_at_night" => Ok(ConfigKey::NotifyChargesAtNight),
             other => Err(format!("unknown config key: {other}")),
         }
     }
@@ -417,7 +429,12 @@ impl ConfigKey {
             ConfigKey::NotifyTierMailNeedsUser
             | ConfigKey::NotifyTierMailFailing
             | ConfigKey::NotifyTierBankNeedsUser
-            | ConfigKey::NotifyTierBankFailing => ConfigValue::Text("critical".to_string()),
+            | ConfigKey::NotifyTierBankFailing
+            | ConfigKey::NotifyTierLargeCharge => ConfigValue::Text("critical".to_string()),
+            // My proposal, accepted 2026-11-15: 500 in the charge's own currency. 0 is off.
+            ConfigKey::NotifyLargeCharge => ConfigValue::Int(500),
+            // His ruling, 2026-11-12: charge alerts wait out quiet hours unless this is on.
+            ConfigKey::NotifyChargesAtNight => ConfigValue::Bool(false),
         }
     }
 
@@ -431,7 +448,8 @@ impl ConfigKey {
             | ConfigKey::FeatureLlm
             | ConfigKey::FeatureDocuments
             | ConfigKey::AssistantRerank
-            | ConfigKey::AssistantCheckIn => ValueKind::Bool,
+            | ConfigKey::AssistantCheckIn
+            | ConfigKey::NotifyChargesAtNight => ValueKind::Bool,
             ConfigKey::AppearanceTheme
             | ConfigKey::AppearanceAccent
             | ConfigKey::AssistantEmbedModel
@@ -443,7 +461,8 @@ impl ConfigKey {
             | ConfigKey::NotifyTierMailNeedsUser
             | ConfigKey::NotifyTierMailFailing
             | ConfigKey::NotifyTierBankNeedsUser
-            | ConfigKey::NotifyTierBankFailing => ValueKind::Text,
+            | ConfigKey::NotifyTierBankFailing
+            | ConfigKey::NotifyTierLargeCharge => ValueKind::Text,
             ConfigKey::AssistantCheckInHour
             | ConfigKey::AssistantMaxTurns
             | ConfigKey::AssistantChatArchiveDays
@@ -451,7 +470,8 @@ impl ConfigKey {
             | ConfigKey::ArchiveBackfillBatch
             | ConfigKey::NotifyQuietStart
             | ConfigKey::NotifyQuietEnd
-            | ConfigKey::NotifySummaryHour => ValueKind::Int,
+            | ConfigKey::NotifySummaryHour
+            | ConfigKey::NotifyLargeCharge => ValueKind::Int,
         }
     }
 
@@ -483,7 +503,10 @@ impl ConfigKey {
             | ConfigKey::NotifyTierMailNeedsUser
             | ConfigKey::NotifyTierMailFailing
             | ConfigKey::NotifyTierBankNeedsUser
-            | ConfigKey::NotifyTierBankFailing => true,
+            | ConfigKey::NotifyTierBankFailing
+            | ConfigKey::NotifyLargeCharge
+            | ConfigKey::NotifyTierLargeCharge
+            | ConfigKey::NotifyChargesAtNight => true,
             ConfigKey::FeatureJournal
             | ConfigKey::FeatureNotes
             | ConfigKey::FeatureRoutines
@@ -531,6 +554,9 @@ impl ConfigKey {
             ConfigKey::NotifyTierMailFailing => "Alert: mail import failing 24 h",
             ConfigKey::NotifyTierBankNeedsUser => "Alert: bank import needs you",
             ConfigKey::NotifyTierBankFailing => "Alert: bank import failing 24 h",
+            ConfigKey::NotifyLargeCharge => "Large charge alert at (0 is off)",
+            ConfigKey::NotifyTierLargeCharge => "Alert: large charge",
+            ConfigKey::NotifyChargesAtNight => "Charge alerts during quiet hours",
         }
     }
 
@@ -572,7 +598,10 @@ impl ConfigKey {
             | ConfigKey::NotifyTierMailNeedsUser
             | ConfigKey::NotifyTierMailFailing
             | ConfigKey::NotifyTierBankNeedsUser
-            | ConfigKey::NotifyTierBankFailing => None,
+            | ConfigKey::NotifyTierBankFailing
+            | ConfigKey::NotifyLargeCharge
+            | ConfigKey::NotifyTierLargeCharge
+            | ConfigKey::NotifyChargesAtNight => None,
         }
     }
 
@@ -610,7 +639,10 @@ impl ConfigKey {
             | ConfigKey::NotifyTierMailNeedsUser
             | ConfigKey::NotifyTierMailFailing
             | ConfigKey::NotifyTierBankNeedsUser
-            | ConfigKey::NotifyTierBankFailing => ConfigGroup::Notifications,
+            | ConfigKey::NotifyTierBankFailing
+            | ConfigKey::NotifyLargeCharge
+            | ConfigKey::NotifyTierLargeCharge
+            | ConfigKey::NotifyChargesAtNight => ConfigGroup::Notifications,
         }
     }
 
@@ -628,7 +660,8 @@ impl ConfigKey {
             ConfigKey::NotifyTierMailNeedsUser
             | ConfigKey::NotifyTierMailFailing
             | ConfigKey::NotifyTierBankNeedsUser
-            | ConfigKey::NotifyTierBankFailing => Some(TIER_VALUES),
+            | ConfigKey::NotifyTierBankFailing
+            | ConfigKey::NotifyTierLargeCharge => Some(TIER_VALUES),
             _ => None,
         }
     }
@@ -661,6 +694,7 @@ impl ConfigKey {
             ConfigKey::NotifyQuietStart
             | ConfigKey::NotifyQuietEnd
             | ConfigKey::NotifySummaryHour => Some((0, 23)),
+            ConfigKey::NotifyLargeCharge => Some((0, 1_000_000)),
             _ => None,
         }
     }
@@ -929,11 +963,14 @@ mod tests {
                 | ConfigKey::NotifyTierMailNeedsUser
                 | ConfigKey::NotifyTierMailFailing
                 | ConfigKey::NotifyTierBankNeedsUser
-                | ConfigKey::NotifyTierBankFailing => counted += 1,
+                | ConfigKey::NotifyTierBankFailing
+                | ConfigKey::NotifyLargeCharge
+                | ConfigKey::NotifyTierLargeCharge
+                | ConfigKey::NotifyChargesAtNight => counted += 1,
             }
         }
         assert_eq!(
-            counted, 29,
+            counted, 32,
             "ALL_KEYS does not list every ConfigKey variant"
         );
 

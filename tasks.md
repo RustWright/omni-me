@@ -43,8 +43,9 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 - [0087] **Logbook: search by meaning.** Scaffold drafted. The mock bridge returns canned search
   results, so the demo needs a decision: port fusion to the browser, or lead with the bench. [M]
 - [0088] **Logbook: the document archive.** Scaffold drafted. Demo: push `demo/archive`. [M]
-- [0082] **Slice 4, each ruled on its own:** large charge (threshold setting), new merchant
-  (on/off), penalty-dated bills (no due date is modelled yet). Statement mismatch is [0050]. [L]
+- [0082] **Slice 4, each ruled on its own.** Large charge is built (2026-11-15). Left: new
+  merchant (on/off; needs a definition of "new" that survives noisy descriptions) and
+  penalty-dated bills (no due date is modelled yet). Statement mismatch is [0050]. [M]
 
 ## Waiting on his decision
 

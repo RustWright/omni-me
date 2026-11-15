@@ -246,6 +246,13 @@ go. When the last seven days sent more, the summary says so and names the noisie
 kind has a Critical or Review setting, and a kind set to Review stops interrupting and is listed
 in the summary instead. The measurement reads the stored episodes, so it needed no new storage.
 
+The first detector watches bank imports for a large charge: money leaving an asset or credit
+account to somewhere that is not one of them, at or over a threshold (500 by default, in the
+charge's own currency, since the base currency is a device setting the server cannot read).
+That definition leaves out transfers between accounts, card payments and investment buys
+without a list of exceptions. A charge is an event rather than an episode, so it alerts once
+and closes; it may skip quiet hours if the night setting is on.
+
 **The status view** is Settings → Jobs: one line per job with its health and last run, the last
 20 runs when expanded, and the jobs not yet on the contract listed beneath.
 

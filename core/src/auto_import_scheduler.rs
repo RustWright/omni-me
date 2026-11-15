@@ -612,7 +612,7 @@ struct RegisteredSource {
 pub struct SourceRegistry {
     inner: Arc<RwLock<HashMap<String, RegisteredSource>>>,
     runs: Option<Arc<dyn RunStore>>,
-    on_run: Option<Arc<dyn RunObserver>>,
+    on_run: Vec<Arc<dyn RunObserver>>,
 }
 
 impl SourceRegistry {
@@ -626,8 +626,9 @@ impl SourceRegistry {
         self
     }
 
+    /// Add an observer; each hears every stored run, in the order added.
     pub fn with_observer(mut self, observer: Arc<dyn RunObserver>) -> Self {
-        self.on_run = Some(observer);
+        self.on_run.push(observer);
         self
     }
 
@@ -680,7 +681,7 @@ impl SourceRegistry {
             tracing::warn!(job = run.job, subject = run.subject, error = %e, "could not record a job run");
             return;
         }
-        if let Some(observer) = &self.on_run {
+        for observer in &self.on_run {
             observer.observe(&run).await;
         }
     }

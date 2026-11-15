@@ -5,6 +5,7 @@
 //! `docs/src/agents.md` § The job contract.
 
 pub mod alerts;
+pub mod large_charge;
 pub mod runs;
 pub mod spend;
 pub mod summary;
@@ -182,7 +183,7 @@ pub const REGISTRY: &[JobSpec] = &[
             alert_failing_hours: Some(24),
         },
         output: Output {
-            lands_in: "Finances review",
+            lands_in: "Finances review; a charge over the threshold also alerts",
             tier: Tier::Review,
         },
         model: None,

@@ -273,6 +273,12 @@ impl SummaryJob {
                 match self.notifier.send(&n).await {
                     Ok(()) => {
                         sent = 1;
+                        let listed: Vec<String> = waiting.alerts.keys().cloned().collect();
+                        if let Err(e) =
+                            super::alerts::close_listed_one_shots(&self.db, listed).await
+                        {
+                            tracing::warn!(error = %e, "summary sent, but its one-shot alerts stay open");
+                        }
                         state.last_day = Some(day);
                         state.last_sent = waiting;
                         RunOutcome::Success

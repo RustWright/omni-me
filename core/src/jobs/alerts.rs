@@ -22,6 +22,9 @@ pub const FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3
 /// Critical's weekly budget, measured and never enforced (`project.md` § Notifications).
 pub const CRITICAL_PER_WEEK: usize = 3;
 
+/// The alert kind for one charge over the threshold.
+pub const LARGE_CHARGE: &str = "large_charge";
+
 /// The setting that tiers one alert kind. `None` for a kind with no setting yet,
 /// which stays critical.
 pub fn tier_key(job: &str, kind: &str) -> Option<ConfigKey> {
@@ -30,6 +33,7 @@ pub fn tier_key(job: &str, kind: &str) -> Option<ConfigKey> {
         (super::MAIL_IMPORT, "failing") => Some(ConfigKey::NotifyTierMailFailing),
         (super::BANK_IMPORT, "needs_user") => Some(ConfigKey::NotifyTierBankNeedsUser),
         (super::BANK_IMPORT, "failing") => Some(ConfigKey::NotifyTierBankFailing),
+        (super::BANK_IMPORT, LARGE_CHARGE) => Some(ConfigKey::NotifyTierLargeCharge),
         _ => None,
     }
 }
@@ -50,6 +54,8 @@ pub async fn init_schema(db: &Database) -> Result<(), String> {
          DEFINE FIELD IF NOT EXISTS closed_at ON job_alerts TYPE option<string>;
          -- NONE on rows from before tiers existed, which were all critical.
          DEFINE FIELD IF NOT EXISTS tier ON job_alerts TYPE option<string>;
+         -- An alert about one event (a charge), closed once sent or summarised.
+         DEFINE FIELD IF NOT EXISTS one_shot ON job_alerts TYPE option<bool>;
          DEFINE INDEX IF NOT EXISTS job_alerts_open ON job_alerts FIELDS job, subject, closed_at;",
     )
     .await
@@ -76,6 +82,18 @@ pub async fn open_review_alerts(db: &Database) -> Result<Vec<ReviewAlert>, Strin
         .await
         .map_err(|e| format!("read job_alerts: {e}"))?;
     resp.take(0).map_err(|e| format!("decode job_alerts: {e}"))
+}
+
+/// Close the one-shot alerts among `ids`, once a summary has listed them.
+pub async fn close_listed_one_shots(db: &Database, ids: Vec<String>) -> Result<(), String> {
+    db.query("UPDATE job_alerts SET closed_at = $now WHERE alert_id IN $ids AND one_shot = true")
+        .bind(("now", stamp(Utc::now())))
+        .bind(("ids", ids))
+        .await
+        .map_err(|e| format!("close job_alerts: {e}"))?
+        .check()
+        .map_err(|e| format!("close job_alerts: {e}"))?;
+    Ok(())
 }
 
 #[derive(Debug, SurrealValue)]
@@ -202,16 +220,29 @@ impl AlertEngine {
         init_schema(&self.db).await
     }
 
-    async fn is_open(&self, run: &RunRecord, kind: Kind) -> Result<bool, String> {
+    /// Whether an alert like this exists: an open one for an episode, any one ever
+    /// for a one-shot, so the same charge never alerts twice.
+    async fn exists(
+        &self,
+        job: &str,
+        subject: &str,
+        kind: &str,
+        one_shot: bool,
+    ) -> Result<bool, String> {
+        let filter = if one_shot {
+            ""
+        } else {
+            "AND closed_at IS NONE"
+        };
         let mut resp = self
             .db
-            .query(
+            .query(format!(
                 "SELECT alert_id FROM job_alerts WHERE job = $job AND subject = $subject \
-                 AND kind = $kind AND closed_at IS NONE LIMIT 1",
-            )
-            .bind(("job", run.job.clone()))
-            .bind(("subject", run.subject.clone()))
-            .bind(("kind", kind.as_str()))
+                 AND kind = $kind {filter} LIMIT 1"
+            ))
+            .bind(("job", job.to_string()))
+            .bind(("subject", subject.to_string()))
+            .bind(("kind", kind.to_string()))
             .await
             .map_err(|e| format!("read job_alerts: {e}"))?;
         let ids: Vec<String> = resp.take("alert_id").map_err(|e| e.to_string())?;
@@ -225,7 +256,33 @@ impl AlertEngine {
         title: String,
         message: String,
     ) -> Result<(), String> {
-        if self.is_open(run, kind).await? {
+        self.insert(&run.job, &run.subject, kind.as_str(), title, message, false)
+            .await
+    }
+
+    /// An alert about one event rather than an episode: sent once, then closed.
+    /// Charge alerts are these, and they may skip quiet hours if the setting says so.
+    pub async fn open_one_shot(
+        &self,
+        job: &str,
+        subject: &str,
+        kind: &str,
+        title: String,
+        message: String,
+    ) -> Result<(), String> {
+        self.insert(job, subject, kind, title, message, true).await
+    }
+
+    async fn insert(
+        &self,
+        job: &str,
+        subject: &str,
+        kind: &str,
+        title: String,
+        message: String,
+        one_shot: bool,
+    ) -> Result<(), String> {
+        if self.exists(job, subject, kind, one_shot).await? {
             return Ok(());
         }
         let now = Utc::now();
@@ -233,8 +290,13 @@ impl AlertEngine {
             .await
             .map(|global| ResolvedConfig::new(global, Default::default()))
             .unwrap_or_default();
-        let due = hold_until(&config, now).unwrap_or(now);
-        let tier = match tier_key(&run.job, kind.as_str()) {
+        let charge_at_night = one_shot && config.bool_of(ConfigKey::NotifyChargesAtNight);
+        let due = if charge_at_night {
+            now
+        } else {
+            hold_until(&config, now).unwrap_or(now)
+        };
+        let tier = match tier_key(job, kind) {
             Some(key) if config.text_of(key) == "review" => "review",
             _ => "critical",
         };
@@ -242,15 +304,16 @@ impl AlertEngine {
             .query(
                 "CREATE type::record('job_alerts', $id) CONTENT {
                     alert_id: $id, job: $job, subject: $subject, kind: $kind,
-                    title: $title, message: $message, tier: $tier,
+                    title: $title, message: $message, tier: $tier, one_shot: $one_shot,
                     opened_at: $now, due_at: $due, sent_at: NONE, closed_at: NONE
                  }",
             )
             .bind(("tier", tier))
+            .bind(("one_shot", one_shot))
             .bind(("id", ulid::Ulid::new().to_string()))
-            .bind(("job", run.job.clone()))
-            .bind(("subject", run.subject.clone()))
-            .bind(("kind", kind.as_str()))
+            .bind(("job", job.to_string()))
+            .bind(("subject", subject.to_string()))
+            .bind(("kind", kind.to_string()))
             .bind(("title", title))
             .bind(("message", message))
             .bind(("now", stamp(now)))
@@ -311,7 +374,12 @@ impl AlertEngine {
                 Ok(()) => {
                     let marked = self
                         .db
-                        .query("UPDATE type::record('job_alerts', $id) SET sent_at = $now")
+                        // A one-shot is done once sent; an episode stays open until a success.
+                        .query(
+                            "UPDATE type::record('job_alerts', $id) SET sent_at = $now;
+                             UPDATE type::record('job_alerts', $id) SET closed_at = $now
+                                WHERE one_shot = true;",
+                        )
                         .bind(("id", p.alert_id.clone()))
                         .bind(("now", stamp(Utc::now())))
                         .await;

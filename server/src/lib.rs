@@ -37,6 +37,7 @@ use omni_me_core::db::Database;
 use omni_me_core::events::{EventStore, ProjectionRunner, SurrealEventStore, registry};
 use omni_me_core::extraction::DocumentExtractor;
 use omni_me_core::jobs::alerts::{AlertEngine, FLUSH_INTERVAL};
+use omni_me_core::jobs::large_charge::LargeChargeDetector;
 use omni_me_core::jobs::runs::{RunStore, SurrealRunStore};
 use omni_me_core::jobs::summary::SummaryJob;
 use omni_me_core::llm::{
@@ -337,7 +338,12 @@ pub async fn run(cfg: RunConfig) {
     let runs = run_store(&db_arc).await;
     let auto_import_registry = SourceRegistry::new().with_run_store(runs.clone());
     let auto_import_registry = match alert_engine(&db_arc, runs, &creds.secrets).await {
-        Some(engine) => auto_import_registry.with_observer(engine),
+        Some(engine) => {
+            let charges = LargeChargeDetector::new((*db_arc).clone(), engine.clone());
+            auto_import_registry
+                .with_observer(engine)
+                .with_observer(Arc::new(charges))
+        }
         None => auto_import_registry,
     };
 
