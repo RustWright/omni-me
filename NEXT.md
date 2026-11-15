@@ -5,15 +5,15 @@ live in `project.md` § Decisions in force, open work in `tasks.md` (ids `[NNNN]
 rationale in `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
 ## ▶ NEXT ACTION — slice 4's remaining detectors, each on his ruling
-On the dev branch: [0089], [0079]'s code, [0090], [0084], slices 2 [0080], 3 [0081] and slice 4's
-large charge. Dev runs through slice 2. Left in [0082]: new merchant and penalty-dated bills,
-each to be ruled on its own before building. The identity scrub [0072] is its own pass.
+Left in [0082]: new merchant and penalty-dated bills, each ruled on its own before building.
+Dev runs the whole stretch with ntfy on (`omni-dev-alerts`); its first daily summary is the
+end-to-end check. The identity scrub [0072] is its own pass.
 - The audit trail for the stretch: overlay `DECISION_LOG_2026-11-13.md`.
 - Logbooks: load `writing-posts` (from `~/.dotfiles/claude/skills/`, not linked on the WSL box).
 
 ## ⏳ Dated, independent of the sequence
 - **11-16:** the weekly WS buys arrive whole: `tasks.md` [0001].
-- **Then** release 1.2.4, his go: `tasks.md` [0002] holds the queue, alerts and the Jobs view now in it.
+- **Then** release 1.2.4, his go: `tasks.md` [0002]; live's ntfy `.env` lines go in with it, [0079].
 
 ⛔ Live is the pause: every live step waits for his go, one at a time. Production deploys, releases
 and writes to live data are his to run (the permission check refuses mine), so hand him the command.
@@ -22,8 +22,6 @@ and writes to live data are his to run (the permission check refuses mine), so h
 from the paired branch, with `ci.yml -f public_ref=<full SHA>` before any build. Live tools: `~/omni-dev-tools/`.
 
 ## ⛔ Waiting on him
-- **ntfy bring-up**, [0079]: overlay `deploy/ntfy/README.md`, files already in `~/omni-ntfy`.
-- **A phone for [0092]:** the deep link is built; the S9 is off the tailnet, so it is untested.
 - **Logbook prose** from the four scaffolds in `logbook/_drafts/` (gitignored, on the WSL box only).
 - **His decisions, `tasks.md` § Waiting on his decision:** [0003]–[0016], unchanged.
 - **Promoting ~11 general feedback notes to `~/.claude/rules/`:** the always-loaded tier is at 315 of

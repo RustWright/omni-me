@@ -33,9 +33,9 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 
 ## Cycle 5 sequence (design session, 2026-11-12; rulings in `project.md` § Notifications, § Agent framework)
 
-- [0079] **Slice 1's live half, his steps:** the code is on the dev branch. Bring ntfy up and
-  make users and the server token (overlay `deploy/ntfy/README.md`, files already in
-  `~/omni-ntfy`), then the phone app. Live alerts start with 1.2.4 and its `.env` lines. [S, USER]
+- [0079] **Slice 1's live half:** ntfy is up on the box (2026-11-15), both logins made, the token
+  in both credentials files, the phone subscribed. Left: live's two `.env` lines (overlay
+  `deploy/ntfy/README.md` step 3) at the 1.2.4 deploy, [0002]. [S, USER]
 - [0085] **Logbook: the assistant asks before it acts.** Scaffold in `logbook/_drafts/` (device-
   local, gitignored). Demo: push `demo/assistant`; [0084] held at 1.5 MB brotli. Jan deadline. [M]
 - [0086] **Logbook: receipts from email.** Scaffold in `logbook/_drafts/`. Evidence: a Settings →
@@ -43,10 +43,6 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 - [0087] **Logbook: search by meaning.** Scaffold drafted. The mock bridge returns canned search
   results, so the demo needs a decision: port fusion to the browser, or lead with the bench. [M]
 - [0088] **Logbook: the document archive.** Scaffold drafted. Demo: push `demo/archive`. [M]
-- [0092] **Verify `omni-me://<tab>` on a phone** (built 2026-11-15, `d1e8482`): cold and warm
-  `adb shell am start -a android.intent.action.VIEW -d omni-me://finances com.omni_me.app`. His
-  ruling: if it does not work properly, shelve it for the notifications rewrite. The S9 is
-  offline. [S, needs a device]
 - [0082] **Slice 4, each ruled on its own.** Large charge is built (2026-11-15). Left: new
   merchant (on/off; needs a definition of "new" that survives noisy descriptions) and
   penalty-dated bills (no due date is modelled yet). Statement mismatch is [0050]. [M]

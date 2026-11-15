@@ -587,7 +587,7 @@ ref    = "tasks.md § Later cycles"
 [[task]]
 id     = "omni-me-0092"
 title  = "Verify omni-me://<tab> links on a phone; shelve if flaky"
-status = "todo"
+status = "done"
 size   = "S"
 ref    = "tasks.md § Cycle 5 sequence"
 
