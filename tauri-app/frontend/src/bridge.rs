@@ -5606,8 +5606,9 @@ mod mock_assistant {
                 granted: false,
                 reversible: true,
             },
+            // The one real irreversible action: nothing un-clears a transaction.
             ActionRecord {
-                action: "message.send".into(),
+                action: "transaction.clear".into(),
                 approved: 4,
                 rejected: 0,
                 pending: 0,
