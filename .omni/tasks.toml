@@ -607,8 +607,8 @@ ref    = "tasks.md § Cycle 5 sequence"
 
 [[task]]
 id     = "omni-me-0082"
-title  = "New critical detectors: large and new-merchant charges, penalty-dated bills"
-status = "blocked"
+title  = "New critical detectors: large charge (built); new merchant dropped, bills to next push"
+status = "done"
 size   = "L"
 ref    = "tasks.md § Cycle 5 sequence"
 blocked_by = ["omni-me-0079"]

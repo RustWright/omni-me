@@ -4,10 +4,10 @@
 live in `project.md` § Decisions in force, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`),
 rationale in `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
-## ▶ NEXT ACTION — slice 4's remaining detectors, each on his ruling
-Left in [0082]: new merchant and penalty-dated bills, each ruled on its own before building.
-Dev runs the whole stretch with ntfy on (`omni-dev-alerts`); its first daily summary is the
-end-to-end check. The identity scrub [0072] is its own pass.
+## ▶ NEXT ACTION — his pick: the identity scrub [0072], or the logbooks [0085]–[0088]
+Notifications are built through slice 4 (his ruling 2026-11-15, `project.md` § Notifications).
+Dev runs it all with ntfy on (`omni-dev-alerts`); its first daily summary, 19:00 check-in time,
+is the end-to-end check.
 - The audit trail for the stretch: overlay `DECISION_LOG_2026-11-13.md`.
 - Logbooks: load `writing-posts` (from `~/.dotfiles/claude/skills/`, not linked on the WSL box).
 

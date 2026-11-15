@@ -358,6 +358,10 @@ These are settled. Do not re-open one without a new reason.
   from the review count; (3) budget measurement; (4) each new detector, ruled on its own.
   Slices 1–2 lead Cycle 5's build work and do not wait for Part 2's contract. Building
   starts once Part 2 has been discussed.
+- Slice 4 stops at the large charge (2026-11-15). New-merchant alerts are dropped: the banks
+  already send them, and payee descriptions are too noisy to key on. Penalty-dated bills go
+  into the next big push (scheduling and day/week/month planning, plus a personal CRM of the
+  people he deals with and what he knows about them), not built on their own.
 
 **Agent framework** (design session, 2026-11-12; `DESIGN_PREREAD.md` Part 2)
 - The haphazardness is: no common shape across jobs, results he does not fully trust, jobs

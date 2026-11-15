@@ -26,7 +26,8 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
   file as statements; server) and `918a9d5` (retention review shows the counted-from date;
   server + app). Also on the branch since: the job contract and Settings → Jobs (`d6ded9e`),
   ntfy alerts and quiet hours (`a9cd960`), the demo build (`dd0bc0c`), the daily summary and
-  per-kind alert tiers with the weekly budget line. The
+  per-kind alert tiers with the weekly budget line, the large-charge alert (`f41842d`), and the
+  `omni-me://` tap links (`d1e8482`, app; verified on the S9). The
   server now folds the assistant projection: one ~4 min replay at that deploy, inside the gate.
   Add each new fix here. A fast-forward of public `main` closes the draft PR
   (#8), so open a new one after. [M, USER]
@@ -43,9 +44,6 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 - [0087] **Logbook: search by meaning.** Scaffold drafted. The mock bridge returns canned search
   results, so the demo needs a decision: port fusion to the browser, or lead with the bench. [M]
 - [0088] **Logbook: the document archive.** Scaffold drafted. Demo: push `demo/archive`. [M]
-- [0082] **Slice 4, each ruled on its own.** Large charge is built (2026-11-15). Left: new
-  merchant (on/off; needs a definition of "new" that survives noisy descriptions) and
-  penalty-dated bills (no due date is modelled yet). Statement mismatch is [0050]. [M]
 
 ## Waiting on his decision
 
@@ -243,7 +241,8 @@ generic IMAP config source.
 - [0091] **Recurring detection to the server**, when it migrates onto the contract: it needs no
   offline run, and every open device runs it today (a duplicate risk, unverified). [M]
 - [0074] **Task and project records** (sequence item 4). These gate estimation calibration,
-  and the assistant gains them with no assistant code. [L]
+  and the assistant gains them with no assistant code. His next big push (2026-11-15): this
+  with day/week/month planning and a personal CRM; penalty-dated bills land there. [L]
 - Filed, not scheduled: inbox management · Open Banking Canada · Gmail write-back (once trust
   is built) · blobs on object storage and the agent on its own machine (these must not
   complicate the co-located design).
