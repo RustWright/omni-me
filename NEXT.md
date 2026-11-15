@@ -4,7 +4,9 @@
 live in `project.md` § Decisions in force, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`),
 rationale in `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
-## ▶ NEXT ACTION — [0086] receipts logbook: his call on the visual, then draft it
+## ▶ NEXT ACTION — his check of the [0086] receipts draft, then publish it
+Draft 1: `logbook/_drafts/receipts-from-email.md`, picture `receipts-review.png` beside it
+(mock Finances page, `OMNI_DEMO_SCENARIO=receipts`, his choice 2026-11-15).
 [0085], [0088] and [0087] are live on mylearnbase (`2c8bd13`, `c556942`, `f980985`). Pattern: I
 draft from the scaffold in `logbook/_drafts/`, he edits, I publish by hand. Plain prose from the
 first draft (`editorial/editing.md` § House style), and design over deployment detail
