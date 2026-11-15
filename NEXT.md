@@ -4,10 +4,11 @@
 live in `project.md` § Decisions in force, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`),
 rationale in `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
-## ▶ NEXT ACTION — ask him: logbook groundwork, or hold until 1.2.4
-Notifications are built through slice 4 and the identity scrub [0072] is done (CI on the
-pushed head). Dev runs it all with ntfy on (`omni-dev-alerts`); its first daily summary,
-19:00 check-in time, is the end-to-end check.
+## ▶ NEXT ACTION — his check of the assistant demo and draft [0085], then the archive demo [0088]
+Demo minimums and order: `project.md` § Agent framework (2026-11-15). The assistant page builds
+locally (scratchpad `demo-build.sh assistant`, base path `demos/omni-me/assistant`); draft 1 is
+`logbook/_drafts/assistant-asks-before-it-acts.md`. Nothing staged in mylearnbase yet.
+Dev's first daily summary (19:00 check-in time) is the ntfy end-to-end check.
 - The audit trail for the stretch: overlay `DECISION_LOG_2026-11-13.md`.
 - Logbooks: load `writing-posts` (from `~/.dotfiles/claude/skills/`, not linked on the WSL box).
 
