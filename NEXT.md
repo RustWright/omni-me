@@ -4,11 +4,11 @@
 live in `project.md` § Decisions in force, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`),
 rationale in `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
-## ▶ NEXT ACTION — his check of the [0087] search draft, then publish it
-Draft 1 is `logbook/_drafts/search-by-meaning.md`, with `search-answers.png` beside it (a
-screenshot, not a demo: `project.md` § Agent framework). [0085] and [0088] are live on
-mylearnbase (`2c8bd13`, `c556942`). Pattern: I draft, he edits, I publish by hand. Prose must be
-plain from the first draft (mylearnbase `editorial/editing.md` § House style). Then [0086].
+## ▶ NEXT ACTION — [0086] receipts logbook: his call on the visual, then draft it
+[0085], [0088] and [0087] are live on mylearnbase (`2c8bd13`, `c556942`, `f980985`). Pattern: I
+draft from the scaffold in `logbook/_drafts/`, he edits, I publish by hand. Plain prose from the
+first draft (`editorial/editing.md` § House style), and design over deployment detail
+(`editorial/logbook.md` § Deployment detail throughout).
 Dev's first daily summary (19:00 check-in time) is the ntfy end-to-end check.
 - The audit trail for the stretch: overlay `DECISION_LOG_2026-11-13.md`.
 - Logbooks: load `writing-posts` (from `~/.dotfiles/claude/skills/`, not linked on the WSL box).
@@ -25,7 +25,7 @@ from the paired branch, with `ci.yml -f public_ref=<full SHA>` before any build.
 
 ## ⛔ Waiting on him
 - **Rename four real fixtures** on the machine holding `.reference/`, [0093]: commands in the overlay log.
-- **His review of each logbook draft** as I write it: [0087], then [0086].
+- **His review of the [0086] draft** once written.
 - **His decisions, `tasks.md` § Waiting on his decision:** [0003]–[0016], unchanged.
 - **Promoting ~11 general feedback notes to `~/.claude/rules/`:** the always-loaded tier is at 315 of
   320 lines, so promotion means compressing something. His call on what.
