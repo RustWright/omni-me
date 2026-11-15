@@ -341,6 +341,9 @@ These are settled. Do not re-open one without a new reason.
 - Demoting is a setting per alert kind, Critical or Review, default Critical (2026-11-13). A
   demoted kind's alerts are listed in the daily summary instead of interrupting.
 - Slice 4 starts with the large charge, threshold 500 by default (2026-11-15).
+- A notification tap opens omni-me on the right tab through an `omni-me://<tab>` link
+  (2026-11-15). If it does not work properly on Android, it is shelved until a more holistic
+  notifications rewrite rather than patched.
 - Quiet hours (default 22:00–08:00, adjustable) hold every critical alert until morning. A
   setting lets charge alerts through at night, off by default.
 - Review reaches him as one silent daily notification of counts, built by code (default

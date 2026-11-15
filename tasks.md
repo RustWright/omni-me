@@ -43,6 +43,10 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 - [0087] **Logbook: search by meaning.** Scaffold drafted. The mock bridge returns canned search
   results, so the demo needs a decision: port fusion to the browser, or lead with the bench. [M]
 - [0088] **Logbook: the document archive.** Scaffold drafted. Demo: push `demo/archive`. [M]
+- [0092] **Verify `omni-me://<tab>` on a phone** (built 2026-11-15, `d1e8482`): cold and warm
+  `adb shell am start -a android.intent.action.VIEW -d omni-me://finances com.omni_me.app`. His
+  ruling: if it does not work properly, shelve it for the notifications rewrite. The S9 is
+  offline. [S, needs a device]
 - [0082] **Slice 4, each ruled on its own.** Large charge is built (2026-11-15). Left: new
   merchant (on/off; needs a definition of "new" that survives noisy descriptions) and
   penalty-dated bills (no due date is modelled yet). Statement mismatch is [0050]. [M]
