@@ -10,7 +10,8 @@ rationale in `docs/src/` and at the edit site. ⛔ If a line here could be deriv
 2. Live's two ntfy `.env` lines [0079], then dispatch the deploy with the agent image.
 3. Verify (health, the `alerts on, through ntfy` boot line), then App release `version=1.2.4`.
 4. #8 stays open (the branch is a docs commit past `eb1ecd3`); if GitHub closes it, open a new one.
-Then: what comes after 1.2.4 is his to set, in a fresh session.
+Then, in a fresh session (his call 11-16): close Cycle 5 (`PROJECT_PROCESS.md` Session 6, plus
+[0071] and [0073]), then the next push, [0074].
 
 ⛔ Live is the pause: every live step waits for his go, one at a time.
 ⛔ **Never `cargo build`/`test` on this box** (`project-dev-machines-and-build-limits`); the mock demo
