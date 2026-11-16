@@ -27,7 +27,8 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
   server + app). Also on the branch since: the job contract and Settings → Jobs (`d6ded9e`),
   ntfy alerts and quiet hours (`a9cd960`), the demo build (`dd0bc0c`), the daily summary and
   per-kind alert tiers with the weekly budget line, the large-charge alert (`f41842d`), and the
-  `omni-me://` tap links (`d1e8482`, app; verified on the S9). The
+  `omni-me://` tap links (`d1e8482`, app; verified on the S9), and the schedule zone stamped on
+  any schedule edit and at first launch (`8a03d19`, app; dev's summary came at 19:00 UTC). The
   server now folds the assistant projection: one ~4 min replay at that deploy, inside the gate.
   Add each new fix here. A fast-forward of public `main` closes the draft PR
   (#8), so open a new one after. [M, USER]
