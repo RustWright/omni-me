@@ -22,6 +22,18 @@ pub enum NotesSubTab {
     Search,
 }
 
+/// The search the Search sub-tab last ran, for problem reports. A failure is
+/// kept apart from zero results, which the list renders identically.
+#[derive(Clone, PartialEq)]
+struct SearchRun {
+    query: String,
+    outcome: Result<usize, String>,
+}
+
+/// Written by `SearchView`, read by the page's screen report.
+#[derive(Clone, Copy)]
+struct LastSearch(Signal<Option<SearchRun>>);
+
 #[derive(Clone, PartialEq)]
 enum NotesView {
     List,
@@ -93,6 +105,9 @@ pub fn NotesPage() -> Element {
         });
     });
 
+    let last_search = use_signal(|| None::<SearchRun>);
+    use_context_provider(|| LastSearch(last_search));
+
     // Describe this screen for problem reports. Reads the same continuity
     // session the editor writes, so a report about an unsaved note quotes the
     // buffer the user is actually looking at rather than the last saved copy.
@@ -117,9 +132,17 @@ pub fn NotesPage() -> Element {
         // evicts any session where `content == last_saved_content`, so the store
         // holds drafts and nothing else. Do not add a "saved" branch here — it
         // cannot be reached, and it would read as though it could.
+        let search = (sub == "search")
+            .then(|| last_search.read().clone())
+            .flatten()
+            .map(|run| match run.outcome {
+                Ok(n) => format!("search \"{}\": {n} results", run.query),
+                Err(e) => format!("search \"{}\" failed: {e}", run.query),
+            });
         let detail = key
             .and_then(|k| store.get(&k))
-            .and_then(|session| describe_len("note body, UNSAVED", &session.content));
+            .and_then(|session| describe_len("note body, UNSAVED", &session.content))
+            .or(search);
         ScreenReport {
             screen: format!("notes:{sub}"),
             screen_ref,
@@ -282,6 +305,12 @@ fn SearchView(on_select: EventHandler<String>) -> Element {
     let mut query = use_signal(String::new);
     let mut results = use_signal(Vec::<GenericNoteItem>::new);
     let mut loading = use_signal(|| false);
+    let last = try_use_context::<LastSearch>();
+    let note_run = move |run: Option<SearchRun>| {
+        if let Some(LastSearch(mut slot)) = last {
+            slot.set(run);
+        }
+    };
 
     rsx! {
         div { class: "animate-in fade-in duration-200",
@@ -302,13 +331,22 @@ fn SearchView(on_select: EventHandler<String>) -> Element {
                             if q.trim().is_empty() {
                                 results.set(vec![]);
                                 loading.set(false);
+                                note_run(None);
                             } else {
                                 loading.set(true);
                                 spawn(async move {
-                                    match bridge::invoke_search_generic_notes(&q).await {
-                                        Ok(list) => results.set(list),
-                                        Err(_) => results.set(vec![]),
-                                    }
+                                    let outcome = match bridge::invoke_search_generic_notes(&q).await {
+                                        Ok(list) => {
+                                            let n = list.len();
+                                            results.set(list);
+                                            Ok(n)
+                                        }
+                                        Err(e) => {
+                                            results.set(vec![]);
+                                            Err(e)
+                                        }
+                                    };
+                                    note_run(Some(SearchRun { query: q, outcome }));
                                     loading.set(false);
                                 });
                             }
@@ -318,6 +356,7 @@ fn SearchView(on_select: EventHandler<String>) -> Element {
                                 query.set(String::new());
                                 results.set(vec![]);
                                 loading.set(false);
+                                note_run(None);
                             }
                         },
                     }
@@ -331,6 +370,7 @@ fn SearchView(on_select: EventHandler<String>) -> Element {
                                 query.set(String::new());
                                 results.set(vec![]);
                                 loading.set(false);
+                                note_run(None);
                             },
                             Icon { name: IconName::Close, class: "w-4 h-4" }
                         }

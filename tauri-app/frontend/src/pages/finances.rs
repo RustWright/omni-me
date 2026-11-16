@@ -1772,6 +1772,7 @@ pub(crate) fn DocumentCapture(
 
     let on_file_picked = move |evt: Event<FormData>| {
         let files = evt.files();
+        clear_file_input(&evt);
         if files.is_empty() {
             return;
         }
@@ -7265,6 +7266,7 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
     // whether rows get written lives in one place.
     let on_file_picked = move |evt: Event<FormData>| {
         let files = evt.files();
+        clear_file_input(&evt);
         let Some(file) = files.into_iter().next() else {
             return;
         };
@@ -7533,6 +7535,20 @@ fn confidence_label(score: f64) -> &'static str {
         "Medium"
     } else {
         "Low"
+    }
+}
+
+/// Empty a file input once its files are taken, so picking the same file again
+/// still fires `onchange`. A `value: ""` attribute is applied only at render.
+fn clear_file_input(evt: &Event<FormData>) {
+    use wasm_bindgen::JsCast;
+    if let Some(input) = evt
+        .data()
+        .downcast::<web_sys::Event>()
+        .and_then(|e| e.target())
+        .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
+    {
+        input.set_value("");
     }
 }
 
