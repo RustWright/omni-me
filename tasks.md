@@ -110,6 +110,9 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 - [0094] **`vector_store::shrinking_a_record_drops_its_extra_chunks` is flaky** (CI run
   43741030947 on `8caa3ca`: 6 chunks left, expected 1; the re-run passed unchanged). Cause
   not found; the sweep compares a content hash, so suspect shared state between tests. [S]
+- [0095] **Retention says "Nothing is tagged X any more" when the device and server disagree.**
+  The group counts the device's copy and the preview asks the server, so a stale device shows
+  144 due and an empty purge (dev phone, 2026-11-16, server reset drift). Say the list is stale. [S]
 - [0027] **Frontend clippy lacks `--all-targets`** (verified, `ci.yml` wasm jobs). Adding it
   trips a deliberate `expect(dead_code)` in `diagnostics.rs`. Raise that, never flip it. [XS]
 - [0028] **An oversized pushed event retries forever** (verified). The server answers 413,

@@ -669,3 +669,10 @@ title  = "Flaky vector_store shrink test"
 status = "todo"
 size   = "S"
 ref    = "tasks.md § Bugs"
+
+[[task]]
+id     = "omni-me-0095"
+title  = "Retention empty state when device and server disagree"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § Bugs"
