@@ -6,10 +6,10 @@ rationale in `docs/src/` and at the edit site. ⛔ If a line here could be deriv
 
 ## ▶ NEXT ACTION — he ships 1.2.4
 1.2.4 is staged and CI-green (`tasks.md` [0002]). His, in order, one at a time:
-1. Push both mains (public fast-forward to `eb1ecd3`, overlay `main` = local `dbc0a18`).
+1. Push both mains (public `main` to `eb1ecd3`, the CI-verified stamp; overlay `main` = local `dbc0a18`).
 2. Live's two ntfy `.env` lines [0079], then dispatch the deploy with the agent image.
 3. Verify (health, the `alerts on, through ntfy` boot line), then App release `version=1.2.4`.
-4. Open a new draft PR with the next public commit (the fast-forward closes #8).
+4. #8 stays open (the branch is a docs commit past `eb1ecd3`); if GitHub closes it, open a new one.
 Then: what comes after 1.2.4 is his to set, in a fresh session.
 
 ⛔ Live is the pause: every live step waits for his go, one at a time.
