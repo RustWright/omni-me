@@ -114,6 +114,9 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 - [0095] **Retention says "Nothing is tagged X any more" when the device and server disagree.**
   The group counts the device's copy and the preview asks the server, so a stale device shows
   144 due and an empty purge (dev phone, 2026-11-16, server reset drift). Say the list is stale. [S]
+- [0096] **Sidebar badges keep their count after the queue behind them is cleared**, until the
+  app restarts (his report, 2026-11-16). Likely a count fetched once and never refreshed on
+  the clearing action; related to [0037]. [S]
 - [0027] **Frontend clippy lacks `--all-targets`** (verified, `ci.yml` wasm jobs). Adding it
   trips a deliberate `expect(dead_code)` in `diagnostics.rs`. Raise that, never flip it. [XS]
 - [0028] **An oversized pushed event retries forever** (verified). The server answers 413,
