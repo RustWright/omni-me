@@ -40,8 +40,6 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 - [0093] **Rename four real fixtures in `.reference/imap poller/`** on the machine that holds
   them, to the role names the tests now read ([0072], 2026-11-15). Commands in the overlay's
   `DECISION_LOG_2026-11-13.md`; until then those tests skip there. [XS, USER]
-- [0086] **Logbook: receipts from email.** Scaffold in `logbook/_drafts/`. Evidence: a Settings →
-  Jobs screenshot from live after 1.2.4, and the C1/C0 bench scores. [M]
 
 ## Waiting on his decision
 
