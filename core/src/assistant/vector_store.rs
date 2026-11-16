@@ -132,12 +132,61 @@ pub async fn sweep(
         // before its projection has materialized its tables — normal on a cold
         // start — and aborting there would leave the whole index unbuilt because
         // of a type the question was never about. Same posture as `store::search`.
-        if let Err(e) = sweep_one(db, entry, embedder, &mut report).await {
-            tracing::warn!(record_type = entry.name, error = %e, "could not sweep this type");
-            report.failed += 1;
+        for attempt in 1..=CONFLICT_ATTEMPTS {
+            // Counted per attempt so a retried type is not counted twice. Work a
+            // failed attempt did is redone or skipped by hash on the next.
+            let mut part = SweepReport::default();
+            match sweep_one(db, entry, embedder, &mut part).await {
+                Ok(()) => {
+                    report.absorb(part);
+                    break;
+                }
+                Err(VectorError::Db(e))
+                    if e.is_retryable_conflict() && attempt < CONFLICT_ATTEMPTS =>
+                {
+                    tracing::info!(
+                        record_type = entry.name,
+                        attempt,
+                        "write conflict, retrying"
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(50 * attempt as u64)).await;
+                }
+                Err(e) => {
+                    tracing::warn!(record_type = entry.name, error = %e, "could not sweep this type");
+                    report.failed += 1;
+                    break;
+                }
+            }
         }
     }
     Ok(report)
+}
+
+/// Attempts per type when SurrealKV reports a retryable write conflict. Without
+/// a retry one conflict skipped the type's deletes and prunes until the next
+/// sweep, and failed the vector tests intermittently ([0094]).
+const CONFLICT_ATTEMPTS: usize = 3;
+
+impl SweepReport {
+    /// Destructured so a new field cannot be silently left out of the total.
+    fn absorb(&mut self, other: SweepReport) {
+        let SweepReport {
+            scanned,
+            embedded,
+            skipped,
+            hidden,
+            empty,
+            removed,
+            failed,
+        } = other;
+        self.scanned += scanned;
+        self.embedded += embedded;
+        self.skipped += skipped;
+        self.hidden += hidden;
+        self.empty += empty;
+        self.removed += removed;
+        self.failed += failed;
+    }
 }
 
 async fn sweep_one(
