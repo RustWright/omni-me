@@ -8,7 +8,8 @@ rationale in `docs/src/` and at the edit site. ⛔ If a line here could be deriv
 All four logbooks are live on mylearnbase ([0085] `2c8bd13`, [0088] `c556942`, [0087] `f980985`,
 [0086] `7ce2eb8`). Logbook form lessons are in `editorial/editing.md` § House style and
 `editorial/logbook.md` § Deployment detail throughout. 1.2.4 carries live's ntfy `.env` lines
-([0079]). Unconfirmed: whether dev's first daily summary (11-15, 19:00) reached the dev phone.
+([0079]). Dev's daily summary reached the phone and its tap opened Archive, but at 19:00 UTC:
+the zone defaulted to UTC, fixed in `8a03d19` (in the 1.2.4 queue).
 - The audit trail for the stretch: overlay `DECISION_LOG_2026-11-13.md`.
 
 ⛔ Live is the pause: every live step waits for his go, one at a time. Production deploys, releases
