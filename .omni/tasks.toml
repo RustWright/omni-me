@@ -193,14 +193,14 @@ ref    = "tasks.md § Design calls — mine to propose before building"
 [[task]]
 id     = "omni-me-0027"
 title  = "Frontend clippy lacks --all-targets"
-status = "todo"
+status = "done"
 size   = "XS"
 ref    = "tasks.md § Bugs"
 
 [[task]]
 id     = "omni-me-0028"
 title  = "An oversized pushed event retries forever"
-status = "todo"
+status = "done"
 size   = "S"
 ref    = "tasks.md § Bugs"
 
@@ -214,14 +214,14 @@ ref    = "tasks.md § Bugs"
 [[task]]
 id     = "omni-me-0030"
 title  = "Citation chips show the record's kind, not its title"
-status = "todo"
+status = "done"
 size   = "S"
 ref    = "tasks.md § Bugs"
 
 [[task]]
 id     = "omni-me-0031"
 title  = "The Ledger restores pre-wipe rows until Apply"
-status = "todo"
+status = "done"
 size   = "S"
 ref    = "tasks.md § Bugs"
 
@@ -235,7 +235,7 @@ ref    = "tasks.md § Bugs"
 [[task]]
 id     = "omni-me-0033"
 title  = "Mail attachments reach the vision model unrotated"
-status = "todo"
+status = "done"
 size   = "S"
 ref    = "tasks.md § Bugs"
 
@@ -277,7 +277,7 @@ ref    = "tasks.md § Bugs"
 [[task]]
 id     = "omni-me-0039"
 title  = "Small cleanups: dead ingest code, picker file count, notes-search report"
-status = "todo"
+status = "done"
 size   = "XS"
 ref    = "tasks.md § Bugs"
 
@@ -666,21 +666,21 @@ ref    = "tasks.md § Cycle 5 sequence"
 [[task]]
 id     = "omni-me-0094"
 title  = "Flaky vector_store shrink test"
-status = "todo"
+status = "done"
 size   = "S"
 ref    = "tasks.md § Bugs"
 
 [[task]]
 id     = "omni-me-0095"
 title  = "Retention empty state when device and server disagree"
-status = "todo"
+status = "done"
 size   = "S"
 ref    = "tasks.md § Bugs"
 
 [[task]]
 id     = "omni-me-0096"
 title  = "Sidebar badges stale after a queue is cleared"
-status = "todo"
+status = "done"
 size   = "S"
 ref    = "tasks.md § Bugs"
 

@@ -30,6 +30,10 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
   `omni-me://` tap links (`d1e8482`, app; verified on the S9), and the schedule zone stamped on
   any schedule edit and at first launch (`8a03d19`, app; dev's summary came at 19:00 UTC). The
   server now folds the assistant projection: one ~4 min replay at that deploy, inside the gate.
+  Overnight 11-16, each verified on dev (overlay `DECISION_LOG_2026-11-16.md`): badges
+  (`da59817`), citation titles (`f549578`), retention stale message (`d59fbc6`), Ledger
+  restore (`80c3773`), mail photos upright (`a97e46e`, server), 413/422 isolate (`1769e9b`),
+  pickers + search report (`5efb62f`), sweep conflict retry (`ec45229`, agent).
   Add each new fix here. A fast-forward of public `main` closes the draft PR
   (#8), so open a new one after. [M, USER]
 
@@ -108,32 +112,13 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 
 ## Bugs
 
-- [0094] **`vector_store::shrinking_a_record_drops_its_extra_chunks` is flaky** (CI run
-  43741030947 on `8caa3ca`: 6 chunks left, expected 1; the re-run passed unchanged). Cause
-  not found; the sweep compares a content hash, so suspect shared state between tests. [S]
-- [0095] **Retention says "Nothing is tagged X any more" when the device and server disagree.**
-  The group counts the device's copy and the preview asks the server, so a stale device shows
-  144 due and an empty purge (dev phone, 2026-11-16, server reset drift). Say the list is stale. [S]
-- [0096] **Sidebar badges keep their count after the queue behind them is cleared**, until the
-  app restarts (his report, 2026-11-16). Likely a count fetched once and never refreshed on
-  the clearing action; related to [0037]. [S]
 - [0097] **A photo-only email fails the receipt handler** ("produced no extractable text": it
   reads the body and PDF text only), though the archive still files and reads the photo. Whether
   a receipt draft results is unverified (his test mail, dev uid 15062, 2026-11-16). [S]
-- [0027] **Frontend clippy lacks `--all-targets`** (verified, `ci.yml` wasm jobs). Adding it
-  trips a deliberate `expect(dead_code)` in `diagnostics.rs`. Raise that, never flip it. [XS]
-- [0028] **An oversized pushed event retries forever** (verified). The server answers 413,
-  and `sync/client.rs` treats only 400 as `Rejected`. Latent: real payloads are ~3 KB. [S]
 - [0029] **A zero-amount receipt draft got past the "no non-zero amount" check**: a single
   `Unmatched -0` posting, live 11-10. Cause unverified. [S]
-- [0030] **Citation chips show the record's kind, not its title** (verified). `EvidenceRef
-  .title` is `None` off the wire by design, and nothing resolves it locally. [S]
-- [0031] **The Ledger restores pre-wipe rows until Apply** (his nitpick, 11-10). A restored
-  list skips its first fetch, and a boot rebuild emits no `sync:applied`. [S]
 - [0032] **The desktop's post-update splash hang is back, intermittently** (his nitpick, 11-10;
   11-11 was clean). The desktop's log from that launch would settle it. [S–M]
-- [0033] **Mail attachments reach the vision model unrotated.** Captures are fixed. A
-  mail photo's EXIF orientation is ignored by `prepare_image`. [S]
 - [0034] **Unverified oddities:** `list_documents` with `mime: "image/jpeg"` returned nothing
   (10-01; the query looks right); the yahoo backfill lists uids descending against
   `docs/src/archive.md`; and whether the cursor-reset route takes a `-backfill` source. [XS]
@@ -146,8 +131,6 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
   and no push channel. The suspected stale paths are the `sync:applied` nudge and editor
   dirty-protect. [M]
 - [0038] **Wipe snapshots are never pruned, and a restore has never been tried.** [S]
-- [0039] **Small:** `archive::ingest_paths`/`walk_dir` are dead code; the photo picker keeps
-  showing "2 files"; a notes-search problem report lacks the query and result count. [XS each]
 
 ## From daily use — backlog
 
