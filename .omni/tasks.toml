@@ -565,7 +565,7 @@ ref    = "tasks.md § Cycle 5 sequence"
 [[task]]
 id     = "omni-me-0079"
 title  = "Notifications slice 1: ntfy, source-failure alerts, quiet hours"
-status = "todo"
+status = "done"
 size   = "M"
 ref    = "tasks.md § Cycle 5 sequence"
 
