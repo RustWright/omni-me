@@ -96,11 +96,15 @@ pub async fn set_global_config(
         .map_err(|e| format!("could not build the config event: {e}"))?;
     append_new_and_apply(&state, event).await?;
 
-    // The agent runs on a UTC box and only knows the hour, so the zone the
-    // person meant it in travels with the schedule.
+    // The server and agent run on a UTC box and only know the hour, so the zone
+    // the person meant it in travels with every schedule read in that zone.
     if matches!(
         key,
-        ConfigKey::AssistantCheckIn | ConfigKey::AssistantCheckInHour
+        ConfigKey::AssistantCheckIn
+            | ConfigKey::AssistantCheckInHour
+            | ConfigKey::NotifySummaryHour
+            | ConfigKey::NotifyQuietStart
+            | ConfigKey::NotifyQuietEnd
     ) {
         let tz = ConfigValue::Text(state.timezone.read().await.clone());
         if ConfigKey::AssistantCheckInTimezone.validate(&tz).is_ok() {

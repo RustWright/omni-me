@@ -7,11 +7,12 @@ use std::sync::Arc;
 
 use tauri::{Emitter, Manager};
 
-use omni_me_core::config::{ConfigMap, Feature, ResolvedConfig};
+use omni_me_core::config::{ConfigKey, ConfigMap, ConfigValue, Feature, ResolvedConfig};
 use omni_me_core::db::{self, Database};
 // The projection *list* lives in `registry`, not here — see `build_projections`.
 use omni_me_core::events::{
-    EventStore, EventWriter, ProjectionRunner, SurrealEventStore, load_persisted, registry,
+    EventStore, EventWriter, NewEvent, ProjectionRunner, SurrealEventStore, load_persisted,
+    registry,
 };
 use omni_me_core::ledger::{self, JournalArtifacts};
 use omni_me_core::runtime::ServerUrlPolicy;
@@ -706,6 +707,28 @@ pub fn run() {
                     omni_me_core::events::seed_journal_record_type(&db, &writer).await
                 {
                     tracing::warn!(error = %e, "could not seed the journal record type");
+                }
+
+                // The daily summary, quiet hours and check-ins run on a UTC box and
+                // read their hours in this zone, which stays UTC until a device stamps
+                // one. Stamping only on a schedule edit left unedited installs on UTC.
+                let zone = timezone_shared.read().await.clone();
+                let tz = ConfigValue::Text(zone.clone());
+                if !config.global.contains_key(&ConfigKey::AssistantCheckInTimezone)
+                    && zone != "UTC"
+                    && ConfigKey::AssistantCheckInTimezone.validate(&tz).is_ok()
+                {
+                    let stamped = match NewEvent::config_set(
+                        device_id.clone(),
+                        ConfigKey::AssistantCheckInTimezone,
+                        Some(tz),
+                    ) {
+                        Ok(event) => writer.append_new(event).await.map_err(|e| e.to_string()),
+                        Err(e) => Err(e.to_string()),
+                    };
+                    if let Err(e) = stamped {
+                        tracing::warn!(error = %e, "could not stamp the schedule time zone");
+                    }
                 }
 
                 let probe_target = probe_target_from_url(&server_url);
