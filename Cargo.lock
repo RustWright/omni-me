@@ -4370,7 +4370,7 @@ dependencies = [
 
 [[package]]
 name = "omni-me-agent"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "chrono",
  "omni-me-core",
@@ -4385,7 +4385,7 @@ dependencies = [
 
 [[package]]
 name = "omni-me-app"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -4410,7 +4410,7 @@ dependencies = [
 
 [[package]]
 name = "omni-me-core"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "async-imap",
  "async-trait",
@@ -4454,7 +4454,7 @@ dependencies = [
 
 [[package]]
 name = "omni-me-server"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "axum",
  "chrono",
