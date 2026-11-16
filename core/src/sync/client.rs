@@ -30,12 +30,24 @@ pub enum SyncError {
     Server(String),
     #[error("sync local error: {0}")]
     Local(String),
-    /// The server rejected the *content* of a push (HTTP 400): an unknown
-    /// `event_type` or a payload that fails `validate_payload`. Distinct from
+    /// The server rejected the *content* of a push (see `rejects_content`): an
+    /// unknown `event_type`, a payload that fails `validate_payload`, or an event
+    /// too large for the body limit on its own. Distinct from
     /// [`SyncError::Server`] because retrying is pointless — the same bytes will
     /// be rejected forever — so this drives isolation, not backoff.
     #[error("sync rejected by server: {0}")]
     Rejected(String),
+}
+
+/// Statuses that refuse the bytes themselves, so resending them can never pass:
+/// 400 from validation, 413 from the body limit, 422 from axum's `Json` decode.
+/// Bisection then isolates the event, where any other status would retry forever.
+fn rejects_content(status: reqwest::StatusCode) -> bool {
+    use reqwest::StatusCode;
+    matches!(
+        status,
+        StatusCode::BAD_REQUEST | StatusCode::PAYLOAD_TOO_LARGE | StatusCode::UNPROCESSABLE_ENTITY
+    )
 }
 
 /// Result of a sync operation.
@@ -544,7 +556,7 @@ impl SyncClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            if status == reqwest::StatusCode::BAD_REQUEST {
+            if rejects_content(status) {
                 return Err(SyncError::Rejected(body));
             }
             return Err(SyncError::Server(format!("push failed ({status}): {body}")));
@@ -600,6 +612,17 @@ fn chunk_for_push(events: &[Event]) -> Vec<Vec<NewEvent>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn content_refusals_isolate_and_outages_retry() {
+        use reqwest::StatusCode;
+        for refused in [400, 413, 422] {
+            assert!(rejects_content(StatusCode::from_u16(refused).unwrap()));
+        }
+        for transient in [401, 429, 500, 502, 503] {
+            assert!(!rejects_content(StatusCode::from_u16(transient).unwrap()));
+        }
+    }
 
     fn ev(id: &str, payload_len: usize) -> Event {
         Event {
