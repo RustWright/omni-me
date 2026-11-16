@@ -117,6 +117,9 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 - [0096] **Sidebar badges keep their count after the queue behind them is cleared**, until the
   app restarts (his report, 2026-11-16). Likely a count fetched once and never refreshed on
   the clearing action; related to [0037]. [S]
+- [0097] **A photo-only email fails the receipt handler** ("produced no extractable text": it
+  reads the body and PDF text only), though the archive still files and reads the photo. Whether
+  a receipt draft results is unverified (his test mail, dev uid 15062, 2026-11-16). [S]
 - [0027] **Frontend clippy lacks `--all-targets`** (verified, `ci.yml` wasm jobs). Adding it
   trips a deliberate `expect(dead_code)` in `diagnostics.rs`. Raise that, never flip it. [XS]
 - [0028] **An oversized pushed event retries forever** (verified). The server answers 413,

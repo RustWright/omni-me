@@ -683,3 +683,10 @@ title  = "Sidebar badges stale after a queue is cleared"
 status = "todo"
 size   = "S"
 ref    = "tasks.md § Bugs"
+
+[[task]]
+id     = "omni-me-0097"
+title  = "Photo-only email fails the receipt handler"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § Bugs"
