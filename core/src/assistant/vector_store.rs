@@ -653,8 +653,14 @@ mod tests {
         // rebuild after a scoped wipe leaves behind.
         db.query("DELETE FROM generic_notes").await.unwrap();
 
+        let id = "01JKVEC0000000000000000009";
+        let seen_before = index_vs_scan(&db, id).await;
         let report = sweep(&db, &config(), embedder).await.unwrap();
-        assert!(report.removed > 0, "pruned nothing: {report:?}");
+        assert!(
+            report.removed > 0,
+            "pruned nothing: {report:?}; chunks by index/scan before {seen_before:?}, after {:?}",
+            index_vs_scan(&db, id).await
+        );
         assert_eq!(
             count_chunks(&db).await,
             0,
@@ -687,9 +693,15 @@ mod tests {
             .bind(("id", "01JKVEC0000000000000000004"))
             .await
             .unwrap();
-        sweep(&db, &config(), embedder).await.unwrap();
+        let seen_before = index_vs_scan(&db, "01JKVEC0000000000000000004").await;
+        let report = sweep(&db, &config(), embedder).await.unwrap();
 
-        assert_eq!(count_chunks(&db).await, 1, "stale chunks survived the edit");
+        assert_eq!(
+            count_chunks(&db).await,
+            1,
+            "stale chunks survived the edit: {report:?}; by index/scan before {seen_before:?}, after {:?}",
+            index_vs_scan(&db, "01JKVEC0000000000000000004").await
+        );
     }
 
     /// A type whose projection has not run yet must not abandon the whole sweep:
@@ -803,6 +815,26 @@ mod tests {
             rendered.contains("idx_re_hnsw"),
             "the KNN query did not use the HNSW index; plan was {rendered}"
         );
+    }
+
+    /// One record's chunks counted through `idx_re_record`, then by a full scan.
+    /// Both flaky tests here fail on a delete keyed by that index finding nothing,
+    /// so a mismatch in a failure message points at the index, not the sweep.
+    async fn index_vs_scan(db: &Database, record_id: &str) -> (usize, usize) {
+        let mut counts = [0usize; 2];
+        for (i, hint) in ["", "WITH NOINDEX"].iter().enumerate() {
+            let mut resp = db
+                .query(format!(
+                    "SELECT count() AS n FROM {TABLE} {hint}
+                     WHERE record_type = 'note' AND record_id = $i GROUP ALL"
+                ))
+                .bind(("i", record_id.to_string()))
+                .await
+                .unwrap();
+            let rows: Vec<Value> = resp.take(0).unwrap();
+            counts[i] = rows.first().and_then(|v| v["n"].as_u64()).unwrap_or(0) as usize;
+        }
+        (counts[0], counts[1])
     }
 
     async fn count_chunks(db: &Database) -> usize {
