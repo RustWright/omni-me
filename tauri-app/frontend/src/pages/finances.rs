@@ -4239,8 +4239,8 @@ fn TransactionListView(
     // and accidental edits don't invalidate the current page until Apply.
     let mut active_filter: Signal<TxnFilter> = use_signal(|| init_filter.clone());
     let draft_filter: Signal<TxnFilter> = use_signal(|| init_filter.clone());
-    // One-shot: true only when we hydrated from the store, so the load effect
-    // below skips its first fetch (the rows are already populated).
+    // One-shot: true only when we hydrated from the store, so the load effect's
+    // first fetch re-reads every restored row rather than page 0 alone.
     let mut restored_pending = use_signal(|| restored.is_some());
     // Gate for the write-through mirror below: true once a fetch has actually
     // succeeded (or we hydrated from a non-empty stored list). Without it the
@@ -4248,11 +4248,10 @@ fn TransactionListView(
     // Mirrors the `hydrated` pattern `journal.rs` already uses.
     let mut loaded_ok = use_signal(|| restored.is_some());
 
-    // Load (or re-load) the first page whenever active_filter changes — except
-    // on the first run after a store-restore, where re-fetching would discard
-    // the rehydrated rows and scroll position. Also reads `sync_epoch` so a
-    // background pull (sync_refresh) — e.g. transactions imported on another
-    // device — refreshes the list without a manual navigation or Sync.
+    // Load (or re-load) the first page whenever active_filter changes. Also
+    // reads `sync_epoch` so a background pull (sync_refresh) — e.g. transactions
+    // imported on another device — refreshes the list without a manual
+    // navigation or Sync.
     let sync_epoch = crate::sync_refresh::use_sync_epoch();
     use_effect(move || {
         let _ = sync_epoch.read(); // subscribe: re-run on inbound sync
@@ -4260,17 +4259,21 @@ fn TransactionListView(
             let _ = ep.read(); // subscribe: re-run on a detail-pane mutation
         }
         let filter = active_filter.read().clone();
-        // peek (not read) so flipping the flag doesn't re-trigger this effect.
-        if *restored_pending.peek() {
+        // A restored list still re-fetches, to the extent already loaded so the
+        // scroll position holds: its rows can predate a wipe or a boot rebuild,
+        // and neither bumps the epoch. peek, so the flag doesn't re-trigger this.
+        let limit = if *restored_pending.peek() {
             restored_pending.set(false);
-            return;
-        }
+            (*offset.peek()).max(TXN_PAGE_SIZE)
+        } else {
+            TXN_PAGE_SIZE
+        };
         spawn(async move {
             loading.set(true);
             error.set(None);
-            match bridge::invoke_list_transactions(filter, TXN_PAGE_SIZE, 0).await {
+            match bridge::invoke_list_transactions(filter, limit, 0).await {
                 Ok(rows) => {
-                    has_more.set(rows.len() as u32 == TXN_PAGE_SIZE);
+                    has_more.set(rows.len() as u32 == limit);
                     offset.set(rows.len() as u32);
                     transactions.set(rows);
                     loaded_ok.set(true);
@@ -4908,7 +4911,10 @@ fn TransactionListRow(
     // Local mutable mirror of the prop so inline edits render optimistically
     // without waiting for a parent refetch. Backend errors revert the change
     // via the error toast on the chip itself.
-    let local = use_signal(|| txn.clone());
+    let mut local = use_signal(|| txn.clone());
+    // A re-fetched row keeps its key, so the mirror must follow the prop or it
+    // shows the row as first mounted, whatever the list now holds.
+    use_effect(use_reactive((&txn,), move |(txn,)| local.set(txn)));
     let snapshot = local.read().clone();
     let postings = posting_views(&snapshot.postings);
     let has_attachment = snapshot.attachment.is_some();
@@ -5091,8 +5097,9 @@ fn TransactionDetailBody(
     let sync_epoch = crate::sync_refresh::use_sync_epoch();
     // Local mirror of the prop for optimistic-edit updates. Same pattern as
     // TransactionListRow — backend writes succeed before the projection
-    // refresh would otherwise re-render us.
+    // refresh would otherwise re-render us. Follows the prop, as the row does.
     let mut local = use_signal(|| txn.clone());
+    use_effect(use_reactive((&txn,), move |(txn,)| local.set(txn)));
     let mut editing = use_signal(|| false);
     let mut confirm_delete = use_signal(|| false);
     let mut deleting = use_signal(|| false);
