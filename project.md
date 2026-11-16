@@ -256,6 +256,8 @@ These are settled. Do not re-open one without a new reason.
 - The release is the assistant, the archive and finances together. His sign-off on UX
   and performance is the gate.
 - A new day opens the journal on today. The same day restores the date last viewed.
+- Tab order, when configurable, is per device (device layer). The app opens on the first
+  visible tab of that order; there is no separate landing-tab key (2026-11-16).
 
 **Assistant engineering**
 - Keep our Rust loop, with no framework (`ASSISTANT_RESEARCH.md`). A full rewrite is
@@ -300,6 +302,10 @@ These are settled. Do not re-open one without a new reason.
   an own-account transfer are joined. A receipt with no total becomes one transaction.
 - Matching an authorisation plus its adjustment, and cross-currency reimbursements: dropped,
   matched by hand. Do not re-raise either unprompted.
+- One receipt to several charges: shelved, hand-merged, until more than 5 occur in one week.
+  False suggestions would cost more than the hand merges (2026-11-16).
+- Imported history keeps the granularity it was imported at (crypto stays monthly); feeds book
+  each purchase as it happens. No aggregation on import, no conversion (2026-11-16).
 - Bank feeds are the long-term source. Statements are for reconciliation and closing.
 - Old mail is archived on live by a slow backfill, with no financial extraction before the
   imported statements. Cursors and the backfill both start 2026-11-01.

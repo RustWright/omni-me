@@ -24,17 +24,19 @@ blocked_by = ["omni-me-0001"]
 
 [[task]]
 id     = "omni-me-0003"
-title  = "N-to-1 receipt matching: build it or not"
-status = "blocked"
+title  = "Match one receipt to several charges"
+status = "shelved"
 size   = "M"
-ref    = "tasks.md § Waiting on his decision"
+ref    = "tasks.md § Later cycles"
+note   = "Shelved 11-16: false suggestions would cost more than hand merges. Trigger: more than 5 in one week."
 
 [[task]]
 id     = "omni-me-0004"
 title  = "Dismiss or keep the two pre-November drafts in live review"
-status = "blocked"
+status = "done"
 size   = "USER"
 ref    = "tasks.md § Waiting on his decision"
+note   = "Already handled: his live review queue was clean (11-16)."
 
 [[task]]
 id     = "omni-me-0005"
@@ -53,44 +55,47 @@ ref    = "tasks.md § Waiting on his decision"
 [[task]]
 id     = "omni-me-0007"
 title  = "GitHub Support purge of the pre-S-W1 commits"
-status = "blocked"
+status = "cut"
 size   = "USER"
 ref    = "tasks.md § Waiting on his decision"
+note   = "Cut 11-16, his ruling: old SHAs still resolve, accepted. The repo had 0 forks, so a later purge would still be complete."
 
 [[task]]
 id     = "omni-me-0008"
-title  = "Decide whether multi-page reading is told that pages can repeat"
-status = "blocked"
+title  = "Tell multi-page reading that pages can repeat, guarded by two cases"
+status = "todo"
 size   = "XS"
-ref    = "tasks.md § Waiting on his decision"
+ref    = "tasks.md § From daily use — backlog"
 
 [[task]]
 id     = "omni-me-0009"
-title  = "Decide on a tap-target visual redesign across screens"
-status = "blocked"
-size   = "USER"
-ref    = "tasks.md § Waiting on his decision"
+title  = "Enlarge tap targets across screens"
+status = "shelved"
+size   = "M"
+ref    = "tasks.md § Later cycles"
+note   = "Shelved 11-16: no mis-taps in real use. Trigger: he reports one, or the screens are redesigned."
 
 [[task]]
 id     = "omni-me-0010"
-title  = "Check R27 account side: OpenRouter data collection and upstream retention"
+title  = "Note OpenRouter's privacy setting, then enforce deny + ZDR-only account-wide"
 status = "blocked"
 size   = "USER"
 ref    = "tasks.md § Waiting on his decision"
 
 [[task]]
 id     = "omni-me-0011"
-title  = "Tab order without a recompile: global or per device?"
-status = "blocked"
+title  = "Configurable tab order, per device"
+status = "todo"
 size   = "M"
-ref    = "tasks.md § Waiting on his decision"
+ref    = "tasks.md § From daily use — backlog"
 
 [[task]]
 id     = "omni-me-0012"
 title  = "Confirm whether crypto modelled monthly was intended"
-status = "blocked"
+status = "cut"
 size   = "XS"
-ref    = "tasks.md § Waiting on his decision"
+ref    = "project.md § Decisions in force"
+note   = "Superseded 11-16: feeds book each purchase as it happens; imported history stays monthly."
 
 [[task]]
 id     = "omni-me-0013"

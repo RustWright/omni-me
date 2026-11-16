@@ -25,26 +25,12 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 
 ## Waiting on his decision
 
-- [0003] **N-to-1 receipt matching: build it or not.** `find_match_candidates` pairs one
-  receipt with one same-amount charge, so a booking billed as several charges (the flights)
-  always needs a hand merge. [M if built]
-- [0004] **Two pre-November drafts in live review:** a 10-30 rent e-transfer (795.00) and a
-  10-31 grocery "add more items" mail. Dismiss or keep. [USER]
 - [0006] **R2 for the off-box blob copy:** his Cloudflare account, a bucket and a scoped
-  API token. I build the backup job after that. Blobs have exactly one copy today. [USER, then S]
-- [0007] **GitHub Support purge of the pre-S-W1 commits** (optional). GitHub still serves
-  them by SHA. [USER]
-- [0008] **F3's open half:** should multi-page reading be told that pages can repeat? A
-  two-page receipt double-counted, and the cross-check caught it. [XS]
-- [0009] **Tap targets:** a visual redesign across screens. The worst are Settings' feature
-  toggles at 358×20 and Journal's "Raw properties" at 104×16. [M, USER]
-- [0010] **R27's account side:** OpenRouter's data-collection setting and the upstreams'
-  retention. [USER]
-- [0011] **Tab order without a recompile: global or per device?** Decide the landing tab's
-  own key at the same time, because `home_tab()` is the first visible tab. A tab missing from
-  a stored order is appended. [M]
-- [0012] **Crypto is modelled monthly** (60 of 62 daily rows against 4 aggregates; balances
-  exact). Was that intended? [XS]
+  API token. I build the backup job after that. Blobs have exactly one copy today. Offered as
+  a live walkthrough 11-16; he chose later. [USER, then S]
+- [0010] **R27's account side, ruled 11-16:** in OpenRouter he notes the current privacy
+  setting (settles the look-back), then turns on account-wide deny data collection + ZDR-only.
+  A model that loses its only route then fails loudly, not silently. [USER]
 - [0013] **When the authoritative receipt fails to price**, should review offer the
   confirmation's estimate as a fallback? Ask before building. [S]
 - [0014] **Should a persisted `server_url` outrank a compile-time default** that changed
@@ -131,6 +117,9 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
   and the catalogue offers no filter over it, so "my current beliefs" cannot be listed. [S]
 
 **Archive and import**
+- [0008] **Tell multi-page reading that pages can repeat** (ruled 11-16): a later page may
+  repeat lines, count each once, a page showing the charged amount gives the total. Guard with
+  two cases: the 10-02 repeating receipt and the `extraction/mod.rs:1281` tip slip. [XS]
 - [0047] **Say "4 items listed, the total covers more"** on a receipt whose items fall short
   of its total. The money side is already right. [S]
 - [0048] **The retention scan is capped at 500 documents per open and runs on the device.**
@@ -156,6 +145,9 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 **Generalization, trailing** (`docs/src/invariants.md` is the contract)
 - [0056] **Preset picker UI, extra presets, record-type export and import, setup guides.**
   The small constants now have a home (`FORCE_GENERIC_DIRS`, vault naming). [M–L]
+- [0011] **Tab order without a recompile** (ruled 11-16: per device, in the device config
+  layer). The app opens on the first visible tab of that order, with no separate key. A tab
+  missing from a stored order is appended in default order. Not urgent. [M]
 - [0057] **Publish the mdbook.** Pages has never been enabled. Turn it on, then set
   `vars.PUBLISH_DOCS`. Held until there is a setup guide to follow. [XS, USER]
 
@@ -207,6 +199,11 @@ generic IMAP config source.
 - [0074] **Task and project records** (sequence item 4). These gate estimation calibration,
   and the assistant gains them with no assistant code. His next big push (2026-11-15): this
   with day/week/month planning and a personal CRM; penalty-dated bills land there. [L]
+- [0003] **One receipt to several charges** (shelved 11-16). Trigger: more than 5 in one week.
+  App merge refuses legs that do not cancel (`plan_merge`), so there is no in-app path today;
+  the hand workaround (edit one charge to the sum, delete the other) is unverified. [M]
+- [0009] **Tap targets** (shelved 11-16: no mis-taps in real use). Trigger: he reports one, or
+  the LLM-primary push redesigns the surviving screens. A global min-hit-area floor first. [S–M]
 - Filed, not scheduled: inbox management · Open Banking Canada · Gmail write-back (once trust
   is built) · blobs on object storage and the agent on its own machine (these must not
   complicate the co-located design).
