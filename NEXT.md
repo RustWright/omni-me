@@ -4,13 +4,18 @@
 live in `project.md` § Decisions in force, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`),
 rationale in `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
-## ▶ NEXT ACTION — [0001] today: the weekly WS buys arrive whole, then release 1.2.4 [0002]
-All four logbooks are live on mylearnbase ([0085] `2c8bd13`, [0088] `c556942`, [0087] `f980985`,
-[0086] `7ce2eb8`). Logbook form lessons are in `editorial/editing.md` § House style and
-`editorial/logbook.md` § Deployment detail throughout. 1.2.4 carries live's ntfy `.env` lines
-([0079]). Dev's daily summary reached the phone and its tap opened Archive, but at 19:00 UTC:
-the zone defaulted to UTC, fixed in `8a03d19` (in the 1.2.4 queue).
-- The audit trail for the stretch: overlay `DECISION_LOG_2026-11-13.md`.
+## ▶ NEXT ACTION — overnight unattended run, 2026-11-16 (his choice: sets A and B)
+Work through in order, one commit per fix. Each fix: CI on the overlay (dispatch rules below),
+then a dev build on the dev phone, driven over CDP (`~/omni-dev-tools/cdp/`) to verify on device.
+A fix that passes both goes into the 1.2.4 queue, `tasks.md` [0002]. Log every judgement call in a
+new overlay `DECISION_LOG_2026-11-16.md`; back up dev data before mutating it. Nothing on live.
+- **A, visible (release candidates):** [0096] sidebar badges stale after a queue clears · [0030]
+  citation chips show kind, not title · [0095] retention stale-list message · [0031] Ledger shows
+  pre-wipe rows until Apply · [0033] mail photos unrotated · device check of `8a03d19` (zone stamp).
+- **B, hidden:** [0028] 413 push retries forever · [0094] flaky shrink test · [0027] frontend
+  clippy `--all-targets` · [0039] small cleanups.
+- Out of scope tonight: [0029] and the assistant features ([0040], [0075]); anything waiting on him.
+- Morning, his: [0001] the WS buys check, then his go on 1.2.4 [0002] with live's ntfy lines [0079].
 
 ⛔ Live is the pause: every live step waits for his go, one at a time. Production deploys, releases
 and writes to live data are his to run (the permission check refuses mine), so hand him the command.
@@ -21,7 +26,6 @@ public_ref=<full SHA>` before any build. Live tools: `~/omni-dev-tools/`.
 
 ## ⛔ Waiting on him
 - **Rename four real fixtures** on the machine holding `.reference/`, [0093]: commands in the overlay log.
-- **His go on 1.2.4** once [0001] passes, [0002].
 - **His decisions, `tasks.md` § Waiting on his decision:** [0003]–[0016], unchanged.
 - **Promoting ~11 general feedback notes to `~/.claude/rules/`:** the always-loaded tier is at 315 of
   320 lines, so promotion means compressing something. His call on what.
