@@ -1206,6 +1206,10 @@ fn PurgeGroup(
                     p { class: "text-sm text-obsidian-text",
                         if single {
                             "This document is already gone."
+                        } else if archived_before.is_some() {
+                            // The group was counted from this device's copy, the
+                            // preview from the server's; empty here means they disagree.
+                            "The server has nothing under \"{tag}\" due yet. The count came from this device's copy, which is out of step with the server, so nothing will be deleted."
                         } else {
                             "Nothing is tagged \"{tag}\" any more."
                         }
