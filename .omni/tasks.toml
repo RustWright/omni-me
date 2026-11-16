@@ -17,7 +17,7 @@ due    = 2026-11-16
 [[task]]
 id     = "omni-me-0002"
 title  = "Release 1.2.4 from the batched fix queue"
-status = "todo"
+status = "done"
 size   = "USER"
 ref    = "tasks.md § Now — dated"
 blocked_by = ["omni-me-0001"]

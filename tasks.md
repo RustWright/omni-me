@@ -22,30 +22,6 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 - [0001] **11-16: the weekly WS buys arrive whole**: two legs, units to the ticker
   account, no `Unmatched`. The fix shipped 11-12 (overlay `05e67a9`, driver copied to live's
   `/opt/omni-ws`), and only a new buy proves it. [XS]
-- [0002] **Release 1.2.4, his go** ([0001] no longer gates it, his call 11-16). STAGED 11-16:
-  public stamp `eb1ecd3`, overlay lock `704d59e` (pushed), overlay `main` merge `dbc0a18`
-  (pushed 11-16). ✅ SERVER LIVE 15:19Z: deploy `43889673336`, `sha-dbc0a18` + agent
-  `dev-eb1ecd3` (was `dev-0b0bccf`), healthy after 65 checks; boot logs ntfy on (`omni-alerts`).
-  ✅ RELEASED 15:59Z: App release `43895553118`, all three jobs green; manifests 1.2.4 both, APK
-  served whole (57.0 MB), sha256 = manifest (`52c18039…`), AppImage served. ⏳ His: update both
-  devices. CI on the stamp: public `43882029864`, overlay push
-  `43882046339`, paired dispatch `43882045213`, agent `43882072128`. Queue: `63728f7` (tax-authority notices
-  file as statements; server) and `918a9d5` (retention review shows the counted-from date;
-  server + app). Also on the branch since: the job contract and Settings → Jobs (`d6ded9e`),
-  ntfy alerts and quiet hours (`a9cd960`), the demo build (`dd0bc0c`), the daily summary and
-  per-kind alert tiers with the weekly budget line, the large-charge alert (`f41842d`), and the
-  `omni-me://` tap links (`d1e8482`, app; verified on the S9), and the schedule zone stamped on
-  any schedule edit and at first launch (`8a03d19`, app; dev's summary came at 19:00 UTC). The
-  server now folds the assistant projection: one ~4 min replay at that deploy, inside the gate.
-  Overnight 11-16, each verified on dev (overlay `DECISION_LOG_2026-11-16.md`): badges
-  (`da59817`), citation titles (`f549578`), retention stale message (`d59fbc6`), Ledger
-  restore (`80c3773`), mail photos upright (`a97e46e`, server), 413/422 isolate (`1769e9b`),
-  pickers + search report (`5efb62f`), sweep conflict retry (`ec45229`, agent).
-  Add each new fix here. A fast-forward of public `main` closes the draft PR
-  (#8), so open a new one after. [M, USER]
-
-## Cycle 5 sequence (design session, 2026-11-12; rulings in `project.md` § Notifications, § Agent framework)
-
 
 ## Waiting on his decision
 
@@ -118,8 +94,9 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
   a receipt draft results is unverified (his test mail, dev uid 15062, 2026-11-16). [S]
 - [0029] **A zero-amount receipt draft got past the "no non-zero amount" check**: a single
   `Unmatched -0` posting, live 11-10. Cause unverified. [S]
-- [0032] **The desktop's post-update splash hang is back, intermittently** (his nitpick, 11-10;
-  11-11 was clean). The desktop's log from that launch would settle it. [S–M]
+- [0032] **The desktop's post-update splash hang is back, intermittently** (11-10 hung, 11-11
+  clean, 11-16 hung on 1.2.3→1.2.4; a restart clears it). The app logs to stderr only, so an
+  updater launch leaves no log: capture needs a file writer or a terminal launch. [S–M]
 - [0034] **Unverified oddities:** `list_documents` with `mime: "image/jpeg"` returned nothing
   (10-01; the query looks right); the yahoo backfill lists uids descending against
   `docs/src/archive.md`; and whether the cursor-reset route takes a `-backfill` source. [XS]
