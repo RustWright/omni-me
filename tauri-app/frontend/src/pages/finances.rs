@@ -4238,8 +4238,8 @@ fn TransactionListView(
     // and accidental edits don't invalidate the current page until Apply.
     let mut active_filter: Signal<TxnFilter> = use_signal(|| init_filter.clone());
     let draft_filter: Signal<TxnFilter> = use_signal(|| init_filter.clone());
-    // One-shot: true only when we hydrated from the store, so the load effect
-    // below skips its first fetch (the rows are already populated).
+    // One-shot: true only when we hydrated from the store, so the load effect's
+    // first fetch re-reads every restored row rather than page 0 alone.
     let mut restored_pending = use_signal(|| restored.is_some());
     // Gate for the write-through mirror below: true once a fetch has actually
     // succeeded (or we hydrated from a non-empty stored list). Without it the
@@ -4247,11 +4247,10 @@ fn TransactionListView(
     // Mirrors the `hydrated` pattern `journal.rs` already uses.
     let mut loaded_ok = use_signal(|| restored.is_some());
 
-    // Load (or re-load) the first page whenever active_filter changes — except
-    // on the first run after a store-restore, where re-fetching would discard
-    // the rehydrated rows and scroll position. Also reads `sync_epoch` so a
-    // background pull (sync_refresh) — e.g. transactions imported on another
-    // device — refreshes the list without a manual navigation or Sync.
+    // Load (or re-load) the first page whenever active_filter changes. Also
+    // reads `sync_epoch` so a background pull (sync_refresh) — e.g. transactions
+    // imported on another device — refreshes the list without a manual
+    // navigation or Sync.
     let sync_epoch = crate::sync_refresh::use_sync_epoch();
     use_effect(move || {
         let _ = sync_epoch.read(); // subscribe: re-run on inbound sync
@@ -4259,17 +4258,21 @@ fn TransactionListView(
             let _ = ep.read(); // subscribe: re-run on a detail-pane mutation
         }
         let filter = active_filter.read().clone();
-        // peek (not read) so flipping the flag doesn't re-trigger this effect.
-        if *restored_pending.peek() {
+        // A restored list still re-fetches, to the extent already loaded so the
+        // scroll position holds: its rows can predate a wipe or a boot rebuild,
+        // and neither bumps the epoch. peek, so the flag doesn't re-trigger this.
+        let limit = if *restored_pending.peek() {
             restored_pending.set(false);
-            return;
-        }
+            (*offset.peek()).max(TXN_PAGE_SIZE)
+        } else {
+            TXN_PAGE_SIZE
+        };
         spawn(async move {
             loading.set(true);
             error.set(None);
-            match bridge::invoke_list_transactions(filter, TXN_PAGE_SIZE, 0).await {
+            match bridge::invoke_list_transactions(filter, limit, 0).await {
                 Ok(rows) => {
-                    has_more.set(rows.len() as u32 == TXN_PAGE_SIZE);
+                    has_more.set(rows.len() as u32 == limit);
                     offset.set(rows.len() as u32);
                     transactions.set(rows);
                     loaded_ok.set(true);
