@@ -1,6 +1,7 @@
 mod approvals;
 mod autosave;
 mod bridge;
+mod citations;
 mod components;
 mod continuity;
 mod diagnostics;

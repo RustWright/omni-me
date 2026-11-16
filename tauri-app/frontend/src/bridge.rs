@@ -5294,6 +5294,25 @@ pub async fn invoke_list_beliefs(
     }
 }
 
+/// Current titles for cited records, as `(kind, id, title)`; unresolved pairs
+/// are absent.
+pub async fn invoke_citation_titles(
+    refs: Vec<(String, String)>,
+) -> Result<Vec<(String, String, String)>, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(mock_assistant::citation_titles(refs))
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {
+            refs: Vec<(String, String)>,
+        }
+        invoke("citation_titles", &Args { refs }).await
+    }
+}
+
 /// How each action has fared, and whether it is granted autonomy.
 pub async fn invoke_list_action_records() -> Result<Vec<crate::types::ActionRecord>, String> {
     #[cfg(feature = "mock")]
@@ -5660,6 +5679,15 @@ mod mock_assistant {
 
     thread_local! {
         static GRANTS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    }
+
+    /// A journal entry's handle is its date, which is also its id. Other kinds stay
+    /// unresolved, so the demo shows both a titled chip and the kind fallback.
+    pub fn citation_titles(refs: Vec<(String, String)>) -> Vec<(String, String, String)> {
+        refs.into_iter()
+            .filter(|(kind, _)| kind == "journal")
+            .map(|(kind, id)| (kind, id.clone(), id))
+            .collect()
     }
 
     /// ⚠️ One fixture is **irreversible**, so a browser sweep reaches the case

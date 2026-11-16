@@ -26,6 +26,12 @@ pub fn ProposalCard(proposal: AssistantProposal, on_decided: EventHandler<()>) -
     let summary = proposal.summary();
     let detail = proposal.detail();
     let evidence = proposal.evidence();
+    let titles = crate::citations::use_citation_titles(
+        evidence
+            .iter()
+            .map(|c| (c.kind.clone(), c.id.clone()))
+            .collect(),
+    );
     let cites_evidence = proposal.cites_evidence();
     // Resolved to a finished sentence up front. Any value at all means settled,
     // including one a newer build wrote that this one cannot name.
@@ -96,7 +102,7 @@ pub fn ProposalCard(proposal: AssistantProposal, on_decided: EventHandler<()>) -
                             span {
                                 key: "{cite.kind}-{cite.id}",
                                 class: "text-obsidian-text-muted text-xs px-1.5 py-0.5 rounded bg-obsidian-border/10",
-                                "{cite.title.clone().unwrap_or_else(|| cite.kind.clone())}"
+                                "{crate::citations::chip_label(&titles, &cite.kind, &cite.id, cite.title.as_ref())}"
                             }
                         }
                     }

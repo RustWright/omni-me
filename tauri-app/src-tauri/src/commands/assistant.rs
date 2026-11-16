@@ -301,6 +301,24 @@ pub async fn list_beliefs_due_for_review(
         .map_err(|e| e.to_string())
 }
 
+/// Current titles for cited `(kind, id)` pairs, as `(kind, id, title)`. Pairs
+/// with no resolvable title are left out; the chip then shows the kind.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn citation_titles(
+    state: State<'_, AppState>,
+    refs: Vec<(String, String)>,
+) -> Result<Vec<(String, String, String)>, String> {
+    require_feature(&state, Feature::Llm)?;
+    let config = state.config.read().await.clone();
+    let titles = omni_me_core::assistant::store::citation_titles(&state.db, &config, &refs)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(titles
+        .into_iter()
+        .map(|((kind, id), title)| (kind, id, title))
+        .collect())
+}
+
 /// How each action has fared at the approval gate, and whether it is granted.
 ///
 /// The evidence a person needs before deciding to stop being asked about

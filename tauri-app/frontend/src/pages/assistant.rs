@@ -554,6 +554,13 @@ fn MemoryView(on_back: EventHandler<()>) -> Element {
 
 #[component]
 fn BeliefCard(belief: Belief) -> Element {
+    let titles = crate::citations::use_citation_titles(
+        belief
+            .evidence
+            .iter()
+            .map(|c| (c.kind.clone(), c.id.clone()))
+            .collect(),
+    );
     let live = belief.is_live();
     let card = if live {
         "rounded-md border border-obsidian-border/20 bg-obsidian-sidebar px-3 py-3 flex flex-col gap-2"
@@ -589,7 +596,7 @@ fn BeliefCard(belief: Belief) -> Element {
                         span {
                             key: "{cite.kind}-{cite.id}",
                             class: "text-obsidian-text-muted text-xs px-1.5 py-0.5 rounded bg-obsidian-border/10",
-                            "{cite.title.clone().unwrap_or_else(|| cite.kind.clone())}"
+                            "{crate::citations::chip_label(&titles, &cite.kind, &cite.id, cite.title.as_ref())}"
                         }
                     }
                 }
@@ -965,6 +972,12 @@ fn MessageBubble(message: AssistantMessage) -> Element {
     // the log, not for a person deciding whether to ask again.
     let failure = message.failure_note();
     let citations = message.records_read.clone().unwrap_or_default();
+    let titles = crate::citations::use_citation_titles(
+        citations
+            .iter()
+            .map(|c| (c.kind.clone(), c.id.clone()))
+            .collect(),
+    );
 
     rsx! {
         div { class: "flex flex-col gap-1",
@@ -989,14 +1002,10 @@ fn MessageBubble(message: AssistantMessage) -> Element {
                 div { class: "self-start flex flex-wrap gap-1 pl-1",
                     span { class: "text-obsidian-text-muted text-xs", "From:" }
                     for cite in citations.iter() {
-                        // ⚠️ The event carries no title on purpose, so a renamed
-                        // record still cites correctly. Until this resolves the
-                        // name from the local record tables, the kind is what
-                        // there is to show — an id would be worse than useless.
                         span {
                             key: "{cite.kind}-{cite.id}",
                             class: "text-obsidian-text-muted text-xs px-1.5 py-0.5 rounded bg-obsidian-border/10",
-                            "{cite.title.clone().unwrap_or_else(|| cite.kind.clone())}"
+                            "{crate::citations::chip_label(&titles, &cite.kind, &cite.id, cite.title.as_ref())}"
                         }
                     }
                 }

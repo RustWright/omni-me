@@ -308,6 +308,32 @@ pub async fn handles_for(
         .collect())
 }
 
+/// Current titles for cited records, keyed by `(kind, id)`.
+///
+/// Citations carry no title on purpose (see `answer::records_read`), so the
+/// client asks here. A kind this build hides or lacks, or a record that is gone,
+/// is absent from the map and the chip keeps showing the kind.
+pub async fn citation_titles(
+    db: &Database,
+    config: &crate::config::ResolvedConfig,
+    refs: &[(String, String)],
+) -> Result<std::collections::HashMap<(String, String), String>, DbError> {
+    let mut by_kind: std::collections::BTreeMap<&str, Vec<String>> = Default::default();
+    for (kind, id) in refs {
+        by_kind.entry(kind.as_str()).or_default().push(id.clone());
+    }
+    let mut out = std::collections::HashMap::new();
+    for (kind, ids) in by_kind {
+        let Some(entry) = super::catalog::lookup(config, kind) else {
+            continue;
+        };
+        for (id, title) in handles_for(db, entry, &ids).await? {
+            out.insert((kind.to_string(), id), title);
+        }
+    }
+    Ok(out)
+}
+
 /// A listed row. Distinct from [`RawHit`] because a listing has no relevance —
 /// nothing was matched — and selecting `0 AS score` to reuse the search row
 /// instead fails to decode, which surfaces as "could not be listed".
@@ -1719,6 +1745,24 @@ mod tests {
                 .await
                 .unwrap()
                 .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn citation_titles_resolve_known_records_and_skip_the_rest() {
+        let db = test_db().await;
+        seed_transaction(&db, "t1", "Shawarma Palace", false).await;
+        let config = crate::config::ResolvedConfig::new(Default::default(), Default::default());
+        let refs = [
+            ("transaction".to_string(), "t1".to_string()),
+            ("transaction".to_string(), "gone".to_string()),
+            ("no_such_kind".to_string(), "t1".to_string()),
+        ];
+        let titles = citation_titles(&db, &config, &refs).await.unwrap();
+        assert_eq!(titles.len(), 1);
+        assert_eq!(
+            titles[&("transaction".to_string(), "t1".to_string())],
+            "Shawarma Palace"
         );
     }
 

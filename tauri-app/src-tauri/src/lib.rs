@@ -895,6 +895,7 @@ pub fn run() {
             commands::assistant::delete_assistant_thread,
             commands::assistant::list_beliefs,
             commands::assistant::list_beliefs_due_for_review,
+            commands::assistant::citation_titles,
             commands::assistant::list_action_records,
             commands::assistant::set_action_autonomy,
             // Feedback capture
