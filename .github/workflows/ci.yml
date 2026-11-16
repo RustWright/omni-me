@@ -334,11 +334,11 @@ jobs:
       # in one says nothing about the other.
       - name: Clippy (mock)
         working-directory: tauri-app/frontend
-        run: cargo clippy --target wasm32-unknown-unknown --features mock -- -D warnings
+        run: cargo clippy --target wasm32-unknown-unknown --all-targets --features mock -- -D warnings
 
       - name: Clippy (non-mock)
         working-directory: tauri-app/frontend
-        run: cargo clippy --target wasm32-unknown-unknown -- -D warnings
+        run: cargo clippy --target wasm32-unknown-unknown --all-targets -- -D warnings
 
       # Phone-width layout sweep. The archive detail view shipped overflowing the
       # screen and review never saw it, because the defect is a measurement — a
