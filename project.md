@@ -6,7 +6,8 @@ event-sourced store, with an LLM deriving structure from raw notes. Tauri v2
 Open-core: the bank-free engine is public, a private overlay carries real
 sources and credentials.
 
-**Status (2026-11-12):** **v1.2.3 is live and in daily use.** The go-live sequence
+**Status (2026-11-16):** **v1.2.4 is live** (server, agent and apps released 11-16; ntfy alerts on).
+**v1.2.3 went live 2026-11-11.** The go-live sequence
 finished 2026-11-11: server 1.2.3 on the box, the agent running there, both devices on
 1.2.3, the Finances tab on, the historical ledger (11,048 transactions) and the document
 corpus imported, and mail and bank feeds running from 2026-11-01. Small fixes now batch

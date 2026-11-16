@@ -26,7 +26,9 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
   public stamp `eb1ecd3`, overlay lock `704d59e` (pushed), overlay `main` merge `dbc0a18`
   (pushed 11-16). ✅ SERVER LIVE 15:19Z: deploy `43889673336`, `sha-dbc0a18` + agent
   `dev-eb1ecd3` (was `dev-0b0bccf`), healthy after 65 checks; boot logs ntfy on (`omni-alerts`).
-  ⏳ His: App release `version=1.2.4`. CI on the stamp: public `43882029864`, overlay push
+  ✅ RELEASED 15:59Z: App release `43895553118`, all three jobs green; manifests 1.2.4 both, APK
+  served whole (57.0 MB), sha256 = manifest (`52c18039…`), AppImage served. ⏳ His: update both
+  devices. CI on the stamp: public `43882029864`, overlay push
   `43882046339`, paired dispatch `43882045213`, agent `43882072128`. Queue: `63728f7` (tax-authority notices
   file as statements; server) and `918a9d5` (retention review shows the counted-from date;
   server + app). Also on the branch since: the job contract and Settings → Jobs (`d6ded9e`),
