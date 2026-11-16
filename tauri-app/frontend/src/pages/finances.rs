@@ -3770,7 +3770,11 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
                                     let res = bridge::invoke_dismiss_batch(&batch_id, None).await;
                                     busy.set(false);
                                     match res {
-                                        Ok(()) => on_done.call(()),
+                                        Ok(()) => {
+                                            // The nav badge counts this batch; commit bumps too.
+                                            crate::sync_refresh::bump_sync_epoch(sync_epoch);
+                                            on_done.call(())
+                                        }
                                         Err(e) => feedback.set(Some(format!("Dismiss failed: {e}"))),
                                     }
                                 });
@@ -5082,6 +5086,8 @@ fn TransactionDetailBody(
             h.call(());
         }
     };
+    // Deleting an Unmatched row shrinks the nav badge, which the host cannot see.
+    let sync_epoch = crate::sync_refresh::use_sync_epoch();
     // Local mirror of the prop for optimistic-edit updates. Same pattern as
     // TransactionListRow — backend writes succeed before the projection
     // refresh would otherwise re-render us.
@@ -5159,6 +5165,7 @@ fn TransactionDetailBody(
         spawn(async move {
             match bridge::invoke_delete_transaction(&id).await {
                 Ok(()) => {
+                    crate::sync_refresh::bump_sync_epoch(sync_epoch);
                     notify_mutated();
                     on_back.call(());
                 }
@@ -5281,6 +5288,8 @@ fn TransactionEditForm(
     on_cancel: EventHandler<()>,
 ) -> Element {
     let account_suggestions = use_context::<AccountSuggestions>();
+    // An edit can move a leg off Unmatched, which the nav badge counts.
+    let sync_epoch = crate::sync_refresh::use_sync_epoch();
     let mut saving = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
     let seed = TxnFields {
@@ -5314,6 +5323,7 @@ fn TransactionEditForm(
                 Ok(()) => {
                     saving.set(false);
                     account_suggestions.refresh();
+                    crate::sync_refresh::bump_sync_epoch(sync_epoch);
                     on_saved.call(updated);
                 }
                 Err(e) => {
@@ -7554,6 +7564,8 @@ fn ReconciliationReviewView(on_back: EventHandler<()>) -> Element {
     let mut busy: Signal<Option<String>> = use_signal(|| None);
     let mut bulk: Signal<Option<BulkAction>> = use_signal(|| None);
     let mut bulk_progress: Signal<Option<(usize, usize)>> = use_signal(|| None);
+    // Every merge and resolve shrinks the Unmatched count the nav badge shows.
+    let sync_epoch = crate::sync_refresh::use_sync_epoch();
 
     let refresh = move || {
         spawn(async move {
@@ -7576,6 +7588,10 @@ fn ReconciliationReviewView(on_back: EventHandler<()>) -> Element {
     use_effect(move || {
         refresh();
     });
+    let after_write = move || {
+        crate::sync_refresh::bump_sync_epoch(sync_epoch);
+        refresh();
+    };
 
     // Drop a merged pair, and every other pair naming either side, at once.
     let forget_pair = move |primary_id: &str, secondary_id: &str| {
@@ -7599,7 +7615,7 @@ fn ReconciliationReviewView(on_back: EventHandler<()>) -> Element {
             match bridge::invoke_merge_transactions(&primary_id, &secondary_id).await {
                 Ok(_) => {
                     forget_pair(&primary_id, &secondary_id);
-                    refresh();
+                    after_write();
                 }
                 Err(e) => load_error.set(Some(format!("Merge failed: {e}"))),
             }
@@ -7620,7 +7636,7 @@ fn ReconciliationReviewView(on_back: EventHandler<()>) -> Element {
                 Ok(()) => {
                     forget_row(&txn_id);
                     account_suggestions.refresh();
-                    refresh();
+                    after_write();
                 }
                 Err(e) => load_error.set(Some(format!("Resolve failed: {e}"))),
             }
@@ -7683,7 +7699,7 @@ fn ReconciliationReviewView(on_back: EventHandler<()>) -> Element {
                     failures.join("\n")
                 )));
             }
-            refresh();
+            after_write();
         });
     };
 

@@ -15,10 +15,9 @@
 //! strictly "a pull landed". A LOCAL write bumps it too when it commits data
 //! another mounted view is already displaying — see [`bump_sync_epoch`], which
 //! is the only way it should be done and carries the reason the inbound half
-//! cannot cover it. Three callers today: committing an import batch (the Ledger's
-//! cached page would otherwise show pre-approval rows until a filter Apply),
-//! deciding a proposal, and correcting a document field — the last two because
-//! the nav badges count queues neither of those components can see.
+//! cannot cover it. Any write that can shrink a queue the nav badges count must
+//! bump (`core::approvals::summary` lists the queues), or the badge keeps its
+//! count until the next inbound pull or a restart.
 //! Prefer this over threading a
 //! bespoke signal between two views: any read view that subscribes gets every
 //! source of change for free. Active editors
