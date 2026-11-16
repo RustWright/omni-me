@@ -22,7 +22,11 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 - [0001] **11-16: the weekly WS buys arrive whole**: two legs, units to the ticker
   account, no `Unmatched`. The fix shipped 11-12 (overlay `05e67a9`, driver copied to live's
   `/opt/omni-ws`), and only a new buy proves it. [XS]
-- [0002] **Release 1.2.4, after [0001], his go.** Queue: `63728f7` (tax-authority notices
+- [0002] **Release 1.2.4, his go** ([0001] no longer gates it, his call 11-16). STAGED 11-16:
+  public stamp `eb1ecd3`, overlay lock `704d59e` (pushed), overlay `main` merge `dbc0a18` LOCAL
+  only. All green on the stamp: public CI `43882029864`, overlay push `43882046339` and paired
+  dispatch `43882045213`, agent image `…-agent:dev-eb1ecd3` (`43882072128`; live's agent is
+  `dev-0b0bccf` since 11-11). Queue: `63728f7` (tax-authority notices
   file as statements; server) and `918a9d5` (retention review shows the counted-from date;
   server + app). Also on the branch since: the job contract and Settings → Jobs (`d6ded9e`),
   ntfy alerts and quiet hours (`a9cd960`), the demo build (`dd0bc0c`), the daily summary and
@@ -42,9 +46,6 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 - [0079] **Slice 1's live half:** ntfy is up on the box (2026-11-15), both logins made, the token
   in both credentials files, the phone subscribed. Left: live's two `.env` lines (overlay
   `deploy/ntfy/README.md` step 3) at the 1.2.4 deploy, [0002]. [S, USER]
-- [0093] **Rename four real fixtures in `.reference/imap poller/`** on the machine that holds
-  them, to the role names the tests now read ([0072], 2026-11-15). Commands in the overlay's
-  `DECISION_LOG_2026-11-13.md`; until then those tests skip there. [XS, USER]
 
 ## Waiting on his decision
 

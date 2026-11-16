@@ -659,7 +659,7 @@ ref    = "tasks.md § Cycle 5 sequence"
 [[task]]
 id     = "omni-me-0093"
 title  = "Rename the real imap fixtures to the role names the tests read"
-status = "todo"
+status = "done"
 size   = "XS"
 ref    = "tasks.md § Cycle 5 sequence"
 
