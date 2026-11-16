@@ -296,8 +296,8 @@ pub fn photos_to_pdf(photos: &[&[u8]]) -> Result<Vec<u8>, MediaError> {
     Ok(pdf.finish())
 }
 
-/// Prepare a single image for the request: downscale if oversized, otherwise
-/// pass the original bytes through untouched.
+/// Prepare a single image for the request: upright and downscaled if needed,
+/// otherwise the original bytes passed through untouched.
 ///
 /// Passing through matters. A 900×1200 phone-cropped receipt that already fits
 /// gains nothing from a re-encode and loses the fine strokes on a faded thermal
@@ -315,15 +315,15 @@ pub fn prepare_image(bytes: &[u8], mime: &str) -> Result<PreparedImage, MediaErr
         });
     };
 
-    let img =
-        image::load_from_memory_with_format(bytes, format).map_err(|e| MediaError::Decode {
-            mime: mime.to_string(),
-            source: e,
-        })?;
+    let (img, turned) = decode_upright(bytes, format, mime)?;
 
     let prepared = match shrink(&img) {
         Some(small) => PreparedImage {
             bytes: encode_jpeg(&small, JPEG_QUALITY_LADDER[0])?,
+            mime: "image/jpeg",
+        },
+        None if turned => PreparedImage {
+            bytes: encode_jpeg(&img, JPEG_QUALITY_LADDER[0])?,
             mime: "image/jpeg",
         },
         None => PreparedImage {
@@ -350,6 +350,31 @@ pub fn prepare_image(bytes: &[u8], mime: &str) -> Result<PreparedImage, MediaErr
         return Ok(recoded);
     }
     Ok(prepared)
+}
+
+/// Decode with EXIF orientation applied, and whether it turned anything.
+/// Vision models read pixels, not the tag, so a turned photo is turned for real
+/// and can no longer pass through untouched.
+fn decode_upright(
+    bytes: &[u8],
+    format: ImageFormat,
+    mime: &str,
+) -> Result<(image::DynamicImage, bool), MediaError> {
+    use image::ImageDecoder;
+    let decode_err = |source| MediaError::Decode {
+        mime: mime.to_string(),
+        source,
+    };
+    let mut decoder = image::ImageReader::with_format(Cursor::new(bytes), format)
+        .into_decoder()
+        .map_err(decode_err)?;
+    let orientation = decoder.orientation().map_err(decode_err)?;
+    let mut img = image::DynamicImage::from_decoder(decoder).map_err(decode_err)?;
+    img.apply_orientation(orientation);
+    Ok((
+        img,
+        orientation != image::metadata::Orientation::NoTransforms,
+    ))
 }
 
 /// Total base64 length of `images` against [`MAX_ENCODED_BYTES`].
@@ -468,10 +493,7 @@ pub fn prepare_images(parts: &[(&[u8], &str)]) -> Result<Vec<PreparedImage>, Med
             let format = format_for(mime).ok_or_else(|| MediaError::UnpreparableMime {
                 mime: (*mime).to_string(),
             })?;
-            image::load_from_memory_with_format(bytes, format).map_err(|e| MediaError::Decode {
-                mime: (*mime).to_string(),
-                source: e,
-            })
+            decode_upright(bytes, format, mime).map(|(img, _)| img)
         })
         .collect::<Result<_, _>>()?;
     fit_set(&decoded)
@@ -661,6 +683,32 @@ mod tests {
         use image::GenericImageView;
         let (w, h) = img.dimensions();
         assert_eq!(w.max(h), MAX_LONG_EDGE, "long edge not clamped: {w}x{h}");
+    }
+
+    /// A small landscape JPEG carrying EXIF orientation 6 (turn 90° to view), as
+    /// a phone held upright writes it.
+    fn turned_jpeg() -> Vec<u8> {
+        let plain = synth(400, 200, ImageFormat::Jpeg);
+        #[rustfmt::skip]
+        let app1: [u8; 36] = [
+            0xFF, 0xE1, 0x00, 0x22, b'E', b'x', b'i', b'f', 0, 0,
+            b'M', b'M', 0x00, 0x2A, 0, 0, 0, 8, // big-endian TIFF, IFD at 8
+            0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 6, 0, 0, // Orientation = 6
+            0, 0, 0, 0,
+        ];
+        let mut out = plain[..2].to_vec();
+        out.extend_from_slice(&app1);
+        out.extend_from_slice(&plain[2..]);
+        out
+    }
+
+    /// Vision models ignore EXIF, so a turned mail photo must reach them upright.
+    #[test]
+    fn a_turned_photo_is_prepared_upright() {
+        let prepared = prepare_image(&turned_jpeg(), "image/jpeg").unwrap();
+        let img = image::load_from_memory_with_format(&prepared.bytes, ImageFormat::Jpeg).unwrap();
+        use image::GenericImageView;
+        assert_eq!(img.dimensions(), (200, 400));
     }
 
     /// A phone photo previews at the viewing size and smaller than it started.
