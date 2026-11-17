@@ -383,12 +383,14 @@ impl AutoImportSource for RestSource {
         let resp = req
             .send()
             .await
-            .map_err(|e| ImportError::Upstream(format!("{}: GET {}: {e}", self.name, self.url)))?;
+            // No URL in the error: it can carry a token, and errors are stored and pushed.
+            .map_err(|e| {
+                ImportError::Upstream(format!("{}: GET: {}", self.name, e.without_url()))
+            })?;
         if !resp.status().is_success() {
             return Err(ImportError::Upstream(format!(
-                "{}: {} returned HTTP {}",
+                "{} returned HTTP {}",
                 self.name,
-                self.url,
                 resp.status()
             )));
         }

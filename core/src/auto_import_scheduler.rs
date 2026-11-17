@@ -666,10 +666,10 @@ impl SourceRegistry {
         let result = match outcome {
             Ok(_) => RunOutcome::Success,
             Err(ImportError::NeedsReauth(reason)) => RunOutcome::NeedsUser {
-                reason: reason.clone(),
+                reason: crate::jobs::runs::bounded_detail(reason),
             },
             Err(e) => RunOutcome::Failure {
-                error: e.to_string(),
+                error: crate::jobs::runs::bounded_detail(&e.to_string()),
             },
         };
         let mut run = RunRecord::new(source.job(), source.name(), started, Utc::now(), result);

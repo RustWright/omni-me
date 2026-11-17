@@ -29,6 +29,19 @@ pub enum RunOutcome {
     },
 }
 
+/// What a run stores as its error: one line of at most 500 bytes. The record is kept
+/// 90 days, served by `/jobs` and pushed in alerts, while a helper's stderr can reach
+/// 8 MB; the full text stays in the server log.
+pub fn bounded_detail(text: &str) -> String {
+    let flat = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join(" | ");
+    crate::notify::clip_middle(&flat, 500)
+}
+
 impl RunOutcome {
     fn kind(&self) -> &'static str {
         match self {
@@ -402,6 +415,20 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(s.recent(None, 10).await.unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_long_error_is_kept_to_one_bounded_line() {
+        let stderr = format!(
+            "Traceback (most recent call last):\n{}ValueError: login page changed\n",
+            "  File \"helper.py\", line 1, in scrape\n".repeat(200_000)
+        );
+        let detail = bounded_detail(&stderr);
+        assert!(detail.len() <= 500, "{} bytes", detail.len());
+        assert!(!detail.contains('\n'));
+        assert!(detail.starts_with("Traceback"));
+        assert!(detail.ends_with("ValueError: login page changed"));
+        assert_eq!(bounded_detail("dns\n"), "dns");
     }
 
     #[tokio::test]

@@ -32,6 +32,27 @@ pub fn app_link(tab: &str) -> String {
     format!("omni-me://{tab}")
 }
 
+/// ntfy's default message limit is 4,096 bytes, and what it does past that over
+/// JSON publishing is undocumented. A rejected send would retry forever.
+const MESSAGE_MAX: usize = 3_500;
+
+/// `text` cut to at most about `max` bytes, keeping its start and its end (where a
+/// traceback names the error) around a marker.
+pub fn clip_middle(text: &str, max: usize) -> String {
+    if text.len() <= max {
+        return text.to_string();
+    }
+    let half = max.saturating_sub(5) / 2;
+    let head = (0..=half)
+        .rev()
+        .find(|&i| text.is_char_boundary(i))
+        .unwrap_or(0);
+    let tail = (text.len() - half..=text.len())
+        .find(|&i| text.is_char_boundary(i))
+        .unwrap_or(text.len());
+    format!("{} … {}", &text[..head], &text[tail..])
+}
+
 #[async_trait]
 pub trait Notifier: Send + Sync {
     async fn send(&self, n: &Notification) -> Result<(), String>;
@@ -93,10 +114,11 @@ impl NtfyNotifier {
 impl Notifier for NtfyNotifier {
     /// JSON to the root URL, so a title with any character needs no header encoding.
     async fn send(&self, n: &Notification) -> Result<(), String> {
+        let message = clip_middle(&n.message, MESSAGE_MAX);
         let body = NtfyMessage {
             topic: &self.topic,
             title: &n.title,
-            message: &n.message,
+            message: &message,
             priority: n.priority as u8,
             tags: &n.tags,
             click: n.click.as_deref(),
@@ -122,6 +144,15 @@ mod tests {
     use serde_json::json;
     use wiremock::matchers::{body_partial_json, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[test]
+    fn clipping_keeps_both_ends_and_char_boundaries() {
+        let text = format!("start{}end", "é".repeat(5_000));
+        let clipped = clip_middle(&text, 101);
+        assert!(clipped.len() <= 101, "{} bytes", clipped.len());
+        assert!(clipped.starts_with("start") && clipped.ends_with("end"));
+        assert_eq!(clip_middle("short", 101), "short");
+    }
 
     fn alert() -> Notification {
         Notification {
