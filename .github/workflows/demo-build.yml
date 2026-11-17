@@ -92,7 +92,7 @@ jobs:
         run: |
           found=$(
             {
-              grep -a -o -h -E '100\.[0-9]+\.[0-9]+\.[0-9]+|[a-z0-9-]+\.ts\.net|(sk|tk|key)[-_][A-Za-z0-9]{24,}' -r . || true
+              grep -a -o -h -E '100\.[0-9]+\.[0-9]+\.[0-9]+|[a-z0-9-]+\.ts\.net|(sk|tk|key)[-_][A-Za-z0-9_-]{24,}' -r . || true
               grep -a -o -h -E '[A-Za-z0-9.-]+:300[01]' -r . | grep -v -E '^(mock-box|localhost|127\.0\.0\.1|[A-Za-z0-9.-]+\.example):' || true
             } | sort -u
           )

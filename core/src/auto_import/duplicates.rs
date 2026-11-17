@@ -91,7 +91,7 @@ mod tests {
             "dedup_key": dedup_key,
             "source_metadata": { "from": from, "subject": format!("s-{dedup_key}"), "warnings": [] },
             "draft_postings": [{
-                "date": "2026-09-02",
+                "date": "2026-06-15",
                 "postings": [
                     { "account": "Expenses:Transport", "amount": amount.trim_start_matches('-'), "commodity": "CAD" },
                     { "account": "Unmatched", "amount": amount, "commodity": "CAD" }
@@ -100,28 +100,28 @@ mod tests {
         })
     }
 
-    /// The Uber pair of 2026-09-02: a charge summary, then the trip receipt.
+    /// A ride's charge summary, then its trip receipt: two emails, one charge.
     #[test]
     fn a_second_email_for_the_same_charge_matches_the_first() {
-        let first = proposal("uid-14733", "noreply@uber.com", "-9.49");
-        let second = proposal("uid-14738", "noreply@uber.com", "-9.49");
+        let first = proposal("uid-101", "noreply@uber.com", "-12.40");
+        let second = proposal("uid-102", "noreply@uber.com", "-12.40");
         let earlier = [first];
         assert_eq!(
             find_match(&second, &earlier).unwrap()["batch_id"],
-            "b-uid-14733"
+            "b-uid-101"
         );
     }
 
     #[test]
     fn the_same_email_refetched_is_not_a_duplicate() {
-        let first = proposal("uid-14733", "noreply@uber.com", "-9.49");
+        let first = proposal("uid-101", "noreply@uber.com", "-12.40");
         assert!(find_match(&first.clone(), &[first]).is_none());
     }
 
     #[test]
     fn a_different_amount_or_sender_is_not_a_duplicate() {
-        let earlier = [proposal("uid-1", "noreply@uber.com", "-9.49")];
-        assert!(find_match(&proposal("uid-2", "noreply@uber.com", "-28.92"), &earlier).is_none());
-        assert!(find_match(&proposal("uid-3", "no-reply@lyft.com", "-9.49"), &earlier).is_none());
+        let earlier = [proposal("uid-1", "noreply@uber.com", "-12.40")];
+        assert!(find_match(&proposal("uid-2", "noreply@uber.com", "-30.15"), &earlier).is_none());
+        assert!(find_match(&proposal("uid-3", "no-reply@lyft.com", "-12.40"), &earlier).is_none());
     }
 }

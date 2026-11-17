@@ -799,7 +799,7 @@ mod tests {
         let source = source_with(first, vec![], store.clone(), projections.clone());
         assert_eq!(source.pull().await.unwrap().appended, 1);
 
-        let two = r#"{"status":"ok","disposition":{"fetched":2},"drafts":[{"external_id":"ws-t1","date":"2026-06-15","description":"Greenfield","postings":[{"account":"Assets:Northwind:Cash","commodity":"CAD","amount":"-87.42"},{"account":"Unmatched","commodity":"CAD","amount":"87.42"}]},{"external_id":"ws-t2","date":"2026-06-16","description":"Metro","postings":[{"account":"Assets:Northwind:Cash","commodity":"CAD","amount":"-12.00"},{"account":"Unmatched","commodity":"CAD","amount":"12.00"}]}]}"#;
+        let two = r#"{"status":"ok","disposition":{"fetched":2},"drafts":[{"external_id":"ws-t1","date":"2026-06-15","description":"Greenfield","postings":[{"account":"Assets:Northwind:Cash","commodity":"CAD","amount":"-87.42"},{"account":"Unmatched","commodity":"CAD","amount":"87.42"}]},{"external_id":"ws-t2","date":"2026-06-16","description":"Maple Cafe","postings":[{"account":"Assets:Northwind:Cash","commodity":"CAD","amount":"-12.00"},{"account":"Unmatched","commodity":"CAD","amount":"12.00"}]}]}"#;
         let (_d2, second) = emit_helper(two);
         let source = source_with(second, vec![], store, projections);
         let summary = source.pull().await.unwrap();
