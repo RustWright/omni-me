@@ -213,7 +213,7 @@ mod tests {
         let phone = Arc::new(Phone::default());
         let engine = Arc::new(AlertEngine::new(db.clone(), runs, phone.clone()));
         engine.init_schema().await.unwrap();
-        let detector = LargeChargeDetector::new(db, engine);
+        let detector = LargeChargeDetector::new(db, engine.clone());
 
         let mut run = RunRecord::new(
             crate::jobs::BANK_IMPORT,
@@ -255,6 +255,7 @@ mod tests {
             let stored = store.append(proposed).await.unwrap();
             runner.apply_events(&[stored]).await.unwrap();
             detector.observe(&run).await;
+            engine.flush().await;
         }
 
         let sent = phone.0.lock().unwrap();

@@ -36,7 +36,7 @@ use omni_me_core::credentials::{self, LlmRole};
 use omni_me_core::db::Database;
 use omni_me_core::events::{EventStore, ProjectionRunner, SurrealEventStore, registry};
 use omni_me_core::extraction::DocumentExtractor;
-use omni_me_core::jobs::alerts::{AlertEngine, FLUSH_INTERVAL};
+use omni_me_core::jobs::alerts::AlertEngine;
 use omni_me_core::jobs::large_charge::LargeChargeDetector;
 use omni_me_core::jobs::runs::{RunStore, SurrealRunStore};
 use omni_me_core::jobs::summary::SummaryJob;
@@ -128,14 +128,7 @@ async fn alert_engine(
         tracing::error!(error = %e, "alert store unavailable; alerts are off");
         return None;
     }
-    let flusher = engine.clone();
-    tokio::spawn(async move {
-        let mut tick = tokio::time::interval(FLUSH_INTERVAL);
-        loop {
-            tick.tick().await;
-            flusher.flush().await;
-        }
-    });
+    engine.clone().spawn();
     Some(engine)
 }
 

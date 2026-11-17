@@ -224,6 +224,9 @@ pub struct AlertEngine {
     // that overlap would both send a row; two opens would both pass `exists`.
     flushing: tokio::sync::Mutex<()>,
     opening: tokio::sync::Mutex<()>,
+    // Opening an alert wakes the flusher instead of sending inline: observers run
+    // inside the import loop, which must not wait on ntfy.
+    wake: tokio::sync::Notify,
 }
 
 impl AlertEngine {
@@ -234,7 +237,23 @@ impl AlertEngine {
             notifier,
             flushing: Default::default(),
             opening: Default::default(),
+            wake: Default::default(),
         }
+    }
+
+    /// Flush whenever an alert opens, and every `FLUSH_INTERVAL` for held and
+    /// failed sends.
+    pub fn spawn(self: Arc<Self>) {
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(FLUSH_INTERVAL);
+            loop {
+                tokio::select! {
+                    _ = tick.tick() => {}
+                    _ = self.wake.notified() => {}
+                }
+                self.flush().await;
+            }
+        });
     }
 
     pub async fn init_schema(&self) -> Result<(), String> {
@@ -345,7 +364,7 @@ impl AlertEngine {
             .check()
             .map_err(|e| format!("write job_alerts: {e}"))?;
         drop(opening);
-        self.flush().await;
+        self.wake.notify_one();
         Ok(())
     }
 
@@ -566,9 +585,30 @@ mod tests {
         RunRecord::new(crate::jobs::MAIL_IMPORT, "gmail", end, end, outcome)
     }
 
+    /// Record and observe, then flush as the server's flusher would on the wake.
     async fn record(engine: &AlertEngine, runs: &SurrealRunStore, r: RunRecord) {
         runs.record(&r).await.unwrap();
         engine.observe(&r).await;
+        engine.flush().await;
+    }
+
+    #[tokio::test]
+    async fn opening_an_alert_does_not_send_inline() {
+        let (engine, runs, phone) = engine().await;
+        let r = run(
+            0,
+            RunOutcome::NeedsUser {
+                reason: "app password revoked".into(),
+            },
+        );
+        runs.record(&r).await.unwrap();
+        engine.observe(&r).await;
+        assert!(
+            phone.0.lock().unwrap().is_empty(),
+            "the import loop never waits on ntfy"
+        );
+        engine.flush().await;
+        assert_eq!(phone.0.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -636,6 +676,7 @@ mod tests {
         );
         r.job = crate::jobs::MAIL_BACKFILL.into();
         engine.observe(&r).await;
+        engine.flush().await;
         assert!(phone.0.lock().unwrap().is_empty());
     }
 
