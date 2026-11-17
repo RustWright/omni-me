@@ -96,6 +96,9 @@ pub trait RunStore: Send + Sync {
     async fn since(&self, job: &str, since: DateTime<Utc>) -> Result<Vec<RunRecord>, String>;
     /// The newest successful run of `job` for `subject`.
     async fn last_success(&self, job: &str, subject: &str) -> Result<Option<RunRecord>, String>;
+    /// The newest run of `job` for each subject. Not a window over `recent`: a halted
+    /// subject records nothing more, and its siblings' runs would push it out.
+    async fn latest(&self, job: &str) -> Result<Vec<RunRecord>, String>;
 }
 
 /// Times are stored as fixed-width RFC 3339 strings, so ordering by them is
@@ -269,6 +272,30 @@ impl RunStore for SurrealRunStore {
             .await?;
         Ok(runs.into_iter().next())
     }
+
+    async fn latest(&self, job: &str) -> Result<Vec<RunRecord>, String> {
+        let mut resp = self
+            .db
+            .query("SELECT subject FROM job_runs WHERE job = $job GROUP BY subject")
+            .bind(("job", job.to_string()))
+            .await
+            .map_err(|e| format!("read job_runs: {e}"))?;
+        let subjects: Vec<String> = resp.take("subject").map_err(|e| e.to_string())?;
+        let mut out = Vec::with_capacity(subjects.len());
+        for subject in subjects {
+            let runs = self
+                .select(
+                    format!(
+                        "SELECT {COLUMNS} FROM job_runs WHERE job = $job AND subject = $subject \
+                         ORDER BY ended_at DESC LIMIT 1"
+                    ),
+                    vec![("job", job.to_string()), ("subject", subject)],
+                )
+                .await?;
+            out.extend(runs);
+        }
+        Ok(out)
+    }
 }
 
 #[cfg(test)]
@@ -375,5 +402,31 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(s.recent(None, 10).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_halted_subject_stays_latest_under_its_siblings_runs() {
+        let s = store().await;
+        let halted = run(
+            "mail_import",
+            "a",
+            300,
+            RunOutcome::NeedsUser {
+                reason: "app password revoked".into(),
+            },
+        );
+        s.record(&halted).await.unwrap();
+        for ago in 0..250 {
+            s.record(&run("mail_import", "b", ago, RunOutcome::Success))
+                .await
+                .unwrap();
+        }
+        let latest = s.latest("mail_import").await.unwrap();
+        assert_eq!(latest.len(), 2);
+        let a = latest.iter().find(|r| r.subject == "a").unwrap();
+        assert_eq!(a.id, halted.id);
+        let b = latest.iter().find(|r| r.subject == "b").unwrap();
+        let newest = s.recent(Some("mail_import"), 1).await.unwrap();
+        assert_eq!(b.id, newest[0].id);
     }
 }

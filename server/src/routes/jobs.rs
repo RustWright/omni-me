@@ -11,7 +11,6 @@ use axum::{
 };
 use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 
 use omni_me_core::jobs::runs::{RunOutcome, RunRecord};
 use omni_me_core::jobs::{self, JobSpec, PENDING, PendingJob};
@@ -67,23 +66,19 @@ async fn list_handler(
     let store = state.auto_import_registry.run_store();
     let mut views = Vec::new();
     for spec in jobs::REGISTRY {
-        let (recent, day) = match &store {
+        let (mut latest, day) = match &store {
             Some(s) => {
                 let err = |e: String| (StatusCode::INTERNAL_SERVER_ERROR, e);
-                let recent = s.recent(Some(spec.name), 200).await.map_err(err)?;
+                let latest = s.latest(spec.name).await.map_err(err)?;
                 let day = s
                     .since(spec.name, Utc::now() - Duration::hours(24))
                     .await
                     .map_err(err)?;
-                (recent, day)
+                (latest, day)
             }
             None => (Vec::new(), Vec::new()),
         };
-        let mut by_subject: BTreeMap<String, RunRecord> = BTreeMap::new();
-        for run in recent {
-            by_subject.entry(run.subject.clone()).or_insert(run);
-        }
-        let latest: Vec<RunRecord> = by_subject.into_values().collect();
+        latest.sort_by(|a, b| a.subject.cmp(&b.subject));
         views.push(JobView {
             spec: *spec,
             health: health(&latest),
