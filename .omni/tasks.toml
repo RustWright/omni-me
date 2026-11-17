@@ -114,16 +114,18 @@ ref    = "tasks.md § From daily use — backlog"
 [[task]]
 id     = "omni-me-0015"
 title  = "Re-elicit requirements for the journal line timestamps redesign"
-status = "blocked"
+status = "done"
 size   = "M"
 ref    = "tasks.md § Waiting on his decision"
+note   = "Stale at filing: built 2026-08-24 (ef8a1df) to the 07-05 spec in f8788ed. Closed 11-16."
 
 [[task]]
 id     = "omni-me-0016"
 title  = "Is import parity with the paisa importers still wanted?"
-status = "blocked"
+status = "cut"
 size   = "M"
-ref    = "tasks.md § Waiting on his decision"
+ref    = "tasks.md § From daily use — backlog"
+note   = "Cut 11-16: feeds are the import path now. What remains folds into omni-me-0050."
 
 [[task]]
 id     = "omni-me-0017"

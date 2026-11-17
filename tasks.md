@@ -28,10 +28,6 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 - [0013] (Parked 11-16 until a real blank delivery item appears; ask with it on screen.)
   **When the authoritative receipt fails to price**, should review offer the
   confirmation's estimate as a fallback? Ask before building. [S]
-- [0015] **Journal line timestamps redesign.** The requirements were lost in an old
-  corruption of this file. Re-elicit them before designing anything. [M]
-- [0016] **Is import parity with the paisa importers still wanted?** Live now imports
-  through paisa, then the feeds. Four of seven were covered in-app. [M if yes]
 
 ## Owed to him
 
@@ -120,7 +116,8 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 - [0049] **Split a document across requests past an endpoint's image cap.** This is low:
   model choice avoids it, and `MAX_DOCUMENT_PARTS = 8` refuses 2.6% regardless. [S]
 - [0050] **Statements as the source-of-truth health check:** assert the feeds against the
-  closing balances. [L]
+  closing balances. Absorbs [0016] (cut 11-16): read a source's closing balance only when the
+  check needs it; four of seven formats already parse. [L]
 - [0051] **A categorization classifier.** It is gated on posting provenance, and it is
   scored on abstention. [L]
 - [0052] **Reconciliation deferrals:** inline-edit a detected recurring pattern; a balancing

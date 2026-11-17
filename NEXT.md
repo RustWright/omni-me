@@ -15,8 +15,7 @@ rationale in `docs/src/` and at the edit site. ⛔ If a line here could be deriv
 page is the one exception.
 
 ## ⛔ Waiting on him
-- **His decisions, `tasks.md` § Waiting on his decision:** [0013]–[0016] (the rest ruled 11-16).
-  [0013] did not land in two framings: re-ask from a real blank review item, not a hypothetical.
 - **His actions:** [0006] the R2 account (he chose later), [0010] the OpenRouter privacy setting.
+- [0013] is parked until a real blank delivery item appears in review; ask with it on screen.
 - **Promoting ~11 general feedback notes to `~/.claude/rules/`:** the always-loaded tier is at 315 of
   320 lines, so promotion means compressing something. His call on what.

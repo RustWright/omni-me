@@ -309,6 +309,8 @@ These are settled. Do not re-open one without a new reason.
 - Imported history keeps the granularity it was imported at (crypto stays monthly); feeds book
   each purchase as it happens. No aggregation on import, no conversion (2026-11-16).
 - Bank feeds are the long-term source. Statements are for reconciliation and closing.
+  Import parity with paisa is retired; a source's statement reading is built only when the
+  feed health check needs it (2026-11-16).
 - Old mail is archived on live by a slow backfill, with no financial extraction before the
   imported statements. Cursors and the backfill both start 2026-11-01.
 - Retention: one category per email from a fixed list, chosen at intake. The category's
