@@ -258,6 +258,8 @@ These are settled. Do not re-open one without a new reason.
 - A new day opens the journal on today. The same day restores the date last viewed.
 - Tab order, when configurable, is per device (device layer). The app opens on the first
   visible tab of that order; there is no separate landing-tab key (2026-11-16).
+- A device saves a server address only when he sets one. An untouched device follows the
+  build's default, so a hostname change is one CI variable (2026-11-16).
 
 **Assistant engineering**
 - Keep our Rust loop, with no framework (`ASSISTANT_RESEARCH.md`). A full rewrite is

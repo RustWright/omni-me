@@ -15,7 +15,6 @@ rationale in `docs/src/` and at the edit site. ⛔ If a line here could be deriv
 page is the one exception.
 
 ## ⛔ Waiting on him
-- [0001] the WS buys check: the weekly buy lands sometime on 11-16; confirm when he says it has.
 - **His decisions, `tasks.md` § Waiting on his decision:** [0013]–[0016] (the rest ruled 11-16).
   [0013] did not land in two framings: re-ask from a real blank review item, not a hypothetical.
 - **His actions:** [0006] the R2 account (he chose later), [0010] the OpenRouter privacy setting.

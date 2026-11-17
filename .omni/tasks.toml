@@ -9,7 +9,7 @@ updated = 2026-11-12
 [[task]]
 id     = "omni-me-0001"
 title  = "Confirm the 11-16 weekly WS buys arrive as two legs with no Unmatched"
-status = "todo"
+status = "done"
 size   = "XS"
 ref    = "tasks.md § Now — dated"
 due    = 2026-11-16
@@ -106,10 +106,10 @@ ref    = "tasks.md § Waiting on his decision"
 
 [[task]]
 id     = "omni-me-0014"
-title  = "Should a persisted server_url outrank a compile-time default"
-status = "blocked"
+title  = "Persist server_url only when set in Settings; untouched devices follow the build"
+status = "todo"
 size   = "S"
-ref    = "tasks.md § Waiting on his decision"
+ref    = "tasks.md § From daily use — backlog"
 
 [[task]]
 id     = "omni-me-0015"

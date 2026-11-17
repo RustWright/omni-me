@@ -17,12 +17,6 @@ reset read the code, and "unverified" means it did not. Rulings moved to `projec
 
 Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs him
 
-## Now — dated
-
-- [0001] **11-16: the weekly WS buys arrive whole**: two legs, units to the ticker
-  account, no `Unmatched`. The fix shipped 11-12 (overlay `05e67a9`, driver copied to live's
-  `/opt/omni-ws`), and only a new buy proves it. [XS]
-
 ## Waiting on his decision
 
 - [0006] **R2 for the off-box blob copy:** his Cloudflare account, a bucket and a scoped
@@ -31,10 +25,9 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 - [0010] **R27's account side, ruled 11-16:** in OpenRouter he notes the current privacy
   setting (settles the look-back), then turns on account-wide deny data collection + ZDR-only.
   A model that loses its only route then fails loudly, not silently. [USER]
-- [0013] **When the authoritative receipt fails to price**, should review offer the
+- [0013] (Parked 11-16 until a real blank delivery item appears; ask with it on screen.)
+  **When the authoritative receipt fails to price**, should review offer the
   confirmation's estimate as a fallback? Ask before building. [S]
-- [0014] **Should a persisted `server_url` outrank a compile-time default** that changed
-  under it? That precedence is what made a reinstalled desktop unreachable. [S]
 - [0015] **Journal line timestamps redesign.** The requirements were lost in an old
   corruption of this file. Re-elicit them before designing anything. [M]
 - [0016] **Is import parity with the paisa importers still wanted?** Live now imports
@@ -152,6 +145,9 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
   `vars.PUBLISH_DOCS`. Held until there is a setup guide to follow. [XS, USER]
 
 **Platform, CI and ops**
+- [0014] **Persist `server_url` only when he sets it in Settings** (ruled 11-16). The first run
+  writes the resolved default today (`runtime.rs` `resolve`), so a stale default outranks every
+  later build's. Plus a one-time clean-up of auto-written files. [S]
 - [0058] **A headless smoke step for the AppImage** in `app-release.yml` (verified missing). [S]
 - [0059] **Docker builds recompile every dependency** (verified). Cache mounts are not
   exported by `type=gha`. The fix is `buildkit-cache-dance`, and it is ~18 min per build. [S]
