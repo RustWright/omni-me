@@ -68,7 +68,8 @@ impl Waiting {
         if config.enabled(Feature::Finances) {
             w.batches = ids(
                 db,
-                "SELECT VALUE batch_id FROM pending_auto_import_batches WHERE status = 'pending'",
+                // The row, not `batch_id`: a re-pull rewrites `batch_id` on a pending row.
+                "SELECT VALUE record::id(id) FROM pending_auto_import_batches WHERE status = 'pending'",
             )
             .await?;
             w.unmatched = ids(
@@ -455,7 +456,7 @@ mod tests {
             );
         }
         runner.apply_events(&events).await.unwrap();
-        // Schemaless here: the summary reads only `batch_id` and `status`.
+        // Schemaless here: the summary reads only the record id and `status`.
         db.query("DEFINE TABLE IF NOT EXISTS pending_auto_import_batches SCHEMALESS")
             .await
             .unwrap();
@@ -508,5 +509,29 @@ mod tests {
         let recorded = runs.recent(Some(REVIEW_SUMMARY), 10).await.unwrap();
         assert_eq!(recorded.len(), 2);
         assert_eq!(recorded[0].counts["sent"], 1);
+    }
+
+    #[tokio::test]
+    async fn a_re_pulled_batch_is_not_new() {
+        let (job, db, phone, _) = job().await;
+        add_batch(&db, "b1").await;
+        let yesterday = Utc::now().date_naive().pred_opt().unwrap();
+        let config = ResolvedConfig::new(
+            crate::events::load_persisted(&db).await.unwrap(),
+            Default::default(),
+        );
+        let waiting = Waiting::gather(&db, &config, Utc::now()).await.unwrap();
+        // A re-pull of the same file: the projection rewrites `batch_id` in place.
+        db.query("UPDATE type::record('pending_auto_import_batches', 'b1') SET batch_id = 'b2'")
+            .await
+            .unwrap();
+        job.save(&State {
+            last_day: Some(yesterday),
+            last_sent: waiting,
+        })
+        .await
+        .unwrap();
+        job.tick(Utc::now()).await;
+        assert!(phone.0.lock().unwrap().is_empty(), "nothing arrived since");
     }
 }

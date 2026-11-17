@@ -1,8 +1,8 @@
 //! Large-charge alerts: a bank-feed draft that takes at least the threshold out.
 //!
 //! Runs after each bank import run that appended something, over that source's
-//! pending drafts. Each charge alerts once (a one-shot alert keyed by batch and
-//! draft), critical unless its kind is set to Review.
+//! pending drafts. Each charge alerts once (a one-shot alert keyed by source and
+//! the draft's `external_id`), critical unless its kind is set to Review.
 
 use async_trait::async_trait;
 use rust_decimal::Decimal;
@@ -52,8 +52,20 @@ pub struct LargeChargeDetector {
 
 #[derive(Debug, SurrealValue)]
 struct Batch {
-    batch_id: String,
     draft_postings: surrealdb::types::Value,
+}
+
+/// The charge's identity across pulls. Not the batch position: a whole-file or
+/// whole-response source re-proposes on every pull and the pending row takes the
+/// new `batch_id`, so a batch-keyed alert re-fires every poll.
+fn charge_key(source: &str, draft: &serde_json::Value) -> String {
+    match draft["external_id"].as_str() {
+        Some(id) if !id.is_empty() => format!("{source}/{id}"),
+        _ => format!(
+            "{source}/{}|{}|{}",
+            draft["date"], draft["description"], draft["postings"]
+        ),
+    }
 }
 
 impl LargeChargeDetector {
@@ -74,7 +86,7 @@ impl LargeChargeDetector {
         let mut resp = self
             .db
             .query(
-                "SELECT batch_id, draft_postings FROM pending_auto_import_batches \
+                "SELECT draft_postings FROM pending_auto_import_batches \
                  WHERE source = $source AND status = 'pending'",
             )
             .bind(("source", run.subject.clone()))
@@ -83,7 +95,7 @@ impl LargeChargeDetector {
         let batches: Vec<Batch> = resp.take(0).map_err(|e| format!("decode batches: {e}"))?;
         for batch in batches {
             let drafts = batch.draft_postings.into_json_value();
-            for (i, draft) in drafts.as_array().into_iter().flatten().enumerate() {
+            for draft in drafts.as_array().into_iter().flatten() {
                 let Some((amount, commodity)) = charge_of(draft, threshold) else {
                     continue;
                 };
@@ -94,7 +106,7 @@ impl LargeChargeDetector {
                     draft["description"].as_str().unwrap_or(""),
                     run.subject
                 );
-                let subject = format!("{}#{i}", batch.batch_id);
+                let subject = charge_key(&run.subject, draft);
                 self.engine
                     .open_one_shot(&run.job, &subject, LARGE_CHARGE, title, message)
                     .await?;
@@ -179,44 +191,22 @@ mod tests {
 
         use crate::config::ConfigValue;
         use crate::events::{
-            ConfigProjection, EventStore, NewEvent, ProjectionRunner, SurrealEventStore,
+            AutoImportProjection, ConfigProjection, EventStore, EventType, NewEvent,
+            ProjectionRunner, SurrealEventStore,
         };
         let db = crate::db::test_db().await;
-        let runner = ProjectionRunner::new(db.clone(), vec![Box::new(ConfigProjection)]);
+        let store = SurrealEventStore::new(db.clone());
+        let runner = ProjectionRunner::new(
+            db.clone(),
+            vec![Box::new(ConfigProjection), Box::new(AutoImportProjection)],
+        );
         runner.init_all().await.unwrap();
         // Quiet hours off, so the alert is due whatever the clock says.
         for key in [ConfigKey::NotifyQuietStart, ConfigKey::NotifyQuietEnd] {
             let set = NewEvent::config_set("d1", key, Some(ConfigValue::Int(0))).unwrap();
-            let stored = SurrealEventStore::new(db.clone())
-                .append(set)
-                .await
-                .unwrap();
+            let stored = store.append(set).await.unwrap();
             runner.apply_events(&[stored]).await.unwrap();
         }
-        db.query("DEFINE TABLE IF NOT EXISTS pending_auto_import_batches SCHEMALESS")
-            .await
-            .unwrap();
-        db.query(
-            "CREATE pending_auto_import_batches SET batch_id = 'b1', source = 'bank', \
-             status = 'pending', draft_postings = $d",
-        )
-        .bind((
-            "d",
-            json!([
-                { "date": "2026-11-14", "description": "furniture store", "postings": [
-                    { "account": "Liabilities:Card", "commodity": "CAD", "amount": "-812.40" },
-                    { "account": "Unmatched", "commodity": "CAD", "amount": "812.40" }
-                ]},
-                { "date": "2026-11-14", "description": "coffee", "postings": [
-                    { "account": "Liabilities:Card", "commodity": "CAD", "amount": "-4.10" },
-                    { "account": "Unmatched", "commodity": "CAD", "amount": "4.10" }
-                ]}
-            ]),
-        ))
-        .await
-        .unwrap()
-        .check()
-        .unwrap();
 
         let runs = Arc::new(SurrealRunStore::new(db.clone()));
         runs.init_schema().await.unwrap();
@@ -233,8 +223,39 @@ mod tests {
             RunOutcome::Success,
         );
         run.counts.insert("appended".into(), 2);
-        detector.observe(&run).await;
-        detector.observe(&run).await;
+
+        // Two pulls of an unchanged file: same dedup key, a fresh batch id each
+        // time, as `to_proposed_event` mints one per pull.
+        for batch_id in ["b1", "b2"] {
+            let proposed = NewEvent {
+                id: Some(batch_id.into()),
+                event_type: EventType::AutoImportBatchProposed.to_string(),
+                aggregate_id: batch_id.into(),
+                timestamp: chrono::Utc::now(),
+                device_id: "d1".into(),
+                payload: json!({
+                    "batch_id": batch_id,
+                    "source": "bank",
+                    "dedup_key": "bank-file1",
+                    "fetched_at": chrono::Utc::now(),
+                    "draft_postings": [
+                        { "external_id": "bank-r1", "date": "2026-11-14",
+                          "description": "furniture store", "postings": [
+                            { "account": "Liabilities:Card", "commodity": "CAD", "amount": "-812.40" },
+                            { "account": "Unmatched", "commodity": "CAD", "amount": "812.40" }
+                        ]},
+                        { "external_id": "bank-r2", "date": "2026-11-14",
+                          "description": "coffee", "postings": [
+                            { "account": "Liabilities:Card", "commodity": "CAD", "amount": "-4.10" },
+                            { "account": "Unmatched", "commodity": "CAD", "amount": "4.10" }
+                        ]}
+                    ]
+                }),
+            };
+            let stored = store.append(proposed).await.unwrap();
+            runner.apply_events(&[stored]).await.unwrap();
+            detector.observe(&run).await;
+        }
 
         let sent = phone.0.lock().unwrap();
         assert_eq!(sent.len(), 1, "one charge over 500, alerted once");
