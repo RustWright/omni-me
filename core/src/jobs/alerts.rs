@@ -220,11 +220,21 @@ pub struct AlertEngine {
     db: Database,
     runs: Arc<dyn RunStore>,
     notifier: Arc<dyn Notifier>,
+    // In-process locks are enough while the server is the only engine. Two flushes
+    // that overlap would both send a row; two opens would both pass `exists`.
+    flushing: tokio::sync::Mutex<()>,
+    opening: tokio::sync::Mutex<()>,
 }
 
 impl AlertEngine {
     pub fn new(db: Database, runs: Arc<dyn RunStore>, notifier: Arc<dyn Notifier>) -> Self {
-        Self { db, runs, notifier }
+        Self {
+            db,
+            runs,
+            notifier,
+            flushing: Default::default(),
+            opening: Default::default(),
+        }
     }
 
     pub async fn init_schema(&self) -> Result<(), String> {
@@ -293,6 +303,7 @@ impl AlertEngine {
         message: String,
         one_shot: bool,
     ) -> Result<(), String> {
+        let opening = self.opening.lock().await;
         if self.exists(job, subject, kind, one_shot).await? {
             return Ok(());
         }
@@ -333,6 +344,7 @@ impl AlertEngine {
             .map_err(|e| format!("write job_alerts: {e}"))?
             .check()
             .map_err(|e| format!("write job_alerts: {e}"))?;
+        drop(opening);
         self.flush().await;
         Ok(())
     }
@@ -356,6 +368,7 @@ impl AlertEngine {
     /// Send every open, unsent critical alert that is due. A failed send stays
     /// unsent and is retried on the next flush. Review-tier alerts wait for the summary.
     pub async fn flush(&self) {
+        let _flushing = self.flushing.lock().await;
         let now = stamp(Utc::now());
         let pending: Vec<Pending> = match self
             .db
@@ -394,7 +407,8 @@ impl AlertEngine {
                         )
                         .bind(("id", p.alert_id.clone()))
                         .bind(("now", stamp(Utc::now())))
-                        .await;
+                        .await
+                        .and_then(|r| r.check());
                     if let Err(e) = marked {
                         tracing::warn!(alert = p.alert_id, error = %e, "sent an alert but could not mark it");
                     }
@@ -690,5 +704,44 @@ mod tests {
             line.contains("Alert: mail import failing 24 h (3)"),
             "{line}"
         );
+    }
+
+    #[tokio::test]
+    async fn overlapping_flushes_send_an_alert_once() {
+        // Yields mid-send, so an unlocked second flush selects the row before the
+        // first one marks it.
+        #[derive(Default)]
+        struct SlowPhone(Mutex<Vec<Notification>>);
+        #[async_trait]
+        impl Notifier for SlowPhone {
+            async fn send(&self, n: &Notification) -> Result<(), String> {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                self.0.lock().unwrap().push(n.clone());
+                Ok(())
+            }
+        }
+
+        let db = crate::db::test_db().await;
+        let runs = Arc::new(SurrealRunStore::new(db.clone()));
+        runs.init_schema().await.unwrap();
+        let phone = Arc::new(SlowPhone::default());
+        let engine = AlertEngine::new(db.clone(), runs, phone.clone());
+        engine.init_schema().await.unwrap();
+        let past = stamp(Utc::now() - Duration::minutes(1));
+        db.query(
+            "CREATE type::record('job_alerts', 'a1') CONTENT {
+                alert_id: 'a1', job: 'bank_import', subject: 'bank', kind: 'large_charge',
+                title: 't', message: 'm', tier: 'critical', one_shot: true,
+                opened_at: $past, due_at: $past, sent_at: NONE, closed_at: NONE
+             }",
+        )
+        .bind(("past", past))
+        .await
+        .unwrap()
+        .check()
+        .unwrap();
+
+        tokio::join!(engine.flush(), engine.flush());
+        assert_eq!(phone.0.lock().unwrap().len(), 1);
     }
 }
