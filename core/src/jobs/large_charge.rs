@@ -12,7 +12,7 @@ use surrealdb::types::SurrealValue;
 
 use super::alerts::{AlertEngine, LARGE_CHARGE};
 use super::runs::{RunObserver, RunOutcome, RunRecord};
-use crate::config::{ConfigKey, ResolvedConfig};
+use crate::config::ConfigKey;
 use crate::db::Database;
 
 /// The money that left, if `draft` is a charge of at least `threshold`.
@@ -74,9 +74,8 @@ impl LargeChargeDetector {
     }
 
     async fn check(&self, run: &RunRecord) -> Result<(), String> {
-        let config = crate::events::load_persisted(&self.db)
+        let config = crate::events::load_shared(&self.db)
             .await
-            .map(|global| ResolvedConfig::new(global, Default::default()))
             .map_err(|e| e.to_string())?;
         let threshold = config.int_of(ConfigKey::NotifyLargeCharge);
         if threshold <= 0 {

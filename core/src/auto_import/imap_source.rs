@@ -243,9 +243,8 @@ impl AutoImportSource for ImapSource {
             passwords: &a.pdf_passwords,
         });
         // Read per pull, so a change on the phone applies to the next poll.
-        let skip: Vec<String> = crate::events::load_persisted(self.projections.db())
+        let skip: Vec<String> = crate::events::load_shared(self.projections.db())
             .await
-            .map(|global| crate::config::ResolvedConfig::new(global, Default::default()))
             .map(|c| {
                 crate::config::sender_domains(
                     &c.text_of(crate::config::ConfigKey::ArchiveSkipSenders),

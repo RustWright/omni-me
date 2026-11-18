@@ -254,8 +254,8 @@ impl SummaryJob {
     /// Run if today's summary is due and has not run. A failed run leaves the day
     /// open, so the next tick tries again.
     pub async fn tick(&self, now: DateTime<Utc>) {
-        let config = match crate::events::load_persisted(&self.db).await {
-            Ok(global) => ResolvedConfig::new(global, Default::default()),
+        let config = match crate::events::load_shared(&self.db).await {
+            Ok(config) => config,
             Err(e) => {
                 tracing::warn!(error = %e, "summary: could not read config");
                 return;

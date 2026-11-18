@@ -398,9 +398,8 @@ impl ImapHandler for ReceiptHandler {
         // The day it arrived where the user is: in UTC, evening mail west of
         // Greenwich lands on tomorrow, which commit then refuses (L-W1).
         let zone = match &self.accounts {
-            Some(db) => crate::events::load_persisted(db)
+            Some(db) => crate::events::load_shared(db)
                 .await
-                .map(|global| crate::config::ResolvedConfig::new(global, Default::default()))
                 .map_or(chrono_tz::Tz::UTC, |config| config.user_zone()),
             None => chrono_tz::Tz::UTC,
         };

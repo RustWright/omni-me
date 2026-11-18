@@ -14,7 +14,7 @@ use chrono::{DateTime, Utc};
 use crate::auto_import_scheduler::{
     AutoImportSource, DropReason, ImportError, ImportSummary, ImportTally,
 };
-use crate::config::{ConfigKey, ResolvedConfig};
+use crate::config::ConfigKey;
 use crate::credentials::{Credentials, LlmRole};
 use crate::events::{EventStore, ProjectionRunner};
 use crate::llm::{ChatMessage, ChatRequest, ClientOptions, LlmClient, build_llm_client};
@@ -164,9 +164,8 @@ impl AutoImportSource for BackfillSource {
 
     async fn pull(&self) -> Result<ImportSummary, ImportError> {
         let db = self.projections.db();
-        let config = crate::events::load_persisted(db)
+        let config = crate::events::load_shared(db)
             .await
-            .map(|global| ResolvedConfig::new(global, Default::default()))
             .map_err(|e| ImportError::Upstream(format!("read config: {e}")))?;
         let Some(before) =
             crate::config::backfill_before(&config.text_of(ConfigKey::ArchiveBackfillBefore))

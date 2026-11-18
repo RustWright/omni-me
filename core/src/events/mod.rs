@@ -18,7 +18,7 @@ pub use assistant_projection::AssistantProjection;
 pub use auto_import_projection::{AutoImportProjection, GROUP_MEMBER_KEY, ORDER_GROUP_KEY};
 pub use beliefs_projection::BeliefsProjection;
 pub use budget_projection::BudgetProjection;
-pub use config_projection::{ConfigProjection, load_persisted};
+pub use config_projection::{ConfigProjection, load_persisted, load_shared};
 pub use documents_projection::DocumentsProjection;
 pub use notes_projection::NotesProjection;
 pub use projection::{Projection, ProjectionRunner};

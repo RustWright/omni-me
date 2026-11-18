@@ -341,9 +341,9 @@ impl AlertEngine {
     ) -> Result<(), String> {
         let opening = self.opening.lock().await;
         let now = Utc::now();
-        let config = crate::events::load_persisted(&self.db)
+        // On a failed read, defaults: an alert must still open.
+        let config = crate::events::load_shared(&self.db)
             .await
-            .map(|global| ResolvedConfig::new(global, Default::default()))
             .unwrap_or_default();
         let tier = match tier_key(job, kind) {
             Some(key) if config.text_of(key) == "review" => "review",
@@ -453,9 +453,8 @@ impl AlertEngine {
                 return;
             }
         };
-        let config = crate::events::load_persisted(&self.db)
+        let config = crate::events::load_shared(&self.db)
             .await
-            .map(|global| ResolvedConfig::new(global, Default::default()))
             .unwrap_or_default();
         // Quiet hours were applied when the alert opened; a send retried since then
         // can land inside them, so they are checked again here.
@@ -547,10 +546,9 @@ impl AlertEngine {
                     return Ok(());
                 }
                 let title = format!("{} failing for {hours} h", spec.title);
-                let zone = crate::events::load_persisted(&self.db)
+                let zone = crate::events::load_shared(&self.db)
                     .await
-                    .map(|global| ResolvedConfig::new(global, Default::default()).user_zone())
-                    .unwrap_or(chrono_tz::UTC);
+                    .map_or(chrono_tz::UTC, |config| config.user_zone());
                 let message = format!(
                     "{} has not completed a run since {}. Last error: {error}",
                     run.subject,

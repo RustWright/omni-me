@@ -132,6 +132,15 @@ impl ConfigProjection {
     }
 }
 
+/// The shared layer alone, resolved: what code with no device layer reads (the
+/// server's jobs, the importers). Each caller picks its own fallback on an error.
+pub async fn load_shared(db: &Database) -> Result<crate::config::ResolvedConfig, EventError> {
+    Ok(crate::config::ResolvedConfig::new(
+        load_persisted(db).await?,
+        Default::default(),
+    ))
+}
+
 /// Read the shared config layer straight from its materialized table.
 ///
 /// **No replay.** Startup needs this answer before `ProjectionRunner` is even
