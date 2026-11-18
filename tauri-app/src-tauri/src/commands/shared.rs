@@ -27,6 +27,27 @@ pub(crate) fn encode(s: &str) -> String {
         .collect()
 }
 
+/// GET `path` from the server and decode its JSON. `label` names the read in each
+/// error ("<label> fetch", "<label>: server returned", "<label> decode").
+pub(crate) async fn get_json<T: serde::de::DeserializeOwned>(
+    state: &AppState,
+    path: &str,
+    label: &str,
+) -> Result<T, String> {
+    let resp = state
+        .box_request(reqwest::Method::GET, path)
+        .await
+        .send()
+        .await
+        .map_err(|e| format!("{label} fetch: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("{label}: server returned {}", resp.status()));
+    }
+    resp.json::<T>()
+        .await
+        .map_err(|e| format!("{label} decode: {e}"))
+}
+
 /// Refuse a command whose feature is switched off.
 ///
 /// The last line of the "off means inert" promise. A hidden tab is what a user
@@ -153,7 +174,10 @@ mod tests {
             // `no_command_appends_events_directly`: rustfmt splits these chains
             // across lines, and collapsing to single spaces matches neither form.
             let flat: String = text.split_whitespace().collect();
-            let reaches_box = flat.contains(".box_request(") || flat.contains(".box_url(");
+            // `get_json(` is the shared GET; a module calling it reaches the box too.
+            let reaches_box = flat.contains(".box_request(")
+                || flat.contains(".box_url(")
+                || flat.contains("get_json(");
             let guards = flat.contains("require_feature(") || flat.contains("require_any_feature(");
             if reaches_box && !guards {
                 offenders.push(name.to_string());

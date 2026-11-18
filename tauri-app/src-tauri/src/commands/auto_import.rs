@@ -118,22 +118,7 @@ pub async fn list_auto_import_sources(
     state: State<'_, AppState>,
 ) -> Result<Vec<AutoImportSourceView>, String> {
     require_feature(&state, Feature::AutoImport)?;
-
-    let resp = state
-        .box_request(reqwest::Method::GET, "/auto_import/status")
-        .await
-        .send()
-        .await
-        .map_err(|e| format!("auto-import status fetch: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!(
-            "auto-import status: server returned {}",
-            resp.status()
-        ));
-    }
-    resp.json::<Vec<AutoImportSourceView>>()
-        .await
-        .map_err(|e| format!("auto-import status decode: {e}"))
+    super::shared::get_json(&state, "/auto_import/status", "auto-import status").await
 }
 
 /// Wire mirror of the server's `ImportSummary`.
@@ -282,19 +267,7 @@ pub async fn list_source_configs(
     state: State<'_, AppState>,
 ) -> Result<Vec<serde_json::Value>, String> {
     require_feature(&state, Feature::AutoImport)?;
-
-    let resp = state
-        .box_request(reqwest::Method::GET, "/auto_import/sources")
-        .await
-        .send()
-        .await
-        .map_err(|e| format!("source configs fetch: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("source configs: server returned {}", resp.status()));
-    }
-    resp.json::<Vec<serde_json::Value>>()
-        .await
-        .map_err(|e| format!("source configs decode: {e}"))
+    super::shared::get_json(&state, "/auto_import/sources", "source configs").await
 }
 
 /// `POST /auto_import/sources` — add or replace a definition (keyed by name).

@@ -38,17 +38,5 @@ pub struct LlmConfigView {
 #[tauri::command(rename_all = "snake_case")]
 pub async fn get_llm_config(state: State<'_, AppState>) -> Result<LlmConfigView, String> {
     require_feature(&state, Feature::Llm)?;
-
-    let resp = state
-        .box_request(reqwest::Method::GET, "/llm/config")
-        .await
-        .send()
-        .await
-        .map_err(|e| format!("llm config fetch: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("llm config: server returned {}", resp.status()));
-    }
-    resp.json::<LlmConfigView>()
-        .await
-        .map_err(|e| format!("llm config decode: {e}"))
+    super::shared::get_json(&state, "/llm/config", "llm config").await
 }
