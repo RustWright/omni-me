@@ -6,12 +6,12 @@
 //! re-sending one and gives slice 3 the record to measure the weekly budget from.
 
 use async_trait::async_trait;
-use chrono::{DateTime, Duration, NaiveTime, SecondsFormat, TimeZone, Utc};
+use chrono::{DateTime, Duration, NaiveTime, TimeZone, Utc};
 use chrono_tz::Tz;
 use std::sync::Arc;
 use surrealdb::types::SurrealValue;
 
-use super::runs::{RunObserver, RunOutcome, RunRecord, RunStore};
+use super::runs::{RunObserver, RunOutcome, RunRecord, RunStore, stamp};
 use crate::config::{ConfigKey, ResolvedConfig};
 use crate::db::Database;
 use crate::notify::{Notification, Notifier, Priority};
@@ -201,10 +201,6 @@ pub fn quiet_until(now: DateTime<Utc>, tz: Tz, start: u32, end: u32) -> Option<D
                 .earliest()
         })
         .map(|t| t.with_timezone(&Utc))
-}
-
-fn stamp(t: DateTime<Utc>) -> String {
-    t.to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
 /// The end of the current quiet window under `config`.

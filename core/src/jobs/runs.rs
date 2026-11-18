@@ -117,8 +117,9 @@ pub trait RunStore: Send + Sync {
 }
 
 /// Times are stored as fixed-width RFC 3339 strings, so ordering by them is
-/// chronological and nothing has to convert a SurrealDB datetime back.
-fn stamp(t: DateTime<Utc>) -> String {
+/// chronological and nothing has to convert a SurrealDB datetime back. The alert
+/// table compares against run times, so both use this one definition.
+pub(super) fn stamp(t: DateTime<Utc>) -> String {
     t.to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
