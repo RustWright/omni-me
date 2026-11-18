@@ -276,7 +276,10 @@ impl SummaryJob {
 
         let started = Utc::now();
         let mut sent = 0;
-        let outcome = match Waiting::gather(&self.db, &config, now).await {
+        let gathered = Waiting::gather(&self.db, &config, now).await;
+        // This run's own counts: `state.last_sent` still holds yesterday's after a failure.
+        let mut counts = gathered.as_ref().map(Waiting::counts).unwrap_or_default();
+        let outcome = match gathered {
             Err(e) => RunOutcome::Failure { error: e },
             Ok(waiting) if waiting.is_empty() || !waiting.has_new_since(&state.last_sent) => {
                 state.last_day = Some(day);
@@ -315,8 +318,8 @@ impl SummaryJob {
             Utc::now(),
             outcome.clone(),
         );
-        run.counts = state.last_sent.counts();
-        run.counts.insert("sent".into(), sent);
+        counts.insert("sent".into(), sent);
+        run.counts = counts;
         if outcome == RunOutcome::Success
             && let Err(e) = self.save(&state).await
         {
@@ -345,11 +348,15 @@ mod tests {
     use std::sync::Mutex;
 
     #[derive(Default)]
-    struct Phone(Mutex<Vec<Notification>>);
+    /// The second field turns ntfy off: every send fails.
+    struct Phone(Mutex<Vec<Notification>>, std::sync::atomic::AtomicBool);
 
     #[async_trait::async_trait]
     impl Notifier for Phone {
         async fn send(&self, n: &Notification) -> Result<(), String> {
+            if self.1.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err("ntfy unreachable".into());
+            }
             self.0.lock().unwrap().push(n.clone());
             Ok(())
         }
@@ -509,6 +516,22 @@ mod tests {
         let recorded = runs.recent(Some(REVIEW_SUMMARY), 10).await.unwrap();
         assert_eq!(recorded.len(), 2);
         assert_eq!(recorded[0].counts["sent"], 1);
+    }
+
+    #[tokio::test]
+    async fn a_failed_send_records_its_own_counts() {
+        let (job, db, phone, runs) = job().await;
+        phone.1.store(true, std::sync::atomic::Ordering::SeqCst);
+        add_batch(&db, "b1").await;
+        add_batch(&db, "b2").await;
+        job.tick(Utc::now()).await;
+        let recorded = runs.recent(Some(REVIEW_SUMMARY), 1).await.unwrap();
+        assert!(matches!(recorded[0].outcome, RunOutcome::Failure { .. }));
+        assert_eq!(
+            recorded[0].counts["batches"], 2,
+            "not the last sent summary's"
+        );
+        assert_eq!(recorded[0].counts["sent"], 0);
     }
 
     #[tokio::test]

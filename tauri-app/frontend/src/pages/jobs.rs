@@ -17,7 +17,16 @@ fn dollars(micros: u64) -> String {
 fn run_line(run: &JobRunView) -> String {
     let n = |k: &str| run.counts.get(k).copied().unwrap_or(0);
     let what = match run.outcome.get("kind").and_then(|k| k.as_str()) {
-        Some("success") => format!("{} fetched · {} appended", n("fetched"), n("appended")),
+        Some("success") if run.counts.contains_key("fetched") => {
+            format!("{} fetched · {} appended", n("fetched"), n("appended"))
+        }
+        // A job that is not an import (the daily summary) counts other things.
+        Some("success") => run
+            .counts
+            .iter()
+            .map(|(k, v)| format!("{v} {k}"))
+            .collect::<Vec<_>>()
+            .join(" · "),
         Some("needs_user") => format!(
             "needs you: {}",
             run.outcome
