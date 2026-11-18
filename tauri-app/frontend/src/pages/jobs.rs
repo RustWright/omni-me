@@ -60,7 +60,13 @@ pub fn JobsSection() -> Element {
         None => "Background work and what each run did.".to_string(),
         Some(Err(e)) => format!("Couldn't load jobs: {e}"),
         Some(Ok(v)) => {
-            let attention = v.jobs.iter().filter(|j| j.health != "healthy").count();
+            // "unknown" only means never run; counting it makes the line permanent
+            // on a deploy without bank sources.
+            let attention = v
+                .jobs
+                .iter()
+                .filter(|j| matches!(j.health.as_str(), "degraded" | "needs_user"))
+                .count();
             format!(
                 "{} on the contract, {} not yet{}",
                 v.jobs.len(),
