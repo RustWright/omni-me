@@ -757,7 +757,7 @@ fn App() -> Element {
         }
         record_boot("restore: store loaded");
         if *share_claimed_tab.peek() {
-            record_boot("restore: yielded to a share intent");
+            record_boot("restore: yielded to a claimed tab");
             return;
         }
         // Wait for the feature set too: restoring onto a tab that turns out to be
