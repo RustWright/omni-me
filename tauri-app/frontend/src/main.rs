@@ -743,12 +743,9 @@ fn App() -> Element {
         page_depth.set(0);
     });
 
-    // Set by the pending-share intake below when a capture is waiting, so the
-    // tab restore yields to it. Both are bare futures that can resolve in either
-    // order: the intake awaits an invoke, the restore awaits the disk snapshot.
-    // The intake was documented as the winner but only actually won when it
-    // happened to resolve *last* — landing first, it had its Finances switch
-    // silently overwritten by the restore.
+    // Set by a share intent or deep link the moment it is taken, before any wait,
+    // so the tab restore yields to it in whichever order they resolve. The restore
+    // checks it again after its own feature-set wait.
     let mut share_claimed_tab = use_signal(|| false);
 
     // 1.8b: restore the last-open tab once the store's disk snapshot has loaded.
@@ -768,6 +765,10 @@ fn App() -> Element {
         // needs the answer.
         while feature_set.peek().is_none() {
             timer::sleep_ms(20).await;
+        }
+        if *share_claimed_tab.peek() {
+            record_boot("restore: yielded to a claim made while waiting");
+            return;
         }
         // A demo build is one page, named when it is built.
         let stored = if cfg!(feature = "demo") {
@@ -913,6 +914,7 @@ fn App() -> Element {
     let mut pending_share_mut = pending_share;
     use_future(move || async move {
         if let Ok(Some(capture)) = bridge::invoke_take_pending_share_intent().await {
+            share_claimed_tab.set(true);
             // The capture flow it hands off to lives inside Finances, so with
             // that tab hidden there is nowhere to switch to. The bytes stay on
             // disk for whenever the feature comes back.
@@ -923,12 +925,10 @@ fn App() -> Element {
                 web_sys::console::warn_1(
                     &"share intent arrived with finances off; leaving it pending".into(),
                 );
+                active_tab.set(home_of());
                 return;
             }
             pending_share_mut.set(Some(capture));
-            // Claim before switching, so a tab restore that resolves *after*
-            // this can't overwrite the capture's destination.
-            share_claimed_tab.set(true);
             active_tab.set(Tab::Finances);
         }
     });
@@ -943,21 +943,30 @@ fn App() -> Element {
             let _ = tx.unbounded_send(());
         });
         spawn(async move {
+            // The first message is the mount's: only a cold start may need a
+            // fallback tab, since the restore yields to the claim.
+            let mut first = true;
             while rx.next().await.is_some() {
+                let cold = std::mem::replace(&mut first, false);
                 let Ok(Some(key)) = bridge::invoke_take_deep_link_tab().await else {
                     continue;
                 };
+                share_claimed_tab.set(true);
                 while feature_set.peek().is_none() {
                     timer::sleep_ms(20).await;
                 }
                 match Tab::from_key(&key) {
                     Some(tab) if tab.visible(&feature_set.peek().clone().unwrap_or_default()) => {
-                        share_claimed_tab.set(true);
                         active_tab.set(tab);
                     }
-                    _ => web_sys::console::warn_1(
-                        &format!("deep link to {key}, which this launch does not show").into(),
-                    ),
+                    _ => {
+                        web_sys::console::warn_1(
+                            &format!("deep link to {key}, which this launch does not show").into(),
+                        );
+                        if cold {
+                            active_tab.set(home_of());
+                        }
+                    }
                 }
             }
         });
