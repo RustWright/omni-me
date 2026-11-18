@@ -963,7 +963,23 @@ mod tests {
             }
         }
 
+        use crate::config::ConfigValue;
+        use crate::events::{
+            ConfigProjection, EventStore, NewEvent, ProjectionRunner, SurrealEventStore,
+        };
         let db = crate::db::test_db().await;
+        // Quiet hours off: flush re-checks them, and the default window would hold
+        // the alert whenever this runs between 22:00 and 08:00 UTC.
+        let runner = ProjectionRunner::new(db.clone(), vec![Box::new(ConfigProjection)]);
+        runner.init_all().await.unwrap();
+        for key in [ConfigKey::NotifyQuietStart, ConfigKey::NotifyQuietEnd] {
+            let set = NewEvent::config_set("d1", key, Some(ConfigValue::Int(0))).unwrap();
+            let stored = SurrealEventStore::new(db.clone())
+                .append(set)
+                .await
+                .unwrap();
+            runner.apply_events(&[stored]).await.unwrap();
+        }
         let runs = Arc::new(SurrealRunStore::new(db.clone()));
         runs.init_schema().await.unwrap();
         let phone = Arc::new(SlowPhone::default());
