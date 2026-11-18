@@ -4,21 +4,22 @@
 live in `project.md` § Decisions in force, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`),
 rationale in `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
-## ▶ NEXT ACTION — Cycle 5 close resumes (Session 6, Phase C)
-1.2.5 is live (server and apps, 11-17); calls and checks are in the overlay's
-`DECISION_LOG_2026-11-17.md`. Remaining, in my proposed order (only step 1 gates the close):
-1. **His slate review:** my proposed disposition for every open finding is in that log §
-   Proposed slate; the review docs (`reviews/2026-11-16-*.md`, gitignored) mark only his rulings.
-2. [0071] (my proposal: a `tasks.md` age canary, NOTE past 15 code commits) and [0073].
-3. Cycle close bookkeeping: bump `.omni/tasks.toml`, set [0074] to `todo` (it says `shelved`).
-Then the next push, [0074], from its planning session.
+## ▶ NEXT ACTION — release 1.2.6, then finish closing Cycle 5
+The Cycle 5 review is triaged in full (11-17/18): every finding has his disposition in
+`reviews/2026-11-16-*.md` (gitignored); deferrals are [0099], [0100], [0098] and `project.md`
+§ Carried to Cycle 6 Planning. The fixes since 1.2.5 are on `dev/role-split-model-seats`,
+CI-green to `1bbc103`, on dev (`dev-93b6de0-1bbc103`) and the S9 (1.1.48-dev), smoke-passed.
+1. **1.2.6** (his go): stamp, overlay lock, both mains, deploy, app release, as for 1.2.5.
+   It carries server and app changes, so both halves ship.
+2. [0073] the comment-convention revision: its own design-first session.
+3. Then bump `.omni/tasks.toml` to cycle 6, and [0074]'s planning session starts the next push.
 
 ⛔ Live is the pause: every live step waits for his go, one at a time.
 ⛔ **Never `cargo build`/`test` on this box** (`project-dev-machines-and-build-limits`); the mock demo
 page is the one exception.
 
 ## ⛔ Waiting on him
-- Steps 1–2 above.
+- The 1.2.6 go (step 1).
 - **His actions:** [0006] the R2 account (he chose later), [0010] the OpenRouter privacy setting.
 - [0013] is parked until a real blank delivery item appears in review; ask with it on screen.
 - **Promoting ~11 general feedback notes to `~/.claude/rules/`:** the always-loaded tier is at 315 of
