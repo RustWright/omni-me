@@ -130,7 +130,8 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
   worse than none. Route every money render through one formatter. [M]
 - [0054] **Swipe between Overview, Ledger and Analyze** (two swipe handlers already exist). [S]
 - [0055] **Finances performance on real data** (11k transactions on live). Observe; do not
-  pre-optimise. [—]
+  pre-optimise. Watch: citation titles filter every row per chip set (P-I1: ~11 ms vs ~2.5 on
+  the dev S9); fix is a by-id lookup, batched per thread. [—]
 
 **Generalization, trailing** (`docs/src/invariants.md` is the contract)
 - [0056] **Preset picker UI, extra presets, record-type export and import, setup guides.**
