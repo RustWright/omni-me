@@ -711,3 +711,10 @@ title  = "jobs/ consolidation (review B-W3, B-W4, B-I4, B-I5)"
 status = "todo"
 size   = "M"
 ref    = "tasks.md § From daily use — backlog"
+
+[[task]]
+id     = "omni-me-0100"
+title  = "Revoked IMAP password never becomes needs-you (review T1)"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Bugs"

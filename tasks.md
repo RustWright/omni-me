@@ -67,6 +67,9 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 - [0097] **A photo-only email fails the receipt handler** ("produced no extractable text": it
   reads the body and PDF text only), though the archive still files and reads the photo. Whether
   a receipt draft results is unverified (his test mail, dev uid 15062, 2026-11-16). [S]
+- [0100] **A revoked IMAP password never becomes "needs you"** (review T1, verified): a login
+  failure maps to `Upstream`, so a plain Failure, and only the 24 h "failing" alert fires. Design
+  first: `NeedsReauth` halts the source and only the OTP Reconnect flow resumes it. [M]
 - [0029] **A zero-amount receipt draft got past the "no non-zero amount" check**: a single
   `Unmatched -0` posting, live 11-10. Cause unverified. [S]
 - [0032] **The desktop's post-update splash hang is back, intermittently** (11-10 hung, 11-11

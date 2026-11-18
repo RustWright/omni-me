@@ -221,6 +221,20 @@ production from the inside.
 > decisions in force, rewritten at every completion. Open work lives in
 > [`tasks.md`](tasks.md). This file is current state only.
 
+## Carried to Cycle 6 Planning
+
+The Cycle 5 review's test gaps (his ruling 11-17), for Planning to schedule or drop. Full text is
+in `reviews/2026-11-16-test-gaps.md`, which is gitignored: this machine only.
+- Partly covered by the 11-17 fixes, rest open: T3 quiet-hours hold end to end, T5 stored rows
+  decoding after a type change, T11 summary due day across a zone change, T12 what the summary
+  treats as new, T16 spend from a real provider response.
+- Open: T7 summary counts against the real tables, T8 Settings, Jobs decodes only its mock, T9 a
+  subject that never succeeded, T10 `quiet_until` at DST and boundary hours, T13 weekly budget
+  edges, T14 every import error maps to an outcome, T15 a push the server refuses as too large,
+  T17 notification tabs exist in the app, T18 a device override on a server-only key, T19 a
+  turned photo in the multi-photo path.
+- Done: T2, T6 (with their fixes); T4 replaced by a synthetic email (`5bbd0d9`); T1 is [0100].
+
 ## Decisions in force
 
 Rulings carried out of the pre-reset `tasks.md` (2026-11-12), one line each. They are
