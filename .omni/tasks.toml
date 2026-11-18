@@ -704,3 +704,10 @@ title  = "Own UnifiedPush channel in place of ntfy"
 status = "todo"
 size   = "L"
 ref    = "tasks.md § Later cycles"
+
+[[task]]
+id     = "omni-me-0099"
+title  = "jobs/ consolidation (review B-W3, B-W4, B-I4, B-I5)"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § From daily use — backlog"

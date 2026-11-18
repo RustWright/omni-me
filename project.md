@@ -388,7 +388,7 @@ These are settled. Do not re-open one without a new reason.
   try a screen, chosen for what they show recruiters, one page or flow per mock bundle. Pipeline
   features keep evidence that fits them (recorded runs, bench scores), since a mock demo of a
   backend shows fake data arriving and proves nothing about real input.
-- The January logbook set (2026-11-13) is four entries, in order: the assistant asks before it
+- The logbook set (2026-11-13; all four published on mylearnbase 11-15/16) is four entries, in order: the assistant asks before it
   acts, receipts from email, search by meaning, the document archive. Statements and OTA
   releases are dropped, not deferred. A one-page mock build is measured first (my proposal) so
   the demos for 1, 3 and 4 can follow.

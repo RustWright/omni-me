@@ -162,6 +162,10 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
   "stuck buffer" indicator; the frequency-aware Daily Flow visualizer; the upstream
   `rerun-if-env-changed` for `tauri-build`. [XS–M]
 
+- [0099] **`jobs/` consolidation** (Cycle 5 review, deferred 11-17): the summary walks the badge
+  queues with copied SQL (B-W3); `charge_of` hand-parses typed drafts, so decode leniently or lose
+  alerts (B-W4); one `AlertTier` enum (B-I4); a shared test kit (B-I5). [M]
+
 **Benches and models** (`MODEL_BENCH.md`)
 - [0065] **Extend the retrieval bench past `search` over notes and journal.** The
   `document` type matters most and has never been retrieval-tested. [M]
