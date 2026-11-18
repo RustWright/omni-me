@@ -697,3 +697,10 @@ title  = "Photo-only email fails the receipt handler"
 status = "todo"
 size   = "S"
 ref    = "tasks.md § Bugs"
+
+[[task]]
+id     = "omni-me-0098"
+title  = "Own UnifiedPush channel in place of ntfy"
+status = "todo"
+size   = "L"
+ref    = "tasks.md § Later cycles"

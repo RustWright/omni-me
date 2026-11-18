@@ -44,7 +44,9 @@
             </intent-filter>
             <!-- omni-me://<tab> from a notification tap. The deep-link plugin reads it;
                  this filter is what routes it here, since this file replaces the
-                 generated manifest the CLI would otherwise have put it in. -->
+                 generated manifest the CLI would otherwise have put it in.
+                 BROWSABLE lets any app or web page fire this link, so a link
+                 must only ever pick a tab: never an id, an argument or an action. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />

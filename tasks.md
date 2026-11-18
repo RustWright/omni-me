@@ -197,6 +197,9 @@ generic IMAP config source.
   the hand workaround (edit one charge to the sum, delete the other) is unverified. [M]
 - [0009] **Tap targets** (shelved 11-16: no mis-taps in real use). Trigger: he reports one, or
   the LLM-primary push redesigns the surviving screens. A global min-hit-area floor first. [S–M]
+- [0098] **omni-me's own UnifiedPush channel in place of ntfy** (his direction 11-17, after the
+  more important work). `notify.rs`'s `Notifier` trait is the seam. Until then, `omni-me://` links
+  stay tab-only: BROWSABLE lets any page fire them (S-I1). [L]
 - Filed, not scheduled: inbox management · Open Banking Canada · Gmail write-back (once trust
   is built) · blobs on object storage and the agent on its own machine (these must not
   complicate the co-located design).
