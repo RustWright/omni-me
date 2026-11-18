@@ -9,11 +9,18 @@ use std::sync::{Arc, Mutex};
 
 /// Model spend over one run. `cost_micros` sums only the calls that reported a
 /// cost, and `unpriced_calls` counts the rest, so an absent figure never reads as free.
+/// Stored as JSON in every run row, so a field added here must not break decoding
+/// the rows already written: `serde(default)` covers it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Spend {
     pub calls: u32,
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
+    /// Inside `completion_tokens`, and often most of it.
+    pub reasoning_tokens: u64,
+    /// Inside `prompt_tokens`: the part served from the provider's prefix cache.
+    pub cached_tokens: u64,
     /// Millionths of a US dollar, from the provider's `usage.estimated_cost`.
     pub cost_micros: u64,
     pub unpriced_calls: u32,
@@ -22,11 +29,13 @@ pub struct Spend {
 impl Spend {
     /// Fold one chat-completions response body into the total.
     pub fn add_response(&mut self, response: &serde_json::Value) {
-        let usage = &response["usage"];
+        let usage = crate::llm::chat::Usage::from_response(response);
         self.calls += 1;
-        self.prompt_tokens += usage["prompt_tokens"].as_u64().unwrap_or(0);
-        self.completion_tokens += usage["completion_tokens"].as_u64().unwrap_or(0);
-        match usage["estimated_cost"].as_f64() {
+        self.prompt_tokens += u64::from(usage.prompt_tokens);
+        self.completion_tokens += u64::from(usage.completion_tokens);
+        self.reasoning_tokens += u64::from(usage.reasoning_tokens);
+        self.cached_tokens += u64::from(usage.cached_tokens);
+        match response["usage"]["estimated_cost"].as_f64() {
             Some(dollars) if dollars >= 0.0 => {
                 self.cost_micros += (dollars * 1_000_000.0).round() as u64;
             }
@@ -82,6 +91,25 @@ mod tests {
             spend.unpriced_calls, 1,
             "a call with no cost is counted as unpriced"
         );
+    }
+
+    #[test]
+    fn reasoning_and_cached_tokens_are_kept() {
+        let mut spend = Spend::default();
+        spend.add_response(&json!({"usage": {
+            "prompt_tokens": 1000, "completion_tokens": 300,
+            "completion_tokens_details": {"reasoning_tokens": 240},
+            "prompt_tokens_details": {"cached_tokens": 800}
+        }}));
+        assert_eq!((spend.reasoning_tokens, spend.cached_tokens), (240, 800));
+    }
+
+    #[test]
+    fn a_row_written_before_the_token_detail_still_decodes() {
+        let old = r#"{"calls":2,"prompt_tokens":150,"completion_tokens":10,"cost_micros":123,"unpriced_calls":1}"#;
+        let spend: Spend = serde_json::from_str(old).unwrap();
+        assert_eq!(spend.calls, 2);
+        assert_eq!(spend.reasoning_tokens, 0);
     }
 
     #[tokio::test]
