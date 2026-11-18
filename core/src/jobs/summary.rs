@@ -21,9 +21,6 @@ pub const REVIEW_SUMMARY: &str = "review_summary";
 /// How often the schedule is checked, so a changed hour applies the same day.
 pub const TICK: std::time::Duration = std::time::Duration::from_secs(300);
 
-/// The retention scan's own ceiling on a device, reused so both count alike.
-const PURGE_SCAN_LIMIT: u32 = 500;
-
 /// Everything waiting, by id, so "new since the last summary" is a set difference
 /// rather than a count that a cleared item and a new one could cancel out.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -83,7 +80,7 @@ impl Waiting {
             .await?;
         }
         if config.enabled(Feature::Documents) {
-            let due = crate::retention::candidates(db, now, PURGE_SCAN_LIMIT)
+            let due = crate::retention::candidates(db, now, crate::retention::SCAN_LIMIT)
                 .await
                 .map_err(|e| err(&e))?;
             w.purge = due.into_iter().map(|c| c.document_id).collect();

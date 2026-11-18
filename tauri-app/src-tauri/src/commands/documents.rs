@@ -369,12 +369,9 @@ async fn retention_group_members(state: &AppState, tag: &str) -> Result<Vec<Stri
         .collect())
 }
 
-/// How many documents one retention scan looks at.
-///
-/// ⚠️ A page, not the archive: the scan is a read of every document older than the
-/// shortest rule, and this is a screen a person opened. A group larger than one
-/// confirm can list is already capped by `purge::MAX_PREVIEW_ITEMS`.
-const RETENTION_SCAN_LIMIT: u32 = 500;
+/// Shared with the daily summary's purge count. A page, not the archive: a group
+/// larger than one confirm can list is already capped by `purge::MAX_PREVIEW_ITEMS`.
+const RETENTION_SCAN_LIMIT: u32 = retention::SCAN_LIMIT;
 
 /// A group retention proposes, as a surface reads it.
 #[derive(Debug, Clone, serde::Serialize)]

@@ -44,6 +44,10 @@ pub const KEEP_FOREVER: u32 = u32::MAX;
 /// count far past it once took the date arithmetic off the calendar and crashed.
 pub const MAX_KEEP_DAYS: u32 = 36_500;
 
+/// How many documents one scan looks at: a page, not the archive. The Archive
+/// screen and the daily summary both use it, so their purge counts agree.
+pub const SCAN_LIMIT: u32 = 500;
+
 /// The days a document is kept for under the rules, or `None` when it is kept
 /// regardless.
 ///
