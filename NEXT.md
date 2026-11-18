@@ -9,8 +9,9 @@ The Cycle 5 review is triaged in full (11-17/18): every finding has his disposit
 `reviews/2026-11-16-*.md` (gitignored); deferrals are [0099], [0100], [0098] and `project.md`
 § Carried to Cycle 6 Planning. The fixes since 1.2.5 are on `dev/role-split-model-seats`,
 CI-green to `1bbc103`, on dev (`dev-93b6de0-1bbc103`) and the S9 (1.1.48-dev), smoke-passed.
-1. **1.2.6** (his go): stamp, overlay lock, both mains, deploy, app release, as for 1.2.5.
-   It carries server and app changes, so both halves ship.
+1. **1.2.6, his go, one at a time:** staged and CI-green (stamp `eaff0bc`, overlay lock `b7bcf55`;
+   S9 1.1.49-dev from the stamp passed). Push public `main` to `eaff0bc`; push overlay `main` =
+   local `b7911cd`; dispatch the deploy (`agent_image` empty); verify; App release `version=1.2.6`.
 2. [0073] the comment-convention revision: its own design-first session.
 3. Then bump `.omni/tasks.toml` to cycle 6, and [0074]'s planning session starts the next push.
 
