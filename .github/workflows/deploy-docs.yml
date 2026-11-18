@@ -35,7 +35,11 @@ jobs:
       - name: Install mdbook-mermaid
         run: |
           mkdir -p "$HOME/bin"
-          curl -sSfL https://github.com/badboy/mdbook-mermaid/releases/download/v0.17.1/mdbook-mermaid-v0.17.1-x86_64-unknown-linux-gnu.tar.gz | tar -xz -C "$HOME/bin"
+          # A tag pins the name, not the bytes; this job can write Pages. The hash is
+          # GitHub's published digest for this asset, so a version bump needs a new one.
+          curl -sSfL -o "$RUNNER_TEMP/mm.tar.gz" https://github.com/badboy/mdbook-mermaid/releases/download/v0.17.1/mdbook-mermaid-v0.17.1-x86_64-unknown-linux-gnu.tar.gz
+          echo "9afcfa5b8463afe606d48595a7ae338564302903e626ea5b6edb8007d29393a5  $RUNNER_TEMP/mm.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/mm.tar.gz" -C "$HOME/bin"
           echo "$HOME/bin" >> "$GITHUB_PATH"
 
       - name: Build documentation
