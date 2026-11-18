@@ -21,12 +21,19 @@ fn run_line(run: &JobRunView) -> String {
             format!("{} fetched · {} appended", n("fetched"), n("appended"))
         }
         // A job that is not an import (the daily summary) counts other things.
-        Some("success") => run
-            .counts
-            .iter()
-            .map(|(k, v)| format!("{v} {k}"))
-            .collect::<Vec<_>>()
-            .join(" · "),
+        Some("success") => {
+            let counted: Vec<String> = run
+                .counts
+                .iter()
+                .filter(|(_, v)| **v > 0)
+                .map(|(k, v)| format!("{v} {}", k.replace('_', " ")))
+                .collect();
+            if counted.is_empty() {
+                "nothing counted".to_string()
+            } else {
+                counted.join(" · ")
+            }
+        }
         Some("needs_user") => format!(
             "needs you: {}",
             run.outcome
