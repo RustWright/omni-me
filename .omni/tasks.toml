@@ -536,7 +536,7 @@ ref    = "tasks.md § Owed at cycle close"
 [[task]]
 id     = "omni-me-0074"
 title  = "Task and project records (gates estimation calibration)"
-status = "shelved"
+status = "todo"
 ref    = "tasks.md § Later cycles"
 
 [[task]]
