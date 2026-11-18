@@ -35,6 +35,9 @@ pub struct Waiting {
     /// Open alerts of a kind set to Review, by alert id, each with its line.
     #[serde(default)]
     pub alerts: BTreeMap<String, String>,
+    /// The listed alerts a tap should open Finances for (large charges).
+    #[serde(default)]
+    pub finance_alerts: BTreeSet<String>,
     /// Set when the last 7 days sent more critical alerts than the budget.
     #[serde(default)]
     pub over_budget: Option<String>,
@@ -86,8 +89,10 @@ impl Waiting {
             w.purge = due.into_iter().map(|c| c.document_id).collect();
         }
         for a in super::alerts::open_review_alerts(db).await? {
-            w.alerts
-                .insert(a.alert_id, format!("{}: {}", a.title, a.subject));
+            if a.tab() == "finances" {
+                w.finance_alerts.insert(a.alert_id.clone());
+            }
+            w.alerts.insert(a.alert_id.clone(), a.line());
         }
         w.over_budget = super::alerts::over_budget(db, now).await?;
         Ok(w)
@@ -128,9 +133,9 @@ impl Waiting {
     }
 
     /// The tab a tap opens: the one with the most waiting, Finances on a tie, and
-    /// Settings when only alerts or the budget line are listed.
+    /// Settings when only source alerts or the budget line are listed.
     pub fn tab(&self) -> &'static str {
-        let finances = self.batches.len() + self.unmatched.len();
+        let finances = self.batches.len() + self.unmatched.len() + self.finance_alerts.len();
         let candidates = [
             (finances, "finances"),
             (self.suggestions.len(), "assistant"),
@@ -418,6 +423,29 @@ mod tests {
         };
         assert_eq!(tie.tab(), "finances", "Finances wins a tie");
         assert_eq!(Waiting::default().tab(), "settings");
+        let charge = Waiting {
+            alerts: [("a1".to_string(), "Large charge".to_string())].into(),
+            finance_alerts: set(&["a1"]),
+            ..Default::default()
+        };
+        assert_eq!(
+            charge.tab(),
+            "finances",
+            "a listed large charge is a finances item"
+        );
+        let source = Waiting {
+            alerts: [("a2".to_string(), "Mail import needs you".to_string())].into(),
+            ..Default::default()
+        };
+        assert_eq!(source.tab(), "settings");
+    }
+
+    #[test]
+    fn a_state_saved_before_finance_alerts_still_decodes() {
+        let old = r#"{"batches":["b1"],"suggestions":[],"unmatched":[],"purge":[],"alerts":{}}"#;
+        let w: Waiting = serde_json::from_str(old).unwrap();
+        assert_eq!(w.batches, set(&["b1"]));
+        assert!(w.finance_alerts.is_empty());
     }
 
     #[test]

@@ -71,12 +71,32 @@ pub struct ReviewAlert {
     pub alert_id: String,
     pub title: String,
     pub subject: String,
+    pub message: String,
+    pub kind: String,
+    pub one_shot: bool,
+}
+
+impl ReviewAlert {
+    /// A one-shot is about one event, which its message names (a charge's date and
+    /// payee); an episode is about its subject, the source.
+    pub fn line(&self) -> String {
+        let what = if self.one_shot {
+            &self.message
+        } else {
+            &self.subject
+        };
+        format!("{}: {what}", self.title)
+    }
+
+    pub fn tab(&self) -> &'static str {
+        tab_for(&self.kind)
+    }
 }
 
 pub async fn open_review_alerts(db: &Database) -> Result<Vec<ReviewAlert>, String> {
     let mut resp = db
         .query(
-            "SELECT alert_id, title, subject FROM job_alerts \
+            "SELECT alert_id, title, subject, message, kind, one_shot FROM job_alerts \
              WHERE tier = 'review' AND closed_at IS NONE ORDER BY opened_at",
         )
         .await
@@ -843,6 +863,31 @@ mod tests {
             "critical now, so it interrupts"
         );
         assert!(open_review_alerts(&engine.db).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_review_tier_charge_is_listed_by_what_it_was() {
+        let review = crate::config::ConfigValue::Text("review".into());
+        let (engine, _runs, phone) =
+            engine_with(&[(ConfigKey::NotifyTierLargeCharge, review)]).await;
+        engine
+            .open_one_shot(
+                crate::jobs::BANK_IMPORT,
+                "bank/bank-r1",
+                LARGE_CHARGE,
+                "Large charge: 812.40 CAD".into(),
+                "2026-11-14 furniture store (bank)".into(),
+            )
+            .await
+            .unwrap();
+        engine.flush().await;
+        assert!(phone.0.lock().unwrap().is_empty());
+        let listed = open_review_alerts(&engine.db).await.unwrap();
+        assert_eq!(
+            listed[0].line(),
+            "Large charge: 812.40 CAD: 2026-11-14 furniture store (bank)"
+        );
+        assert_eq!(listed[0].tab(), "finances");
     }
 
     #[tokio::test]
