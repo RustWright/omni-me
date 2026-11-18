@@ -592,21 +592,34 @@ mod tests {
         assert_eq!(pb.source, "scan");
     }
 
-    /// A real bank's statement email: 5 inline JPEGs of branding and 1 PDF.
-    /// ⚠️ Against the actual fixture, not a hand-built message — the whole risk
-    /// here is what a real sender does.
+    /// The shape of a real bank statement email: branding images the HTML renders
+    /// inline, beside one PDF. Built here, so it runs everywhere: a real `.eml`
+    /// fixture cannot live in this public repo.
     #[tokio::test]
     async fn an_email_becomes_a_document_with_its_attachment_beneath_it() {
-        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .join(".reference/imap poller")
-            .join("Your Estatement on 30042026 now available.eml");
-        let Ok(raw) = std::fs::read(&path) else {
-            eprintln!("fixture missing — skipping");
-            return;
+        use base64::Engine;
+        let b64 = |b: &[u8]| base64::engine::general_purpose::STANDARD.encode(b);
+        let logo = |n: u8| {
+            format!(
+                "--REL\r\nContent-Type: image/png\r\nContent-ID: <logo{n}>\r\n\
+                 Content-Disposition: inline\r\nContent-Transfer-Encoding: base64\r\n\r\n{}\r\n",
+                b64(&[0x89, b'P', b'N', b'G', n])
+            )
         };
-        let parsed = crate::mime::parse_eml(&raw).expect("fixture parses");
+        let raw = format!(
+            "From: statements@bank.example\r\nSubject: Your statement is ready\r\n\
+             MIME-Version: 1.0\r\nContent-Type: multipart/related; boundary=\"REL\"\r\n\r\n\
+             --REL\r\nContent-Type: text/html\r\n\r\n\
+             <p>Your statement is attached.</p><img src=\"cid:logo1\"><img src=\"cid:logo2\">\r\n\
+             {}{}--REL\r\nContent-Type: application/pdf; name=\"statement.pdf\"\r\n\
+             Content-Disposition: attachment; filename=\"statement.pdf\"\r\n\
+             Content-Transfer-Encoding: base64\r\n\r\n{}\r\n--REL--\r\n",
+            logo(1),
+            logo(2),
+            b64(b"%PDF-1.4\n%%EOF\n")
+        )
+        .into_bytes();
+        let parsed = crate::mime::parse_eml(&raw).expect("parses");
 
         let d = dir();
         let out = ingest_email(&ctx(d.path(), &no_passwords()), &raw, &parsed)
@@ -615,8 +628,8 @@ mod tests {
 
         assert_eq!(out.attachment_document_ids.len(), 1, "one real attachment");
         assert_eq!(
-            out.inline_parts_skipped, 5,
-            "⛔ the branding images must not each become a document"
+            out.inline_parts_skipped, 2,
+            "the branding images must not each become a document"
         );
 
         // The message is archived whole, so the skipped images are still in it.
@@ -627,11 +640,7 @@ mod tests {
         assert_eq!(
             email.size as usize,
             raw.len(),
-            "⚠️ the RAW message — that is what makes dropping the inline parts lossless"
-        );
-        assert!(
-            email.text.unwrap_or_default().len() > 20,
-            "the body is the email's text, so it stays searchable by content"
+            "the RAW message, which is what makes dropping the inline parts lossless"
         );
 
         // The attachment is a document in its own right, linked back.

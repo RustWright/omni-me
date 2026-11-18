@@ -616,18 +616,6 @@ mod tests {
 
     use super::*;
     use chrono::TimeZone;
-    use std::path::PathBuf;
-
-    /// `.reference/` is gitignored — skip rather than panic if fixtures aren't
-    /// present (fresh-clone / CI safety).
-    fn fixture_eml(name: &str) -> Option<Vec<u8>> {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .join(".reference/imap poller")
-            .join(name);
-        std::fs::read(&path).ok()
-    }
 
     fn imap_msg_from(from: &str, body: Vec<u8>) -> ImapMessage {
         ImapMessage {
@@ -751,45 +739,6 @@ mod tests {
                      From: A Vendor <noreply@vendor.example>\r\n\
                      Subject: your order\r\n\r\nOrder total $42.18\r\n";
         assert!(handler.accepts(&imap_msg_from("me@gmail.com", body.to_vec())));
-    }
-
-    #[tokio::test]
-    async fn handles_audiobook_inline_body_eml() {
-        let body = match fixture_eml("inline-body-audiobook-order.eml") {
-            Some(b) => b,
-            None => {
-                eprintln!("fixture missing — skipping");
-                return;
-            }
-        };
-        let extractor = Arc::new(crate::extraction::null::NullExtractor);
-        let handler = ReceiptHandler::new("audiobooks", "device-test", extractor);
-        let msg = imap_msg_from("donotreply@audiobooks.example", body);
-        let events = handler
-            .handle(&msg)
-            .await
-            .expect("audiobook handler should succeed");
-        // NullExtractor → empty events; the point is the pipeline doesn't error.
-        assert!(events.is_empty());
-    }
-
-    #[tokio::test]
-    async fn handles_isp_inline_body_eml() {
-        let body = match fixture_eml("📫 isp invoice available..eml") {
-            Some(b) => b,
-            None => {
-                eprintln!("fixture missing — skipping");
-                return;
-            }
-        };
-        let extractor = Arc::new(crate::extraction::null::NullExtractor);
-        let handler = ReceiptHandler::new("isp", "device-test", extractor);
-        let msg = imap_msg_from("billing@isp.example", body);
-        let events = handler
-            .handle(&msg)
-            .await
-            .expect("isp handler should succeed");
-        assert!(events.is_empty());
     }
 
     /// Returns a canned extraction, so the handler's own gate can be exercised
