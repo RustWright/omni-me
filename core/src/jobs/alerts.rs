@@ -323,23 +323,26 @@ impl AlertEngine {
         one_shot: bool,
     ) -> Result<(), String> {
         let opening = self.opening.lock().await;
-        if self.exists(job, subject, kind, one_shot).await? {
-            return Ok(());
-        }
         let now = Utc::now();
         let config = crate::events::load_persisted(&self.db)
             .await
             .map(|global| ResolvedConfig::new(global, Default::default()))
             .unwrap_or_default();
+        let tier = match tier_key(job, kind) {
+            Some(key) if config.text_of(key) == "review" => "review",
+            _ => "critical",
+        };
+        if !one_shot {
+            self.close_other_tier(job, subject, kind, tier).await?;
+        }
+        if self.exists(job, subject, kind, one_shot).await? {
+            return Ok(());
+        }
         let charge_at_night = one_shot && config.bool_of(ConfigKey::NotifyChargesAtNight);
         let due = if charge_at_night {
             now
         } else {
             hold_until(&config, now).unwrap_or(now)
-        };
-        let tier = match tier_key(job, kind) {
-            Some(key) if config.text_of(key) == "review" => "review",
-            _ => "critical",
         };
         self.db
             .query(
@@ -368,15 +371,42 @@ impl AlertEngine {
         Ok(())
     }
 
-    async fn close_all(&self, run: &RunRecord) -> Result<(), String> {
+    /// Close an open episode opened under a tier the setting no longer names, so the
+    /// open that follows takes the new tier. A row with no tier predates tiers: critical.
+    async fn close_other_tier(
+        &self,
+        job: &str,
+        subject: &str,
+        kind: &str,
+        tier: &str,
+    ) -> Result<(), String> {
+        self.db
+            .query(
+                "UPDATE job_alerts SET closed_at = $now WHERE job = $job AND subject = $subject \
+                 AND kind = $kind AND closed_at IS NONE AND one_shot = false \
+                 AND ((tier IS NONE AND $tier != 'critical') OR (tier IS NOT NONE AND tier != $tier))",
+            )
+            .bind(("now", stamp(Utc::now())))
+            .bind(("job", job.to_string()))
+            .bind(("subject", subject.to_string()))
+            .bind(("kind", kind.to_string()))
+            .bind(("tier", tier.to_string()))
+            .await
+            .map_err(|e| format!("close job_alerts: {e}"))?
+            .check()
+            .map_err(|e| format!("close job_alerts: {e}"))?;
+        Ok(())
+    }
+
+    async fn close_all(&self, job: &str, subject: &str) -> Result<(), String> {
         self.db
             .query(
                 "UPDATE job_alerts SET closed_at = $now WHERE job = $job AND subject = $subject \
                  AND closed_at IS NONE",
             )
             .bind(("now", stamp(Utc::now())))
-            .bind(("job", run.job.clone()))
-            .bind(("subject", run.subject.clone()))
+            .bind(("job", job.to_string()))
+            .bind(("subject", subject.to_string()))
             .await
             .map_err(|e| format!("close job_alerts: {e}"))?
             .check()
@@ -459,7 +489,7 @@ impl AlertEngine {
             return Ok(());
         };
         match &run.outcome {
-            RunOutcome::Success => self.close_all(run).await,
+            RunOutcome::Success => self.close_all(&run.job, &run.subject).await,
             RunOutcome::NeedsUser { reason } if spec.failure.alert_needs_user => {
                 let title = format!("{} needs you", spec.title);
                 let message = format!(
@@ -494,6 +524,13 @@ impl RunObserver for AlertEngine {
     async fn observe(&self, run: &RunRecord) {
         if let Err(e) = self.handle(run).await {
             tracing::warn!(job = run.job, subject = run.subject, error = %e, "alert check failed");
+        }
+    }
+
+    /// A removed source never succeeds again, so nothing else would close its episodes.
+    async fn subject_retired(&self, job: &str, subject: &str) {
+        if let Err(e) = self.close_all(job, subject).await {
+            tracing::warn!(job, subject, error = %e, "could not close a retired source's alerts");
         }
     }
 }
@@ -745,6 +782,67 @@ mod tests {
             line.contains("Alert: mail import failing 24 h (3)"),
             "{line}"
         );
+    }
+
+    fn code() -> RunRecord {
+        run(
+            0,
+            RunOutcome::NeedsUser {
+                reason: "app password revoked".into(),
+            },
+        )
+    }
+
+    #[tokio::test]
+    async fn a_retired_source_alerts_again_once_re_added() {
+        let (engine, runs, phone) = engine().await;
+        record(&engine, &runs, code()).await;
+        engine
+            .subject_retired(crate::jobs::MAIL_IMPORT, "gmail")
+            .await;
+        record(&engine, &runs, code()).await;
+        assert_eq!(
+            phone.0.lock().unwrap().len(),
+            2,
+            "the old episode no longer blocks"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_tier_change_reopens_an_open_episode_under_the_new_tier() {
+        use crate::config::ConfigValue;
+        use crate::events::{
+            ConfigProjection, EventStore, NewEvent, ProjectionRunner, SurrealEventStore,
+        };
+        let review = ConfigValue::Text("review".into());
+        let (engine, runs, phone) =
+            engine_with(&[(ConfigKey::NotifyTierMailNeedsUser, review)]).await;
+        record(&engine, &runs, code()).await;
+        assert!(
+            phone.0.lock().unwrap().is_empty(),
+            "review waits for the summary"
+        );
+
+        let runner = ProjectionRunner::new(engine.db.clone(), vec![Box::new(ConfigProjection)]);
+        let set = NewEvent::config_set(
+            "d1",
+            ConfigKey::NotifyTierMailNeedsUser,
+            Some(ConfigValue::Text("critical".into())),
+        )
+        .unwrap();
+        let stored = SurrealEventStore::new(engine.db.clone())
+            .append(set)
+            .await
+            .unwrap();
+        runner.apply_events(&[stored]).await.unwrap();
+
+        record(&engine, &runs, code()).await;
+        assert_eq!(
+            phone.0.lock().unwrap().len(),
+            1,
+            "critical now, so it interrupts"
+        );
+        assert!(open_review_alerts(&engine.db).await.unwrap().is_empty());
     }
 
     #[tokio::test]

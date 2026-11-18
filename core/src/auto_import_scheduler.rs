@@ -760,6 +760,21 @@ impl SourceRegistry {
         }
     }
 
+    /// Remove a source for good and tell the run observers, so its open alerts close.
+    /// Not `remove`: `spawn_one` replaces a source through `remove` on every edit.
+    pub async fn retire(&self, name: &str) -> bool {
+        let job = self.inner.read().await.get(name).map(|r| r.source.job());
+        if !self.remove(name).await {
+            return false;
+        }
+        if let Some(job) = job {
+            for observer in &self.on_run {
+                observer.subject_retired(job, name).await;
+            }
+        }
+        true
+    }
+
     /// Pause a source live: abort its scheduler task but **keep** its registry
     /// entry (and thus its config). Returns whether a source by that name was
     /// registered. This is the runtime off-switch (#367) — for a compiled
@@ -1669,6 +1684,29 @@ mod tests {
         assert!(a.is_ok() && b.is_ok());
         assert_eq!(src.most.load(Ordering::SeqCst), 1, "pulls overlapped");
         registry.remove("counting").await;
+    }
+
+    #[tokio::test]
+    async fn only_retire_tells_observers_a_source_is_gone() {
+        #[derive(Default)]
+        struct Retired(std::sync::Mutex<Vec<(String, String)>>);
+        #[async_trait]
+        impl crate::jobs::runs::RunObserver for Retired {
+            async fn observe(&self, _run: &crate::jobs::runs::RunRecord) {}
+            async fn subject_retired(&self, job: &str, subject: &str) {
+                self.0.lock().unwrap().push((job.into(), subject.into()));
+            }
+        }
+        let seen = Arc::new(Retired::default());
+        let registry = SourceRegistry::new().with_observer(seen.clone());
+        let src = || Arc::new(null::NullSource::new("plain"));
+        registry.spawn_one(src(), Duration::from_secs(1800)).await;
+        // An edit replaces the source through `remove`; its alerts must stay open.
+        registry.spawn_one(src(), Duration::from_secs(1800)).await;
+        assert!(seen.0.lock().unwrap().is_empty());
+        assert!(registry.retire("plain").await);
+        assert_eq!(seen.0.lock().unwrap().len(), 1);
+        assert_eq!(seen.0.lock().unwrap()[0].1, "plain");
     }
 
     #[tokio::test]

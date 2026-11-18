@@ -304,7 +304,7 @@ async fn add_source_handler(
                 .await;
         }
         None => {
-            state.auto_import_registry.remove(&def.name).await;
+            state.auto_import_registry.retire(&def.name).await;
         }
     }
     Ok(Json(
@@ -327,7 +327,7 @@ async fn remove_source_handler(
     }
     config::save(&path, &cfg).map_err(internal_err)?;
     // Tear the running task down live too (no-op if it wasn't spawned).
-    state.auto_import_registry.remove(&name).await;
+    state.auto_import_registry.retire(&name).await;
     // Drop any persisted pause for this name so a later same-name source isn't
     // surprise-paused at the next boot. Best-effort: a removed source is already
     // gone, so a paused-file hiccup shouldn't fail the remove.

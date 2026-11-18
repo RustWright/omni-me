@@ -98,6 +98,8 @@ impl RunRecord {
 #[async_trait]
 pub trait RunObserver: Send + Sync {
     async fn observe(&self, run: &RunRecord);
+    /// `subject` was taken away for good (a source deleted) and will record no more runs.
+    async fn subject_retired(&self, _job: &str, _subject: &str) {}
 }
 
 #[async_trait]
