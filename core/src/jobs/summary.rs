@@ -4,7 +4,7 @@
 //! skipped when nothing has arrived since the last one sent (`project.md` §
 //! Notifications). Unmatched transactions are counted apart from the review queue.
 
-use chrono::{DateTime, NaiveDate, NaiveTime, TimeZone, Utc};
+use chrono::{DateTime, NaiveDate, Timelike, Utc};
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -183,14 +183,12 @@ async fn ids(db: &Database, sql: &str) -> Result<BTreeSet<String>, String> {
     Ok(rows.into_iter().collect())
 }
 
-/// The day the summary is due and whether `now` has reached its hour.
+/// The day the summary is due and whether `now` has reached its hour. Compared by
+/// local hour, as `check_in::is_due` does: building the local instant instead
+/// finds nothing on a day DST skips that hour, and the summary would not run.
 pub fn due(now: DateTime<Utc>, tz: Tz, hour: u32) -> Option<NaiveDate> {
     let local = now.with_timezone(&tz);
-    let at = local
-        .date_naive()
-        .and_time(NaiveTime::from_hms_opt(hour, 0, 0)?);
-    let at = tz.from_local_datetime(&at).earliest()?;
-    (local >= at).then(|| local.date_naive())
+    (local.hour() >= hour).then(|| local.date_naive())
 }
 
 pub struct SummaryJob {
@@ -266,12 +264,8 @@ impl SummaryJob {
                 return;
             }
         };
-        let tz: Tz = config
-            .text_of(ConfigKey::AssistantCheckInTimezone)
-            .parse()
-            .unwrap_or(chrono_tz::UTC);
         let hour = config.int_of(ConfigKey::NotifySummaryHour).clamp(0, 23) as u32;
-        let Some(day) = due(now, tz, hour) else {
+        let Some(day) = due(now, config.user_zone(), hour) else {
             return;
         };
         let mut state = self.load().await;
@@ -456,6 +450,16 @@ mod tests {
         assert_eq!(
             due(utc("2026-11-15T01:05:00Z"), tz, 19),
             Some(NaiveDate::from_ymd_opt(2026, 11, 14).unwrap())
+        );
+    }
+
+    #[test]
+    fn an_hour_dst_skips_still_runs_that_day() {
+        // Toronto skips 02:00 on 2026-03-08: 07:00Z is already 03:00 EDT (zoneinfo).
+        let tz: Tz = "America/Toronto".parse().unwrap();
+        assert_eq!(
+            due(utc("2026-03-08T07:30:00Z"), tz, 2),
+            Some(NaiveDate::from_ymd_opt(2026, 3, 8).unwrap())
         );
     }
 

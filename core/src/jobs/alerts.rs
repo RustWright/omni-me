@@ -209,13 +209,9 @@ fn stamp(t: DateTime<Utc>) -> String {
 
 /// The end of the current quiet window under `config`.
 fn hold_until(config: &ResolvedConfig, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
-    let tz: Tz = config
-        .text_of(ConfigKey::AssistantCheckInTimezone)
-        .parse()
-        .ok()?;
     let start = config.int_of(ConfigKey::NotifyQuietStart).clamp(0, 23) as u32;
     let end = config.int_of(ConfigKey::NotifyQuietEnd).clamp(0, 23) as u32;
-    quiet_until(now, tz, start, end)
+    quiet_until(now, config.user_zone(), start, end)
 }
 
 #[derive(Debug, SurrealValue)]
@@ -224,6 +220,7 @@ struct Pending {
     title: String,
     message: String,
     kind: String,
+    one_shot: bool,
 }
 
 /// Where a tap on an alert lands: a charge on Finances, a source problem on
@@ -442,7 +439,7 @@ impl AlertEngine {
         let pending: Vec<Pending> = match self
             .db
             .query(
-                "SELECT alert_id, title, message, kind FROM job_alerts \
+                "SELECT alert_id, title, message, kind, one_shot FROM job_alerts \
                  WHERE sent_at IS NONE AND closed_at IS NONE AND due_at <= $now \
                  AND (tier IS NONE OR tier = 'critical')",
             )
@@ -456,7 +453,30 @@ impl AlertEngine {
                 return;
             }
         };
+        let config = crate::events::load_persisted(&self.db)
+            .await
+            .map(|global| ResolvedConfig::new(global, Default::default()))
+            .unwrap_or_default();
+        // Quiet hours were applied when the alert opened; a send retried since then
+        // can land inside them, so they are checked again here.
+        let held = hold_until(&config, Utc::now());
+        let charges_at_night = config.bool_of(ConfigKey::NotifyChargesAtNight);
         for p in pending {
+            if let Some(until) = held
+                && !(p.one_shot && charges_at_night)
+            {
+                let moved = self
+                    .db
+                    .query("UPDATE type::record('job_alerts', $id) SET due_at = $until")
+                    .bind(("id", p.alert_id.clone()))
+                    .bind(("until", stamp(until)))
+                    .await
+                    .and_then(|r| r.check());
+                if let Err(e) = moved {
+                    tracing::warn!(alert = p.alert_id, error = %e, "could not hold an alert for quiet hours");
+                }
+                continue;
+            }
             let n = Notification {
                 title: p.title,
                 message: p.message,
@@ -527,10 +547,14 @@ impl AlertEngine {
                     return Ok(());
                 }
                 let title = format!("{} failing for {hours} h", spec.title);
+                let zone = crate::events::load_persisted(&self.db)
+                    .await
+                    .map(|global| ResolvedConfig::new(global, Default::default()).user_zone())
+                    .unwrap_or(chrono_tz::UTC);
                 let message = format!(
                     "{} has not completed a run since {}. Last error: {error}",
                     run.subject,
-                    since.format("%Y-%m-%d %H:%M UTC")
+                    since.with_timezone(&zone).format("%Y-%m-%d %H:%M %Z")
                 );
                 self.open(run, Kind::Failing, title, message).await
             }
@@ -888,6 +912,46 @@ mod tests {
             "Large charge: 812.40 CAD: 2026-11-14 furniture store (bank)"
         );
         assert_eq!(listed[0].tab(), "finances");
+    }
+
+    #[tokio::test]
+    async fn a_retry_that_falls_in_quiet_hours_is_held() {
+        use crate::config::ConfigValue;
+        // Quiet hours (UTC, the default zone) that contain this moment.
+        let hour = chrono::Timelike::hour(&Utc::now()) as i64;
+        let (engine, _runs, phone) = engine_with(&[
+            (ConfigKey::NotifyQuietStart, ConfigValue::Int(hour)),
+            (ConfigKey::NotifyQuietEnd, ConfigValue::Int((hour + 2) % 24)),
+        ])
+        .await;
+        // Opened before the window began, its first send failed: due in the past.
+        let past = stamp(Utc::now() - Duration::hours(3));
+        engine
+            .db
+            .query(
+                "CREATE type::record('job_alerts', 'a1') CONTENT {
+                    alert_id: 'a1', job: 'mail_import', subject: 'gmail', kind: 'needs_user',
+                    title: 't', message: 'm', tier: 'critical', one_shot: false,
+                    opened_at: $past, due_at: $past, sent_at: NONE, closed_at: NONE
+                 }",
+            )
+            .bind(("past", past))
+            .await
+            .unwrap()
+            .check()
+            .unwrap();
+        engine.flush().await;
+        assert!(
+            phone.0.lock().unwrap().is_empty(),
+            "held to the window's end"
+        );
+        let mut r = engine
+            .db
+            .query("SELECT VALUE due_at FROM type::record('job_alerts', 'a1')")
+            .await
+            .unwrap();
+        let due: Vec<String> = r.take(0).unwrap();
+        assert!(due[0] > stamp(Utc::now()), "{due:?}");
     }
 
     #[tokio::test]
