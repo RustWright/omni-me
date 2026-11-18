@@ -515,7 +515,7 @@ ref    = "tasks.md § Owed at cycle close"
 [[task]]
 id     = "omni-me-0071"
 title  = "Staleness signals for artifacts beyond NEXT.md"
-status = "todo"
+status = "cut"
 size   = "S"
 ref    = "tasks.md § Owed at cycle close"
 

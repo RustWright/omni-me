@@ -187,9 +187,6 @@ generic IMAP config source.
 
 ## Owed at cycle close
 
-- [0071] **Staleness signals for artifacts beyond `NEXT.md`.** The `tasks.md` size cap
-  (dotfiles `944036d`) is the first one. Too
-  many canaries and they get skimmed, so thresholds differ per artifact. [S]
 - [0073] **Revise the comment convention** (own session, design-first), then the sweep it
   gates. The routing is right; the length and voice failed. [L]
 
