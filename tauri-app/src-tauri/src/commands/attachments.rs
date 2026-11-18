@@ -207,7 +207,7 @@ pub async fn fetch_attachment(
         return Ok(bytes);
     }
 
-    let path = format!("/blobs/{sha256}");
+    let path = format!("/blobs/{}", super::shared::encode(&sha256));
     let resp = state
         .box_request(reqwest::Method::GET, &path)
         .await
@@ -256,7 +256,10 @@ pub async fn fetch_attachment_preview(
     // Offline, or the server failing: a cached PDF that may be locked still beats
     // an error, which is all a viewer used to get for a document on the device.
     let resp = match state
-        .box_request(reqwest::Method::GET, &format!("/blobs/{sha256}/preview"))
+        .box_request(
+            reqwest::Method::GET,
+            &format!("/blobs/{}/preview", super::shared::encode(&sha256)),
+        )
         .await
         .timeout(omni_me_core::http::DOWNLOAD_TIMEOUT)
         .send()

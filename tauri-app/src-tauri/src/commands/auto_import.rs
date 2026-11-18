@@ -245,8 +245,7 @@ pub async fn set_source_paused(
     require_feature(&state, Feature::AutoImport)?;
 
     let action = if paused { "pause" } else { "resume" };
-    // Source names are simple identifiers (the Add form rejects path-unsafe
-    // characters; compiled source names are code constants), so path-safe as-is.
+    let source = super::shared::encode(&source);
     let path = format!("/auto_import/sources/{source}/{action}");
     let resp = state
         .box_request(reqwest::Method::POST, &path)
@@ -333,9 +332,7 @@ pub async fn remove_source_config(
 ) -> Result<serde_json::Value, String> {
     require_feature(&state, Feature::AutoImport)?;
 
-    // Source names are constrained to simple identifiers (the Add form
-    // rejects path-unsafe characters), so the name is path-safe as-is.
-    let path = format!("/auto_import/sources/{name}");
+    let path = format!("/auto_import/sources/{}", super::shared::encode(&name));
     let resp = state
         .box_request(reqwest::Method::DELETE, &path)
         .await

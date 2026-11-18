@@ -203,7 +203,7 @@ pub async fn process_note_llm(
         .await?
         .ok_or_else(|| format!("Aggregate '{aggregate_id}' not found"))?;
 
-    let path = format!("/notes/{aggregate_id}/process");
+    let path = format!("/notes/{}/process", super::shared::encode(&aggregate_id));
     let resp = state
         .box_request(reqwest::Method::POST, &path)
         .await

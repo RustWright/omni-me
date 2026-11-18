@@ -13,6 +13,20 @@ use omni_me_core::events::{Event, EventType, NewEvent, feature_off_message};
 
 use crate::AppState;
 
+/// Percent-encode one path segment or query value for a request to the server.
+/// Every value interpolated into a path goes through this: a `/` or `?` in it
+/// would otherwise reach a different route. Local rather than a new dependency.
+pub(crate) fn encode(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
 /// Refuse a command whose feature is switched off.
 ///
 /// The last line of the "off means inert" promise. A hidden tab is what a user
@@ -86,6 +100,11 @@ pub(crate) async fn append_batch_and_apply(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_path_value_cannot_reach_another_route() {
+        assert_eq!(super::encode("gmail_personal"), "gmail_personal");
+        assert_eq!(super::encode("a/b?c d#"), "a%2Fb%3Fc%20d%23");
+    }
 
     /// Every command that reaches the box on a feature's behalf must refuse when
     /// that feature is off.

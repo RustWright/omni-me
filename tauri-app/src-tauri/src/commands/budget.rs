@@ -1578,7 +1578,7 @@ pub async fn import_statement_document(
         // The secret's *name* is user-chosen config and could contain
         // characters that change the query's meaning, so it is encoded rather
         // than interpolated raw.
-        path.push_str(&format!("?password_secret={}", urlencode(name)));
+        path.push_str(&format!("?password_secret={}", super::shared::encode(name)));
     }
     tracing::info!(
         bytes = bytes.len(),
@@ -1697,19 +1697,6 @@ fn parse_wire_row(r: &StatementRowWire) -> Result<statement::StatementRow, Strin
             .transpose()?,
         external_id: None,
     })
-}
-
-/// Percent-encode a query-string value. Small and local rather than a new
-/// dependency — the only values passed here are short config-chosen names.
-fn urlencode(s: &str) -> String {
-    s.bytes()
-        .map(|b| match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                (b as char).to_string()
-            }
-            _ => format!("%{b:02X}"),
-        })
-        .collect()
 }
 
 /// Compact preview of one side of a reconciliation pair — just enough

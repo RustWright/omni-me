@@ -32,5 +32,6 @@ pub async fn list_job_runs(
     limit: Option<usize>,
 ) -> Result<serde_json::Value, String> {
     let limit = limit.unwrap_or(20);
+    let name = super::shared::encode(&name);
     get_json(&state, &format!("/jobs/{name}/runs?limit={limit}")).await
 }
