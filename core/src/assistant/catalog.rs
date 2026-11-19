@@ -701,8 +701,8 @@ mod tests {
         // rather than an omission. Registering it reads as "the assistant
         // remembers"; what it actually does is put every answer it has ever given
         // into the corpus it retrieves from, so its earlier guesses come back as
-        // evidence about the user's life, indistinguishable from something he
-        // wrote. Recall with provenance and confidence is Phase E's job.
+        // evidence about the user's life, indistinguishable from something the
+        // user wrote. Recall with provenance and confidence is Phase E's job.
         // `the_catalog_does_not_expose_conversations` holds this line.
         "assistant",
     ];

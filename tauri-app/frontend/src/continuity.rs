@@ -128,7 +128,7 @@ pub struct NavState {
     /// Journal: the selected day (`YYYY-MM-DD`).
     pub journal_date: Option<String>,
     /// The day `journal_date` was last chosen on. A new day opens on today rather
-    /// than restoring yesterday's view (his call, 2026-10-01).
+    /// than restoring yesterday's view: ruling 12 (RULINGS.md).
     #[serde(default)]
     pub journal_viewed_on: Option<String>,
     /// Journal sub-tab: "today" | "calendar".

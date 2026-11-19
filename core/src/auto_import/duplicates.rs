@@ -1,6 +1,6 @@
 //! Flag a proposal that looks like one this source already made: same sender,
 //! same day, same `Unmatched` amount, from a different email. Flag only, never
-//! drop (user, 2026-10-03): two identical real purchases on one day happen.
+//! drop, per ruling 33 (RULINGS.md): two identical real purchases on one day happen.
 
 use std::collections::BTreeSet;
 

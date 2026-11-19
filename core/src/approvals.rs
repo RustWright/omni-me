@@ -122,15 +122,14 @@ pub async fn summary(
     if enabled.contains(&Feature::Finances) {
         let n = crate::db::queries::count_pending_batches(db).await? as usize;
         add(&mut out, ReviewedAt::Feature(Feature::Finances), n);
-        // Rows waiting to be reconciled count too (his D3 ruling, 2026-10-09):
-        // the ledger needs both queues cleared to stay current.
+        // Rows waiting to be reconciled count too: ruling 81 (RULINGS.md).
         let n = crate::db::queries::count_unmatched_transactions(db).await? as usize;
         add(&mut out, ReviewedAt::Feature(Feature::Finances), n);
     }
 
-    // ⛔ Unchecked document readings are NOT counted (his ruling, 2026-10-10): the
-    // reading pass marks every filed document unchecked, ~60 a day, a queue no one
-    // can clear. The archive is a filing cabinet; checking happens on demand.
+    // Unchecked document readings are not counted: the reading pass marks every
+    // filed document unchecked, ~60 a day, a queue no one can clear. Ruling 5
+    // (RULINGS.md): the archive is a filing cabinet.
 
     out.retain(|entry| entry.count > 0);
     Ok(out)

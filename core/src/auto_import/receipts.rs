@@ -97,7 +97,7 @@ const MAX_PDF_BYTES: usize = 25 * 1024 * 1024;
 const MAX_PDF_TEXT_BYTES: usize = 4 * 1024 * 1024;
 
 /// Past this much text (about 50 pages) an email is not sent to the model. It
-/// reaches review empty instead, pointing at its archived copy (his ruling, S-W4).
+/// reaches review empty instead, pointing at its archived copy. Ruling 85 (RULINGS.md).
 const MAX_EXTRACTION_TEXT_BYTES: usize = 200 * 1024;
 
 /// Wall-clock bound on one `pdftotext` run.
@@ -512,7 +512,7 @@ impl ImapHandler for ReceiptHandler {
         let drafts = receipt_extraction_to_drafts(&result, &source_prefix);
         // With no drafts, only a receipt still reaches review, where it can be
         // entered by hand (a royalty notice did this). Order and shipping
-        // mail with nothing in it stays archive-only (his ruling, 2026-10-02).
+        // mail with nothing in it stays archive-only: ruling 40 (RULINGS.md).
         if drafts.is_empty() && result.kind() != Some(DocumentKind::Receipt) {
             return Ok(vec![]);
         }
@@ -579,7 +579,7 @@ impl ImapHandler for ReceiptHandler {
             // a new one about the same order.
             ORDER_GROUP_KEY: order_group,
             GROUP_MEMBER_KEY: format!("uid-{}", message.uid),
-            // Shadow triage, kept beside the proposal so his decision on it scores
+            // Shadow triage, kept beside the proposal so the user's decision scores
             // the seat: a committed batch triage called `none` is a miss.
             "triage": triage,
         });
@@ -817,8 +817,8 @@ mod tests {
             .expect("a proposal")
     }
 
-    /// Shadow triage is only scoreable if the verdict reaches the proposal his
-    /// decision lands on. `none` here, and still proposed: shadow skips nothing.
+    /// Shadow triage is only scoreable if the verdict reaches the proposal the
+    /// user's decision lands on. `none` here, and still proposed: shadow skips nothing.
     #[tokio::test]
     async fn a_proposal_carries_the_triage_verdict_and_shadow_skips_nothing() {
         let extractor = Arc::new(StubExtractor(stub_result(Some("receipt"), "105.43")));

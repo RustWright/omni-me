@@ -745,7 +745,7 @@ fn DocumentDetail(
 }
 
 /// Once nothing on this document is unchecked, open the next document that has
-/// something unchecked, or go back to the list when none does (his D1 ruling).
+/// something unchecked, or go back to the list when none does. Ruling 88 (RULINGS.md).
 fn advance_when_checked(
     document_id: String,
     on_open: EventHandler<String>,
@@ -1143,7 +1143,7 @@ fn RetentionPanel(on_review: EventHandler<(String, String)>) -> Element {
 /// The purge queue for one tag group: every document listed, each sparable, one
 /// confirm.
 ///
-/// ⛔ **This shape is the ruling, not a layout choice** (user, 2026-09-27).
+/// This shape is ruling 3 (RULINGS.md), not a layout choice.
 /// Strict per-item confirmation was refused as unusable at backfill scale, and
 /// approving a *rule* was refused because it grants autonomy over an irreversible
 /// action. What makes this satisfy the autonomy rule is that nothing goes without

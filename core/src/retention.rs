@@ -37,7 +37,7 @@ use crate::db::{Database, DbError, queries};
 use crate::retention_class::RETAIN_TAG_PREFIX;
 
 /// A timer that never runs out: a topic tag set to this keeps every document
-/// carrying it, whatever its retention category says (his rule B, R4-6).
+/// carrying it, whatever its retention category says. Ruling 39 (RULINGS.md).
 pub const KEEP_FOREVER: u32 = u32::MAX;
 
 /// The longest timer a rule may set: a century. Past it is Keep forever, and a
@@ -256,7 +256,7 @@ mod tests {
         tags.iter().map(|x| x.to_string()).collect()
     }
 
-    /// His rule B (R4-6): the category decides, a longer topic timer wins,
+    /// Ruling 39 (RULINGS.md): the category decides, a longer topic timer wins,
     /// untimed topic tags no longer block, and "keep forever" keeps.
     #[test]
     fn the_category_decides_unless_a_topic_tag_keeps_longer() {
@@ -589,7 +589,7 @@ mod tests {
         );
     }
 
-    /// The case he hit (2026-11-12): August mail backfilled on 11-11 showed as
+    /// The reported case: August mail backfilled on 11-11 showed as
     /// "Nov 11" in review while the archive list showed August.
     #[test]
     fn counted_from_is_the_earlier_day() {

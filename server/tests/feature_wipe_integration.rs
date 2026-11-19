@@ -304,7 +304,7 @@ async fn an_unknown_feature_is_a_bad_request_naming_the_known_ones() {
     assert!(resp.text().await.unwrap().contains("finances"));
 }
 
-/// A device follows a server's wipe when it pulls the record (user, 2026-10-03):
+/// A device follows a server's wipe when it pulls the record (ruling 43, RULINGS.md):
 /// its pre-wipe finance events go, and its journal and its own post-wipe work stay.
 #[tokio::test]
 async fn a_device_that_pulls_the_wipe_clears_its_own_copy() {

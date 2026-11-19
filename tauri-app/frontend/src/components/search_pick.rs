@@ -1,7 +1,7 @@
 //! Pick one value out of a long list by typing part of it.
 //!
-//! A `<select>` was fine at ten tags and unusable at a hundred (his report,
-//! 2026-10-11). Only a listed value can be picked, so a typo never becomes an
+//! A `<select>` was fine at ten tags and unusable at a hundred. Only a listed
+//! value can be picked, so a typo never becomes an
 //! exact-match filter that returns nothing.
 
 use dioxus::prelude::*;

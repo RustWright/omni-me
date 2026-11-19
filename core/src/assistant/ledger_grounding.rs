@@ -56,7 +56,7 @@ pub fn accounts_named_in(text: &str) -> BTreeSet<String> {
 /// ones, and any the conventions note names.
 ///
 /// The ledger counts even with a note, so an account the user opens by manual
-/// entry is usable at once (his ruling, 2026-11-10). Neither a proposal nor a
+/// entry is usable at once: ruling 21 (RULINGS.md). Neither a proposal nor a
 /// grounded receipt can add an account, so only the user's own writes grow this.
 pub async fn known_accounts(db: &Database) -> BTreeSet<String> {
     let mut known: BTreeSet<String> = queries::list_accounts(db)

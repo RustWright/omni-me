@@ -39,17 +39,17 @@ pub struct DayRollup {
 
 /// Roll per-item completions up into per-day status for one routine.
 ///
-/// ⚠️ **A skipped item counts as done** (user, 2026-09-08). Skipping is a
+/// A skipped item counts as done: ruling 86 (RULINGS.md). Skipping is a
 /// deliberate act with a reason attached, not a failure to act, so a morning
 /// where one item was skipped on purpose is a morning that happened. `skipped`
 /// is reported alongside so the distinction survives — the number to look at
 /// when asking whether a routine is really being kept.
 ///
-/// ⚠️ **This is not the only encoding of the rule.** The routines screen derives
+/// This is not the only encoding of the rule. The routines screen derives
 /// the same thing for its card header, in `routine_progress::day_progress` in
 /// the frontend crate — which shares no Rust code with this one, so no compiler
 /// checks the two against each other. Wiring the screen to call this function
-/// was considered and rejected (user, 2026-09-08): an async round-trip is not
+/// was rejected by ruling 87 (RULINGS.md): an async round-trip is not
 /// worth it for a number already on screen. What holds them together instead is
 /// `fixtures/routine_day_agreement.json` at the repo root, read by
 /// `roll_up_agrees_with_the_shared_day_fixture` below and by its twin on the

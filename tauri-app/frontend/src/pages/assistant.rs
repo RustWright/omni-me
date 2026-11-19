@@ -1020,7 +1020,7 @@ fn MessageBubble(message: AssistantMessage) -> Element {
 /// chat surface shares — but the button stays visible rather than relying on it,
 /// because on a phone there is no Enter key doing that job.
 /// Shown while an answer is being worked on, so the wait has something to watch.
-/// A fixed list, picked by time: no model call (his ruling, 2026-10-11).
+/// A fixed list, picked by time: no model call. Ruling 20 (RULINGS.md).
 const THINKING_LINES: &[&str] = &[
     "Leafing through your journal…",
     "Asking the ledger nicely…",

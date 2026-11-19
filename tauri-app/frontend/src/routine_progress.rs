@@ -5,7 +5,7 @@
 //! screen's own. `core::routines::roll_up` encodes the same rule for the
 //! assistant, and the two crates share no Rust code — the frontend is its own
 //! cargo workspace and everything crossing is JSON over Tauri IPC. Wiring the
-//! screen to `roll_up` was considered and rejected (user, 2026-09-08): an async
+//! screen to `roll_up` was rejected by ruling 87 (RULINGS.md): an async
 //! round-trip is not worth it for a number already on screen. So the guarantee
 //! is carried by a test instead — `fixtures/routine_day_agreement.json` at the
 //! repo root feeds the same cases to this function and to `roll_up`, and both
@@ -28,7 +28,7 @@ pub struct DayProgress {
 
 /// Roll one day's completion rows up into the group's header status.
 ///
-/// ⚠️ **A skipped item counts as done** (user, 2026-09-08). A skip is a
+/// A skipped item counts as done: ruling 86 (RULINGS.md). A skip is a
 /// deliberate act with a reason attached, not a failure to act, so any row —
 /// skipped or not — is an item that happened.
 ///

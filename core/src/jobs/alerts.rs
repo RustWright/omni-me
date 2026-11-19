@@ -19,7 +19,7 @@ use crate::notify::{Notification, Notifier, Priority};
 /// How often held and failed sends are retried.
 pub const FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(300);
 
-/// Critical's weekly budget, measured and never enforced (`project.md` § Notifications).
+/// Critical's weekly budget, measured and never enforced: ruling 55 (RULINGS.md).
 pub const CRITICAL_PER_WEEK: usize = 3;
 
 /// The alert kind for one charge over the threshold.

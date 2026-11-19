@@ -1545,8 +1545,8 @@ pub struct AssistantProposal {
     pub decision: Option<String>,
 }
 
-/// What a reply actually did, from its suggestions rather than its prose (his
-/// ruling, 2026-10-11). A long thread once produced "done ✅" for four actions
+/// What a reply actually did, from its suggestions rather than its prose: ruling
+/// 18 (RULINGS.md). A long thread once produced "done ✅" for four actions
 /// with no tool calls; this line is built by the app, so it cannot be talked into
 /// agreeing.
 pub fn reply_outcome(proposals: &[AssistantProposal]) -> String {

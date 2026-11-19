@@ -297,11 +297,11 @@ pub fn is_skipped_sender(from: &str, skip: &[String]) -> bool {
 /// will later want to look at to ask why it produced nothing.
 ///
 /// Mail from the senders in `skip` is left out: not archived and not offered to
-/// any handler (his ruling, 2026-10-11: social notifications are not records).
+/// any handler: social notifications are not records, ruling 39 (RULINGS.md).
 /// Counted in [`PollOutcome::skipped`], never dropped silently.
 ///
 /// Bytes `known` already holds are not filed again, purged ones included, but
-/// the message is still dispatched (his ruling, 2026-11-09).
+/// the message is still dispatched: ruling 83 (RULINGS.md).
 pub async fn poll_once_skipping(
     fetcher: &dyn ImapFetcher,
     handlers: &[Box<dyn ImapHandler>],
@@ -335,8 +335,7 @@ pub async fn poll_once_skipping(
     for msg in &messages {
         // A listed sender is offered to the handlers first, and skipped only if
         // nothing comes of it: LinkedIn bills Premium from linkedin.com, and a
-        // charge is never dropped for its sender (his rule: an amount charged
-        // makes it a receipt).
+        // charge is never dropped for its sender: ruling 84 (RULINGS.md).
         let early: Option<Result<Vec<NewEvent>, String>> = if is_skipped_sender(&msg.from, skip) {
             match dispatch_to(msg, handlers) {
                 Some(handler) => match handler.handle(msg).await {
@@ -434,7 +433,7 @@ pub async fn poll_once_skipping(
                             stamp_email_document(event, doc_id);
                         }
                         // A charge came out of it, so it is a receipt: written at
-                        // parser rank, above the reader's guess (his rule, R4-6).
+                        // parser rank, above the reader's guess. Ruling 84 (RULINGS.md).
                         if !handler_events.is_empty()
                             && let Some(target) = archive
                             && let Some(event) = receipt_retention_event(target.device_id, doc_id)
@@ -771,7 +770,7 @@ mod tests {
         assert!(!is_skipped_sender("a@facebookmail.com", &[]));
     }
 
-    /// His ruling, 2026-10-11: social notifications are not archived. A listed
+    /// Social notifications are not archived, ruling 39 (RULINGS.md). A listed
     /// sender that yields nothing is skipped, counted, and moved past.
     #[tokio::test]
     async fn a_listed_sender_with_nothing_to_import_is_skipped() {

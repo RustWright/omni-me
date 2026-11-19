@@ -133,7 +133,7 @@ fn charge_drafts(result: &ExtractionResult, source_prefix: &str) -> Vec<DraftTra
     }
 
     // The stated total outranks the line items, because it is the figure a bank
-    // charge balances against (user, 2026-09-26). Reconciliation pairs postings
+    // charge balances against: ruling 32 (RULINGS.md). Reconciliation pairs postings
     // whose amounts cancel exactly, so one purchase has to be one transaction:
     // four line-item drafts can never match a single card debit of their sum.
     if let Some(total) = result.total {
@@ -147,7 +147,7 @@ fn charge_drafts(result: &ExtractionResult, source_prefix: &str) -> Vec<DraftTra
     }
 
     // No stated total: the lines' sum stands in for it, so one purchase is still
-    // one transaction (user, 2026-10-03). Twelve per-line drafts could never match
+    // one transaction: ruling 33 (RULINGS.md). Twelve per-line drafts could never match
     // the one card charge; a sum from a partial list at least fails the same way.
     let one_currency = result
         .postings

@@ -1,7 +1,7 @@
 //! The fixed list of retention categories an archived email is filed under.
 //!
-//! One per document, picked by the reader from this list and nothing else (his
-//! ruling R4-6, 2026-10-11), so a timer can be set per category. The category is
+//! One per document, picked by the reader from this list and nothing else (ruling
+//! 39, RULINGS.md), so a timer can be set per category. The category is
 //! its own field rather than a free tag; the archive shows it as `retain:<key>`.
 //! Rationale and the analysis behind the list: `docs/src/archive.md`.
 

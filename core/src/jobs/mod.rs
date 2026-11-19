@@ -49,7 +49,7 @@ pub enum Trigger {
     OnRequest(&'static str),
 }
 
-/// What happens if he never sees the output. `project.md` § Notifications.
+/// What happens if the user never sees the output: ruling 51 (RULINGS.md).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Tier {

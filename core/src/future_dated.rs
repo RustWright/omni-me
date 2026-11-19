@@ -1,5 +1,5 @@
-//! A transaction dated after today never enters the ledger from review (R4-15,
-//! his ruling 2026-10-12). A misread date is fixed in place; a real upcoming
+//! A transaction dated after today never enters the ledger from review: ruling
+//! 40 (RULINGS.md). A misread date is fixed in place; a real upcoming
 //! payment waits until it has happened. One rule for every path that commits.
 
 use chrono::NaiveDate;

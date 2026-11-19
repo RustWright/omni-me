@@ -1,8 +1,8 @@
 //! The daily review summary: one silent notification of what waits on review.
 //!
 //! Counts only, built by code, at `notify.summary_hour` in the user's zone, and
-//! skipped when nothing has arrived since the last one sent (`project.md` §
-//! Notifications). Unmatched transactions are counted apart from the review queue.
+//! skipped when nothing has arrived since the last one sent: ruling 60
+//! (RULINGS.md). Unmatched transactions are counted apart from the review queue.
 
 use chrono::{DateTime, NaiveDate, Timelike, Utc};
 use chrono_tz::Tz;

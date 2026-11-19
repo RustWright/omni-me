@@ -176,8 +176,8 @@ impl AutoImportSource for BackfillSource {
         let skip: Vec<String> =
             crate::config::sender_domains(&config.text_of(ConfigKey::ArchiveSkipSenders)).collect();
 
-        // His condition: no intake without the filter. With no category timed,
-        // every message would be kept, so the backfill refuses rather than run open.
+        // No intake without the filter: ruling 82 (RULINGS.md). With no category
+        // timed, every message would be kept, so the backfill refuses to run open.
         let rules = crate::retention::rules(db)
             .await
             .map_err(|e| ImportError::Upstream(format!("read retention rules: {e}")))?;

@@ -5,8 +5,9 @@ Code that depends on one cites it as `ruling N (RULINGS.md)`, and `scripts/check
 fails CI when a cited number is missing here. A number is never reused: a revised ruling
 keeps its number, and retiring one means changing the code that cites it.
 
-The reasoning behind the first 80 is in `git show 7ef0e55:tasks.md` (search the topic), in
-`docs/src/`, or at the edit site. These are settled. Do not re-open one without a new reason.
+The reasoning behind 1–80 is in `git show 7ef0e55:tasks.md` (search the topic), in
+`docs/src/`, or at the edit site. 81–89 were recorded only in code comments until [0073]; the
+edit site carries their reasoning. These are settled. Do not re-open one without a new reason.
 
 ## Product shape
 - **1.** The journal is user-authored only. The assistant reads and cites it and can never
@@ -42,6 +43,14 @@ The reasoning behind the first 80 is in `git show 7ef0e55:tasks.md` (search the 
   visible tab of that order; there is no separate landing-tab key.
 - **14.** A device saves a server address only when the user sets one. An untouched device follows the
   build's default, so a hostname change is one CI variable.
+- **81.** The finances count includes rows waiting to be reconciled: the ledger needs both
+  queues cleared to stay current.
+- **86.** A skipped routine item counts as done: a skip is a deliberate act with a reason.
+- **87.** The routines screen keeps its own day roll-up rather than calling
+  `core::routines::roll_up` over IPC. The shared fixture `routine_day_agreement.json` holds
+  the two together.
+- **88.** Archive review moves to the next document with something unchecked once the current
+  one has none, or back to the list when none does.
 
 ## Assistant engineering
 - **15.** Keep our Rust loop, with no framework (`ASSISTANT_RESEARCH.md`). A full rewrite is
@@ -103,6 +112,17 @@ The reasoning behind the first 80 is in `git show 7ef0e55:tasks.md` (search the 
 - **41.** Encrypted PDFs: every `pdf_password*` secret is tried. The server serves a decrypted copy,
   so the phone never holds a password. A multi-photo receipt is one combined PDF. Photos
   shrink on the device before upload.
+- **82.** No intake without the retention filter: with no category timed, the backfill refuses
+  to run rather than keep every message.
+- **83.** Bytes already held are not filed again, purged ones included, but the message is
+  still dispatched to the handlers.
+- **84.** An amount charged makes an email a receipt, whatever its sender. A skip-listed sender
+  is offered to the handlers first, and a charge is written at parser rank, above the reader's
+  guess.
+- **85.** An email past about 50 pages of text is not sent to the model. It reaches review
+  empty, pointing at its archived copy.
+- **89.** A batch may be committed from the list without opening it only when the sender
+  authenticated, the line items summed to a stated total, and nothing raised a warning.
 
 ## Data and operations
 - **42.** Live is the pause. Every live step waits for the user's go, one at a time. Dev is mine.

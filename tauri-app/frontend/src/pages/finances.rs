@@ -160,7 +160,7 @@ enum FinancesView {
     /// Assistant proposals that change the ledger, decided here rather than in
     /// the assistant inbox.
     ///
-    /// ⛔ **Approval lives where the data lives** (user, 2026-09-13). `core`'s
+    /// Approval lives where the data lives: ruling 2 (RULINGS.md). `core`'s
     /// `inbox::pending` subtracts exactly what this screen lists, so the two
     /// surfaces are disjoint by construction — a proposal shown in both would be
     /// two chances to approve one change.
@@ -2960,8 +2960,8 @@ fn BatchListRow(batch: PendingBatchView, on_open: EventHandler<()>) -> Element {
     }
 }
 
-/// Whether a batch may be committed from the list without opening it (his D2
-/// ruling, 2026-10-09): the sender authenticated, the line items were summed
+/// Whether a batch may be committed from the list without opening it (ruling
+/// 89, RULINGS.md): the sender authenticated, the line items were summed
 /// against a stated total, and nothing raised a warning. Anything less is
 /// opened one at a time.
 fn commits_unseen(batch: &PendingBatchView) -> bool {

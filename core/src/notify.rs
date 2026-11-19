@@ -1,7 +1,7 @@
 //! Delivering a notification to the user's phone.
 //!
 //! One backend today: a self-hosted ntfy server, reached over the tailnet, with the
-//! ntfy app on the phone (`project.md` § Notifications). The [`Notifier`] trait is
+//! ntfy app on the phone, per ruling 61 (RULINGS.md). The [`Notifier`] trait is
 //! the seam for a later push channel into omni-me's own app.
 
 use async_trait::async_trait;

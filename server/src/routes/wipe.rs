@@ -215,8 +215,8 @@ async fn confirm_handler(
         ));
     }
 
-    // ⛔ Before anything is deleted, and a failure here refuses the wipe: the
-    // snapshot is the recovery path for a mistaken one (user, 2026-10-03).
+    // Before anything is deleted, and a failure here refuses the wipe: the
+    // snapshot is the recovery path for a mistaken one. Ruling 43 (RULINGS.md).
     let snapshot = snapshot(&state, ticket.counted).await?;
 
     // Its own task, so the three steps finish together. Awaited inline, a client

@@ -1352,7 +1352,7 @@ pub async fn archived_document_with_sha(
 }
 
 /// Whether any document, purged ones included, ever held exactly these bytes.
-/// Purged ones count so that re-reading old mail cannot bring back what he deleted.
+/// Purged ones count so that re-reading old mail cannot bring back what the user deleted.
 pub async fn ever_archived_sha(db: &Database, sha256: &str) -> Result<bool, DbError> {
     let mut resp = db
         .query("SELECT VALUE document_id FROM documents WHERE sha256 = $h LIMIT 1")

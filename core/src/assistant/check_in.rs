@@ -50,8 +50,8 @@ pub async fn last_check_in(db: &Database) -> Result<Option<DateTime<Utc>>, Event
         .map(|t| t.with_timezone(&Utc)))
 }
 
-/// How long a check-in thread is kept (his ruling, 2026-10-10: archive the
-/// previous one, delete after a window). Two weeks to read it or act on it.
+/// How long a check-in thread is kept: archive the previous one, delete after a
+/// window. Two weeks to read it or act on it. Ruling 19 (RULINGS.md).
 pub const KEEP_CHECK_INS_DAYS: i64 = 14;
 
 pub use super::chat_tidy::Housekeeping;
@@ -68,8 +68,8 @@ pub struct CheckInThread {
 }
 
 /// Archive every earlier check-in still showing; delete those past the window.
-/// A thread with an undecided suggestion is never deleted, so nothing he has
-/// not answered disappears.
+/// A thread with an undecided suggestion is never deleted, so nothing the user
+/// has not answered disappears.
 pub fn plan_housekeeping(
     threads: &[CheckInThread],
     current: &str,

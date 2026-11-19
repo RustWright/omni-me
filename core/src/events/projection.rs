@@ -1539,7 +1539,7 @@ mod tests {
             .unwrap();
     }
 
-    /// His desktop, 2026-11-09: a wipe pulled while finances was off left `budget`'s
+    /// A wipe pulled while finances was off left `budget`'s
     /// rows behind, and turning finances on showed them. Registered again, it must
     /// be rebuilt from the log, once.
     #[tokio::test]

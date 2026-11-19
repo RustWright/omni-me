@@ -1,5 +1,5 @@
 //! Keeping the chat list short: idle chats are archived, long-archived ones
-//! deleted. His ruling, 2026-10-11; both windows are settings. A delete is an
+//! deleted, per ruling 19 (RULINGS.md); both windows are settings. A delete is an
 //! event like any other, so the conversation stays in the log.
 
 use chrono::{DateTime, Utc};

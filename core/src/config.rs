@@ -405,35 +405,35 @@ impl ConfigKey {
             // nothing on the runs that never reach it.
             // Fifteen from 2026-10-11: a request to research the journal and then
             // write something read 15+ entries and ran out before proposing
-            // (R3-11). Quality over token cost, his ruling for the assistant.
+            // Quality over token cost: ruling 15 (RULINGS.md).
             ConfigKey::AssistantMaxTurns => ConfigValue::Int(15),
-            // His ruling, 2026-10-11: untouched a month, archived; archived a
+            // Ruling 19 (RULINGS.md): untouched a month, archived; archived a
             // quarter, deleted. Events remain, so a deleted chat is recoverable.
             ConfigKey::AssistantChatArchiveDays => ConfigValue::Int(30),
             ConfigKey::AssistantChatDeleteDays => ConfigValue::Int(90),
-            // His ruling, 2026-10-11: social notifications are not records and
+            // Ruling 39 (RULINGS.md): social notifications are not records and
             // were half the archive. A sender's domain or any subdomain of it.
             ConfigKey::ArchiveSkipSenders => ConfigValue::Text(DEFAULT_SKIP_SENDERS.to_string()),
-            // Empty is off. His ruling 2026-10-17: old mail is archived as a slow
+            // Empty is off. Ruling 38 (RULINGS.md): old mail is archived as a slow
             // backfill, set to where the official import stops.
             ConfigKey::ArchiveBackfillBefore => ConfigValue::Text(String::new()),
-            // My proposal: 20 every ten minutes, about 2,900 a day.
+            // 20 every ten minutes, about 2,900 a day.
             ConfigKey::ArchiveBackfillBatch => ConfigValue::Int(20),
-            // His ruling, 2026-11-12: critical alerts are held 22:00 to 08:00, in
+            // Ruling 59 (RULINGS.md): critical alerts are held 22:00 to 08:00, in
             // the check-in time zone, which is the user's zone everywhere else too.
             ConfigKey::NotifyQuietStart => ConfigValue::Int(22),
             ConfigKey::NotifyQuietEnd => ConfigValue::Int(8),
-            // His ruling, 2026-11-12: one silent summary of what waits on review, at 19:00.
+            // Ruling 60 (RULINGS.md): one silent summary of what waits on review, at 19:00.
             ConfigKey::NotifySummaryHour => ConfigValue::Int(19),
-            // His ruling, 2026-11-13: every kind starts critical and is demoted by hand.
+            // Ruling 56 (RULINGS.md): every kind starts critical and is demoted by hand.
             ConfigKey::NotifyTierMailNeedsUser
             | ConfigKey::NotifyTierMailFailing
             | ConfigKey::NotifyTierBankNeedsUser
             | ConfigKey::NotifyTierBankFailing
             | ConfigKey::NotifyTierLargeCharge => ConfigValue::Text("critical".to_string()),
-            // My proposal, accepted 2026-11-15: 500 in the charge's own currency. 0 is off.
+            // Ruling 57 (RULINGS.md): 500 in the charge's own currency. 0 is off.
             ConfigKey::NotifyLargeCharge => ConfigValue::Int(500),
-            // His ruling, 2026-11-12: charge alerts wait out quiet hours unless this is on.
+            // Ruling 59 (RULINGS.md): charge alerts wait out quiet hours unless this is on.
             ConfigKey::NotifyChargesAtNight => ConfigValue::Bool(false),
         }
     }
