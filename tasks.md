@@ -18,11 +18,8 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 
 ## Cycle 6: [0074] tasks, planning, people
 
-Rulings 90–109; evidence and design input in `PUSH_0074_RESEARCH.md`. In dependency order, except
-[0053], which he put first (11-19). Prep and design sessions need him; builds follow them.
-- [0053] **Privacy eye: grey out every amount with one tap**, as his bank's app does; hidden stays
-  hidden across launches until he taps (his call 11-19). A mask that misses one number is worse
-  than none: route every money render through one formatter. [M]
+Rulings 90–109; evidence and design input in `PUSH_0074_RESEARCH.md`. In dependency order. Prep
+and design sessions need him; builds follow them.
 - [0102] **UI design session** (fresh session): render the plan card, picker card, person view and
   a multi-timescale view; ruling 100 leaves Today-vs-timescales to his reaction. [USER]
 - [0103] **Task data prep, offline** (ruling 105): pull the hub indexes and his native tasks

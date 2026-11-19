@@ -4,17 +4,17 @@
 live in `RULINGS.md`, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`), rationale in
 `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
-## ▶ NEXT ACTION — build [0053], the privacy eye (his pick, 2026-11-19)
-Cycle 6 is planned: `RULINGS.md` 90–109, `tasks.md` § Cycle 6. [0053] goes first, ahead of the
-[0074] chain. His spec is in its `tasks.md` item; confirm nothing further before building.
-
-Then [0102], the UI design session, in a fresh session with him. Between sessions: [0101].
+## ▶ NEXT ACTION — [0102], the UI design session, in a fresh session with him
+[0053] (the privacy eye) is built and on the dev S9 as 1.1.51-dev (design: `docs/src/privacy-eye.md`).
+Between sessions: [0101].
 
 ⛔ Live is the pause: every live step waits for his go, one at a time.
 ⛔ **Never `cargo build`/`test` on this box** (`project-dev-machines-and-build-limits`); the mock demo
 page is the one exception.
 
 ## ⛔ Waiting on him
+- **[0053] on his hands:** try the eye on the S9 and step it down in Settings → Privacy if it annoys.
+  It reaches his own phone only with the next release, which is his go.
 - **His actions:** [0006] the R2 account (he chose later), [0010] the OpenRouter privacy setting,
   which now gates OpenRouter's next use (ruling 107).
 - [0013] is parked until a real blank delivery item appears in review; ask with it on screen.
