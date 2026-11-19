@@ -9,7 +9,8 @@ rationale in `docs/src/` and at the edit site. ⛔ If a line here could be deriv
 [0099], [0100] and `project.md` § Carried to Cycle 6 Planning. Remaining, in order:
 1. [0073] the comment-convention revision: its own design-first session (fresh session). The
    bloat review's comment-density table (`reviews/2026-11-16-bloat.md`, gitignored) is its data.
-2. Then bump `.omni/tasks.toml` to cycle 6, and [0074]'s planning session starts the next push.
+2. Then bump `.omni/tasks.toml` to cycle 6, and [0074]'s planning session starts the next push
+   from `PUSH_0074_RESEARCH.md` (§0, then the §6 questions one at a time, §6.20 first).
 
 ⛔ Live is the pause: every live step waits for his go, one at a time.
 ⛔ **Never `cargo build`/`test` on this box** (`project-dev-machines-and-build-limits`); the mock demo

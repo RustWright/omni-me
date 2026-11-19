@@ -194,9 +194,9 @@ generic IMAP config source.
 
 - [0091] **Recurring detection to the server**, when it migrates onto the contract: it needs no
   offline run, and every open device runs it today (a duplicate risk, unverified). [M]
-- [0074] **Task and project records** (sequence item 4). These gate estimation calibration,
-  and the assistant gains them with no assistant code. His next big push (2026-11-15): this
-  with day/week/month planning and a personal CRM; penalty-dated bills land there. [L]
+- [0074] **Tasks and projects, day/week/month planning, people** (his next push; penalty-dated
+  bills land here). Records gate estimation calibration. Pre-read: `PUSH_0074_RESEARCH.md` (his
+  answers, the evidence, a reviewed proposal, 20 open questions; start with §6.20). [L]
 - [0003] **One receipt to several charges** (shelved 11-16). Trigger: more than 5 in one week.
   App merge refuses legs that do not cancel (`plan_merge`), so there is no in-app path today;
   the hand workaround (edit one charge to the sum, delete the other) is unverified. [M]
