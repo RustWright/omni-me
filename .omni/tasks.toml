@@ -1,9 +1,10 @@
 schema  = 1
 project = "omni-me"
 cycle   = 6
-updated = 2026-11-18
+updated = 2026-11-19
+next_id = 112
 
-# Narrative lives in tasks.md (Cycle 5's file until Cycle 6 Planning resets it). Contract: ../../setup_files/TASK_HUB_CONTRACT.md
+# Narrative lives in tasks.md. Contract: ../../setup_files/TASK_HUB_CONTRACT.md
 # Public repo: titles are public. Keep private identity out.
 
 [[task]]
@@ -389,10 +390,10 @@ ref    = "tasks.md § From daily use — backlog"
 
 [[task]]
 id     = "omni-me-0053"
-title  = "Privacy eye: hide every amount with one tap"
+title  = "Privacy eye: grey out every amount with one tap"
 status = "todo"
 size   = "M"
-ref    = "tasks.md § From daily use — backlog"
+ref    = "tasks.md § Cycle 6"
 
 [[task]]
 id     = "omni-me-0054"
@@ -535,9 +536,10 @@ ref    = "tasks.md § Owed at cycle close"
 
 [[task]]
 id     = "omni-me-0074"
-title  = "Task and project records (gates estimation calibration)"
-status = "todo"
-ref    = "tasks.md § Later cycles"
+title  = "Tasks and projects, planning, people (Cycle 6 push)"
+status = "doing"
+size   = "L"
+ref    = "tasks.md § Cycle 6"
 
 [[task]]
 id     = "omni-me-0076"
@@ -724,4 +726,78 @@ id     = "omni-me-0101"
 title  = "Comment sweep tier 2: blocks of 8+ lines, crate by crate"
 status = "todo"
 size   = "L"
+ref    = "tasks.md § Alongside Cycle 6"
+
+[[task]]
+id     = "omni-me-0102"
+title  = "UI design session: render plan card, picker, person view, timescale view"
+status = "todo"
+size   = "USER"
+ref    = "tasks.md § Cycle 6"
+
+[[task]]
+id     = "omni-me-0103"
+title  = "Task data prep, offline: find the record shape, import as seed"
+status = "todo"
+size   = "USER"
+ref    = "tasks.md § Cycle 6"
+
+[[task]]
+id     = "omni-me-0104"
+title  = "Spike: scheduled local notification fires with the app killed"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § Cycle 6"
+
+[[task]]
+id     = "omni-me-0105"
+title  = "Test gaps before the summary and tier changes"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Cycle 6"
+
+[[task]]
+id     = "omni-me-0106"
+title  = "Generalise the check-in into named scheduled prompts"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Cycle 6"
+blocked_by = ["omni-me-0105"]
+
+[[task]]
+id     = "omni-me-0107"
+title  = "Task records and hub intake"
+status = "todo"
+size   = "L"
+ref    = "tasks.md § Cycle 6"
+blocked_by = ["omni-me-0103"]
+
+[[task]]
+id     = "omni-me-0108"
+title  = "People data prep, offline"
+status = "todo"
+size   = "USER"
+ref    = "tasks.md § Cycle 6"
+
+[[task]]
+id     = "omni-me-0109"
+title  = "Planning build: read-only calendar, plans, rituals, reminders"
+status = "todo"
+size   = "L"
+ref    = "tasks.md § Cycle 6"
+blocked_by = ["omni-me-0104", "omni-me-0106"]
+
+[[task]]
+id     = "omni-me-0110"
+title  = "People build: mentions, facts, resolution, pickers"
+status = "todo"
+size   = "L"
+ref    = "tasks.md § Cycle 6"
+blocked_by = ["omni-me-0108"]
+
+[[task]]
+id     = "omni-me-0111"
+title  = "Standing test debt from the Cycle 5 review"
+status = "todo"
+size   = "M"
 ref    = "tasks.md § Alongside Cycle 6"

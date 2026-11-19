@@ -1,20 +1,48 @@
-# Tasks — Cycle 5
+# Tasks — Cycle 6
 
-**Reset 2026-11-12 at the Cycle 4 close-out** (pre-reset file: `git show 7ef0e55:tasks.md`).
-Each open item was checked against the code before it carried. "Verified open" means the
+**Reset 2026-11-19 at Cycle 6 Planning** (pre-reset file: `git show 16f67f6:tasks.md`). The
+Cycle 5 items carried as curated at its 11-18 close, with their labels: "verified open" means a
 reset read the code, and "unverified" means it did not. Rulings live in `RULINGS.md`.
 
 ## How to read this file
 
 - **Open work only.** A finished item is deleted, not ticked. Git keeps the history.
 - **One item, at most three lines:** what, why it matters, where. Rationale goes to
-  `docs/src/` or the edit site, and rulings go to `project.md`. That routing is what keeps
+  `docs/src/` or the edit site, and rulings go to `RULINGS.md`. That routing is what keeps
   this file under its cap (400 lines / 40 KB). The last file grew to 5,800 lines because
   narrative landed here.
 - **`[NNNN]`** is the item's id in `.omni/tasks.toml` (`omni-me-NNNN`). Never reuse one.
 - **`NEXT.md` outranks this file** on what to do next. Priority is his to set.
 
 Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs him
+
+## Cycle 6: [0074] tasks, planning, people
+
+Rulings 90–109; evidence and design input in `PUSH_0074_RESEARCH.md`. In dependency order, except
+[0053], which he put first (11-19). Prep and design sessions need him; builds follow them.
+- [0053] **Privacy eye: grey out every amount with one tap**, as his bank's app does; hidden stays
+  hidden across launches until he taps (his call 11-19). A mask that misses one number is worse
+  than none: route every money render through one formatter. [M]
+- [0102] **UI design session** (fresh session): render the plan card, picker card, person view and
+  a multi-timescale view; ruling 100 leaves Today-vs-timescales to his reaction. [USER]
+- [0103] **Task data prep, offline** (ruling 105): pull the hub indexes and his native tasks
+  locally, find the record shape with him, import as the seed. Before [0107]'s data model. [USER, M]
+- [0104] **Reminder spike** (ruling 96): does `tauri-plugin-notification` `Schedule::At` with
+  `allow_while_idle` fire on his phone with the app killed? Plugin 2.8.1 needs tauri ^2.12 and the
+  stack is held below it (deep-link pin): an older plugin, or the upgrade. [S]
+- [0105] **Test gaps before the summary and tier changes** (Cycle 5 review, `reviews/2026-11-16-
+  test-gaps.md`, this machine only): T3, T7, T10, T11, T12, T13, T17. Before [0106]. [M]
+- [0106] **`CheckInPolicy` into named scheduled prompts**, each with its own tier, due-check and
+  housekeeping (`check_in.rs` selects every scheduled message today). Gates every ritual. [M]
+- [0107] **Task records and hub intake:** native tasks and projects, estimates and actuals (93),
+  staleness and the hub trial (92), and the hook push of each changed index (91). [L]
+- [0108] **People data prep, offline** (105), beside [0107]: journal mentions, email senders, one
+  vCard export; check To/Cc and whether `watched_label` holds sent mail. Settles the fact shape
+  (102) and which people purpose comes first. [USER, L]
+- [0109] **Planning build:** read-only calendar (96), plan records, the ritual tier and summary
+  lines (98), block reminders, the load measure (99). Needs [0104], [0106]. [L]
+- [0110] **People build:** mentions, facts, resolution, pickers and group cards (102–104), merge
+  and unmerge reversible for every attached record from the first event. Needs [0108]. [L]
 
 ## Waiting on his decision
 
@@ -23,7 +51,8 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
   a live walkthrough 11-16; he chose later. [USER, then S]
 - [0010] **R27's account side, ruled 11-16:** in OpenRouter he notes the current privacy
   setting (settles the look-back), then turns on account-wide deny data collection + ZDR-only.
-  A model that loses its only route then fails loudly, not silently. [USER]
+  A model that loses its only route then fails loudly, not silently. Gates OpenRouter's next
+  use, for anything (ruling 107). [USER]
 - [0013] (Parked 11-16 until a real blank delivery item appears; ask with it on screen.)
   **When the authoritative receipt fails to price**, should review offer the
   confirmation's estimate as a fallback? Ask before building. [S]
@@ -128,8 +157,6 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
   majority (a cheque became `Income:Business`). [S–M each]
 
 **Finances**
-- [0053] **Privacy eye: hide every amount with one tap.** A mask that misses one number is
-  worse than none. Route every money render through one formatter. [M]
 - [0054] **Swipe between Overview, Ledger and Analyze** (two swipe handlers already exist). [S]
 - [0055] **Finances performance on real data** (11k transactions on live). Observe; do not
   pre-optimise. Watch: citation titles filter every row per chip set (P-I1: ~11 ms vs ~2.5 on
@@ -189,14 +216,13 @@ generic IMAP config source.
 - [0101] **Comment sweep tier 2** (`CLAUDE.md` § Comments): the 645 blocks of 8+ lines, one crate
   per commit (core 385, frontend 135, src-tauri 58, agent 36, server 30). No proposals to him: apply
   and commit. Also replace pre-reset IDs (`R3-7`, `R4-6`: 15 sites) with ruling numbers. [L]
+- [0111] **Standing test debt** (Cycle 5 review): T5, T8, T9, T14, T15, T16, T18, T19, each
+  written when its code is next edited. T5 (stored rows after a type change) also gates areas. [M]
 
 ## Later cycles
 
 - [0091] **Recurring detection to the server**, when it migrates onto the contract: it needs no
   offline run, and every open device runs it today (a duplicate risk, unverified). [M]
-- [0074] **Tasks and projects, day/week/month planning, people** (his next push; penalty-dated
-  bills land here). Records gate estimation calibration. Pre-read: `PUSH_0074_RESEARCH.md` (his
-  answers, the evidence, a reviewed proposal, 20 open questions; start with §6.20). [L]
 - [0003] **One receipt to several charges** (shelved 11-16). Trigger: more than 5 in one week.
   App merge refuses legs that do not cancel (`plan_merge`), so there is no in-app path today;
   the hand workaround (edit one charge to the sum, delete the other) is unverified. [M]

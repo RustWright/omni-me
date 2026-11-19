@@ -1,5 +1,8 @@
 # [0074] research — tasks and projects, planning, people
 
+**Answered 2026-11-18/19 in the planning session: the rulings are `RULINGS.md` 90–109, and §6
+maps each question to its ruling.** Where this file and a ruling differ, the ruling wins.
+
 Pre-read for the [0074] planning session. Written 2026-11-16, alongside the Cycle 5 close, from
 his 14 answers (Appendix A, at the end). **Nothing here is a ruling.**
 Sections 2–3 report evidence; section 4 is my proposal, built on it; section 6 lists what he
@@ -808,6 +811,12 @@ spot-checked where marked). [P] = read in code.
 
 His to decide. Asked one at a time, each with its context (explain-before-asking). Grouped by
 what they block.
+
+**Answers** (`RULINGS.md`): 6.1 → 93 · 6.2 → 102 · 6.3 → 94 · 6.4 → 95 · 6.5 → 98 · 6.6 → 100 ·
+6.7 → 104 (no count cap: his burst-day case) · 6.8 → 103 · 6.9 → 105, 106 (seeding is offline
+data prep, not in-app review) · 6.10 → 107 (synthetic benches, not the ZDR-real option) · 6.11 →
+108 · 6.12, 6.13 → 105 · 6.14 → 91 · 6.15 → 92 · 6.16 approved, a contract edit · 6.17 → 99 ·
+6.18 superseded by 96 · 6.19 → 109 · 6.20 → 96 (adopted).
 
 **Gate the data model**
 1. **Whose estimates?** Free actuals exist only for project work, sized by Claude (2.3). Calibrate

@@ -232,3 +232,65 @@ edit site carries their reasoning. These are settled. Do not re-open one without
   as they are: module tests for development work, the benches for the runtime agent.
 - **80.** Those rules never reach the public repo: synced and project-scoped like memory. Mechanism:
   `tasks.md` [0083].
+
+## Tasks, planning and people ([0074]; rationale in `PUSH_0074_RESEARCH.md` §1–§6)
+- **90.** Tasks are hub and native. Repo and `~/life` tasks arrive read-only through
+  `.omni/tasks.toml`; omni-me owns tasks and projects made in-app or by the assistant. Session 2's
+  task design (`research.md`) is an input, not a baseline.
+- **91.** Project tasks are pulled in deliberately; only needs-you items (`USER` size or a `due`)
+  surface on their own. Indexes reach the server by the session hooks pushing each changed index,
+  never by reading GitHub, which serves one branch while work lives on dev branches.
+- **92.** Staleness thresholds are settings: an index unchanged for 21 days surfaces as one "still
+  current?" line instead of its items; a native task untouched for 4 weeks is offered for drop in
+  the weekly review. Hub surfacing is a 4-week trial of acted versus dismissed, after which the
+  weekly review asks whether it stays.
+- **93.** Calibration is of his estimates, on native tasks: estimate at planning, actual asked at
+  completion. Project work keeps Claude's `XS`–`L` sizing, which log actuals may later check. No
+  session-to-task tag.
+- **94.** No areas: a task without a project stands alone. Goals sit above projects, kept light,
+  with gates only where evidence supports them.
+- **95.** Penalty-dated bills (amount, due date, penalty date) are created by chat for now.
+  Bill-email and recurring-detection sources are deferred, not cancelled.
+- **96.** The calendar is read-only and never written. Events flow into omni-me, everything new is
+  created there, and the calendar retires as his habits move. No calendar action is irreversible,
+  so plan approval can earn autonomy. omni-me fires its own block reminders.
+- **97.** The day plan is mixed: blocks for deep work, an untimed list for small things.
+- **98.** Rituals are assistant-initiated: a morning day-plan proposal, an evening shutdown, a weekly
+  plan and a light monthly review. The morning plan has its own ritual tier: one silent push at a
+  set time outside quiet hours, the proposal expiring at noon. Evening, weekly and monthly ride
+  the 19:00 summary (60) as code-built count lines that tap through to chat.
+- **99.** Ritual load is measured, never enforced, as in 55: at most 30 minutes a week, a weekly
+  review of at most 10 decisions with the rest rolling over, and at most 2 planning or people
+  pushes a day. Block reminders do not count, and burst days are measured, not blocked. A ritual
+  skipped 5 times running pauses itself and says so once.
+- **100.** Chat carries capture, questions and planning. Approvals are chat cards to start: the
+  morning plan is one batch proposal, changed by saying so (a re-plan supersedes it), and people
+  questions use a picker card. One read-only view sits beside chat; whether it is a Today view or
+  spans several timescales is decided in the UI design session, from rendered candidates.
+- **101.** People is the central reference for everyone he has interacted with and recorded
+  something about, not a CRM. Its uses: keeping in touch, professional network, admin
+  counterparts, recall before talking. Wide in storage, focused in presentation.
+- **102.** Two tiers: an automatic mention index of pointers, and facts proposed with a citation
+  and confirmed by him. A person fact is its own kind of record, neither a note nor a belief;
+  its fields are settled by the data prep.
+- **103.** A confident match attaches with a "guessed" marker. In email, only a sender address he
+  confirmed, on mail passing sender authentication, is confident; display names, signatures and
+  bodies never are, because mail text is the sender's to forge.
+- **104.** Ambiguous mentions are asked the same evening, with no count cap. A picker shows the
+  source line, one context line per candidate, "new person" and "don't know"; names with no
+  candidate come as one group card per source. Unanswered questions expire after one more day.
+  Every answer is a reversible evidence event: link, provisional new person, cannot-link,
+  misspelling alias, or unlinked and never re-asked.
+- **105.** Each domain is seeded by offline data prep, as finance was: records are pulled locally,
+  worked through with him until the shape is right, then imported. People's prep takes one vCard
+  export and checks To/Cc before any parser change; the live email tier is senders only.
+- **106.** Live, a mention whose source date is older than the one-day question window gets a
+  pointer only (mine, uncontested).
+- **107.** Other people's data goes to ZDR seats only. Benches use synthetic people data to start,
+  reconsidered if quality disappoints. The OpenRouter privacy setting ([0010]) is confirmed before
+  OpenRouter's next use, for anything.
+- **108.** A confirmed fact outlives its source email under retention, keeping the quoted sentence
+  and the sender, date and subject, marked "source expired".
+- **109.** Order: tasks, planning, people, with the people data prep beside the task build. The UI
+  design session comes before any build, and the Cycle 5 test gaps on the summary and tiers come
+  before the scheduled-prompt work.
