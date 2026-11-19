@@ -75,12 +75,12 @@ pub fn ProposalCard(proposal: AssistantProposal, on_decided: EventHandler<()>) -
 
     rsx! {
         div { class: "rounded-md border border-obsidian-border/20 bg-obsidian-sidebar px-3 py-3 flex flex-col gap-2",
-            div { class: "text-obsidian-text text-sm font-medium", "{summary}" }
-            div { class: "text-obsidian-text-muted text-xs italic", "{proposal.rationale}" }
+            div { class: "text-obsidian-text text-sm font-medium", "{crate::money::text(&summary)}" }
+            div { class: "text-obsidian-text-muted text-xs italic", "{crate::money::text(&proposal.rationale)}" }
 
             if let Some(body) = detail {
                 div { class: "text-obsidian-text text-xs whitespace-pre-wrap bg-obsidian-border/10 rounded px-2 py-2 max-h-40 overflow-y-auto",
-                    "{body}"
+                    "{crate::money::text(&body)}"
                 }
             }
 
@@ -102,7 +102,7 @@ pub fn ProposalCard(proposal: AssistantProposal, on_decided: EventHandler<()>) -
                             span {
                                 key: "{cite.kind}-{cite.id}",
                                 class: "text-obsidian-text-muted text-xs px-1.5 py-0.5 rounded bg-obsidian-border/10",
-                                "{crate::citations::chip_label(&titles, &cite.kind, &cite.id, cite.title.as_ref())}"
+                                "{crate::money::text(&crate::citations::chip_label(&titles, &cite.kind, &cite.id, cite.title.as_ref()))}"
                             }
                         }
                     }

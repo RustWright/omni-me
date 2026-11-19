@@ -27,6 +27,7 @@ pub mod search_pick;
 pub mod icon;
 pub mod nav;
 pub mod primitives;
+pub mod privacy_eye;
 pub mod proposal_card;
 pub mod splash;
 pub mod sync_status;

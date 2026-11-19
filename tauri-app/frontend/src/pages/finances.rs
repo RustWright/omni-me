@@ -36,6 +36,7 @@ use crate::components::primitives::{
 use crate::components::proposal_card::ProposalCard;
 use crate::continuity::{CaptureDraft, ContinuityKey, ListState, PostingDraft, use_continuity};
 use crate::features::feature_on;
+use crate::money::{self, amount_as_is, format_money};
 use crate::types::{
     AccountSummaryView, AccountTagBreakdownView, AccountTagGroupView, AssistantProposal,
     AttachmentRef, BalanceCheckView, BudgetProgress, BudgetRow, CapturePageInput,
@@ -1250,7 +1251,7 @@ fn RecentActivityCard(recent: Vec<TransactionView>, on_open: EventHandler<()>) -
                 div { class: "space-y-2",
                     for t in recent.iter().take(5) {
                         div { class: "flex items-baseline justify-between gap-2 text-sm",
-                            span { class: "text-obsidian-text truncate", "{t.description}" }
+                            span { class: "text-obsidian-text truncate", "{money::text(&t.description)}" }
                             span { class: "text-xs text-obsidian-text-muted tabular-nums shrink-0", "{t.date}" }
                         }
                     }
@@ -2293,7 +2294,7 @@ fn ExtractionVerdictPanel(
             }
             ul { class: "list-disc pl-5 space-y-1",
                 for w in verdict.warnings.iter() {
-                    li { class: "text-xs text-obsidian-text-muted", "{w}" }
+                    li { class: "text-xs text-obsidian-text-muted", "{money::text(w)}" }
                 }
             }
             p { class: "text-xs text-obsidian-text-muted/80", "{hint}" }
@@ -2587,6 +2588,7 @@ fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -
                                     class: "w-28 px-3 py-2 bg-obsidian-sidebar border border-obsidian-border/10 rounded-md text-obsidian-text text-sm font-mono outline-none focus:border-obsidian-accent",
                                     r#type: "text",
                                     placeholder: "0.00",
+                                    style: "{money::input_style()}",
                                     value: "{row.amount}",
                                     oninput: move |e| {
                                         let mut rows = postings.read().clone();
@@ -2930,7 +2932,7 @@ fn BatchListRow(batch: PendingBatchView, on_open: EventHandler<()>) -> Element {
             onclick: move |_| on_open.call(()),
             div { class: "flex-1 min-w-0",
                 div { class: "flex items-baseline gap-2 mb-1",
-                    span { class: "text-sm font-semibold text-obsidian-text truncate", "{headline}" }
+                    span { class: "text-sm font-semibold text-obsidian-text truncate", "{money::text(&headline)}" }
                     if let Some(c) = fx_hint {
                         span { class: "text-xs px-2 py-0.5 bg-amber-500/15 text-amber-300 rounded-full",
                             "needs {c} rate"
@@ -3189,26 +3191,27 @@ fn BatchLineagePanel(
                             let summary = match (&total, &current_total) {
                                 (None, _) => "no amounts in it".to_string(),
                                 (Some((t, c)), Some((now, _))) if (t - now).abs() < 0.005 => {
-                                    format!("{t:.2} {c} · same total as below")
+                                    format!("{} · same total as below", format_money(&format!("{t:.2}"), c))
                                 }
                                 (Some((t, c)), Some((now, _))) => {
-                                    format!("{t:.2} {c} · {:+.2} vs below", t - now)
+                                    let diff = money::figure(&format!("{:+.2}", t - now));
+                                    format!("{} · {diff} vs below", format_money(&format!("{t:.2}"), c))
                                 }
-                                (Some((t, c)), None) => format!("{t:.2} {c}"),
+                                (Some((t, c)), None) => format_money(&format!("{t:.2}"), c),
                             };
                             rsx! {
                                 details { class: "p-2 bg-obsidian-bg/40 rounded border border-obsidian-border/5 min-w-0",
                                     summary { class: "cursor-pointer hover:text-obsidian-text min-w-0",
                                         span { class: "text-obsidian-text", "{kind}" }
                                         " · {date} · {summary}"
-                                        div { class: "truncate", "{prior.subject}" }
+                                        div { class: "truncate", "{money::text(&prior.subject)}" }
                                     }
                                     for draft in prior.drafts.iter() {
                                         for posting in draft.postings.iter() {
                                             div { class: "flex justify-between gap-3 mt-1",
                                                 span { class: "font-mono truncate", "{posting.account}" }
                                                 span { class: "font-mono shrink-0",
-                                                    "{posting.amount} {posting.commodity}"
+                                                    "{amount_as_is(&posting.amount, &posting.commodity)}"
                                                 }
                                             }
                                         }
@@ -3305,7 +3308,7 @@ fn SourceEmailPanel(document_id: String) -> Element {
                             "data-scroll-x": "true",
                             class: "max-h-64 overflow-auto p-3 rounded border border-obsidian-border/10 \
                                     bg-obsidian-bg text-[11px] font-mono text-obsidian-text whitespace-pre-wrap",
-                            "{body}"
+                            "{money::text(&body)}"
                         }
                     },
                 }
@@ -3341,7 +3344,7 @@ fn SourceEmailPanel(document_id: String) -> Element {
                                                     span { class: "text-obsidian-text-muted shrink-0",
                                                         if is_open { "▾" } else { "▸" }
                                                     }
-                                                    span { class: "truncate", "{kid.display_name()}" }
+                                                    span { class: "truncate", "{money::text(&kid.display_name())}" }
                                                 }
                                                 if is_open {
                                                     div { class: "mt-1 min-w-0",
@@ -3552,7 +3555,7 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
                         pre {
                             "data-scroll-x": "true",
                             class: "mt-2 p-3 bg-obsidian-sidebar/60 rounded border border-obsidian-border/5 overflow-x-auto",
-                            "{meta_str}"
+                            "{money::text(&meta_str)}"
                         }
                     }
                 }
@@ -3615,7 +3618,7 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
                                 key: "added-{i}",
                                 class: "p-3 bg-obsidian-sidebar/60 border border-obsidian-border/10 rounded-lg flex items-center justify-between gap-2 min-w-0",
                                 div { class: "min-w-0",
-                                    div { class: "text-sm text-obsidian-text truncate", "{f.description}" }
+                                    div { class: "text-sm text-obsidian-text truncate", "{money::text(&f.description)}" }
                                     div { class: "text-xs text-obsidian-text-muted", "{f.date} · added by hand" }
                                 }
                                 button {
@@ -3843,13 +3846,13 @@ fn DraftRow(
                             }
                         }
                     }
-                    div { class: "text-sm text-obsidian-text truncate mb-2", "{draft.description}" }
+                    div { class: "text-sm text-obsidian-text truncate mb-2", "{money::text(&draft.description)}" }
                     div { class: "space-y-1",
                         for posting in &draft.postings {
                             div { class: "flex justify-between gap-3 text-xs",
                                 span { class: "text-obsidian-text-muted font-mono truncate", "{posting.account}" }
                                 span { class: "text-obsidian-text font-mono shrink-0",
-                                    "{posting.amount} {posting.commodity}"
+                                    "{amount_as_is(&posting.amount, &posting.commodity)}"
                                 }
                             }
                         }
@@ -4666,6 +4669,7 @@ fn QueryBuilderView(on_back: EventHandler<()>, on_open_txn: EventHandler<String>
                                 r#type: "text",
                                 class: "{input_class} flex-1 min-w-[100px]",
                                 placeholder: "{QField::Amount.placeholder()}",
+                                style: "{money::input_style()}",
                                 value: "{row.value}",
                                 oninput: move |e| rows.write()[i].value = e.value(),
                             }
@@ -4971,7 +4975,7 @@ fn TransactionListRow(
                 span { class: "text-xs text-obsidian-text-muted font-mono shrink-0",
                     "{snapshot.date}"
                 }
-                span { class: "text-sm text-obsidian-text", "{snapshot.description}" }
+                span { class: "text-sm text-obsidian-text", "{money::text(&snapshot.description)}" }
                 EditableCategoryChip {
                     current: snapshot.category.clone(),
                     on_save: on_save_category,
@@ -5007,7 +5011,7 @@ fn TransactionListRow(
                             "{posting.account}"
                         }
                         span { class: "text-obsidian-text shrink-0",
-                            "{posting.amount} {posting.commodity}"
+                            "{amount_as_is(&posting.amount, &posting.commodity)}"
                         }
                     }
                 }
@@ -5196,7 +5200,7 @@ fn TransactionDetailBody(
                             "{snapshot.date}"
                         }
                         h2 { class: "text-lg font-semibold text-obsidian-text",
-                            "{snapshot.description}"
+                            "{money::text(&snapshot.description)}"
                         }
                     }
                     button {
@@ -5243,7 +5247,7 @@ fn TransactionDetailBody(
                                 "{posting.account}"
                             }
                             span { class: "text-obsidian-text shrink-0",
-                                "{posting.amount} {posting.commodity}"
+                                "{amount_as_is(&posting.amount, &posting.commodity)}"
                             }
                         }
                     }
@@ -5506,6 +5510,7 @@ fn TxnFieldsForm(
                                     class: "w-28 px-3 py-2 bg-obsidian-sidebar border border-obsidian-border/10 rounded-md text-obsidian-text text-sm font-mono outline-none focus:border-obsidian-accent",
                                     r#type: "text",
                                     placeholder: "0.00",
+                                    style: "{money::input_style()}",
                                     value: "{row.amount}",
                                     oninput: move |e| {
                                         let mut rows = postings.read().clone();
@@ -5649,44 +5654,6 @@ fn seed_edit_postings(value: &serde_json::Value) -> Vec<EditPosting> {
 // =============================================================================
 // Phase 4.4 — Accounts screen
 // =============================================================================
-
-/// Format a stringified Decimal balance for display:
-///   "1234.5" + "CAD" → "1,234.50 CAD"
-///   "-1450.18" + "CAD" → "-1,450.18 CAD"
-///
-/// Pure formatting on string inputs (the wire shape) — no rust_decimal
-/// dep in the frontend. Pads to 2 decimal places (matches every-day money
-/// display); accepts more decimal places verbatim (e.g. BTC). Adds
-/// thousands separators on the integer part.
-fn format_money(amount: &str, commodity: &str) -> String {
-    let (sign, magnitude) = match amount.strip_prefix('-') {
-        Some(rest) => ("-", rest),
-        None => ("", amount),
-    };
-    let (int_part, frac_part) = match magnitude.split_once('.') {
-        Some((i, f)) => (i, f.to_string()),
-        None => (magnitude, String::new()),
-    };
-    let frac_padded = if frac_part.len() < 2 {
-        format!("{frac_part:0<2}")
-    } else {
-        frac_part
-    };
-    let int_grouped = group_thousands(int_part);
-    format!("{sign}{int_grouped}.{frac_padded} {commodity}")
-}
-
-fn group_thousands(int_part: &str) -> String {
-    let bytes = int_part.as_bytes();
-    let mut out = String::with_capacity(bytes.len() + bytes.len() / 3);
-    for (i, &b) in bytes.iter().enumerate() {
-        if i > 0 && (bytes.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(b as char);
-    }
-    out
-}
 
 #[component]
 fn AccountListView(on_back: EventHandler<()>) -> Element {
@@ -6378,7 +6345,7 @@ fn RecurringObligationRow(r: RecurringObligationView) -> Element {
                                     if txn.description.is_empty() {
                                         "{vendor}"
                                     } else {
-                                        "{txn.description}"
+                                        "{money::text(&txn.description)}"
                                     }
                                 }
                             }
@@ -6653,6 +6620,7 @@ fn BudgetListView(on_back: EventHandler<()>) -> Element {
                             r#type: "text",
                             inputmode: "decimal",
                             placeholder: "0.00",
+                            style: "{money::input_style()}",
                             value: "{amount_input.read()}",
                             oninput: move |e| amount_input.set(e.value()),
                         }
@@ -6751,7 +6719,7 @@ fn BudgetRowCard(
                         "{row.id}"
                     }
                     div { class: "text-xs text-obsidian-text-muted mt-1",
-                        "{row.amount} · {period_text}"
+                        "{money::figure(&row.amount)} · {period_text}"
                     }
                 }
                 div { class: "flex gap-2 shrink-0",
@@ -6792,7 +6760,7 @@ fn BudgetProgressBar(progress: BudgetProgress) -> Element {
                 }
             }
             div { class: "flex items-center justify-between mt-1.5 text-xs text-obsidian-text-muted",
-                span { "{progress.actual} of {progress.target} · {verdict}" }
+                span { "{money::figure(&progress.actual)} of {money::figure(&progress.target)} · {verdict}" }
                 span { "{period_range_label(&progress.period_start, &progress.period_end)}" }
             }
         }
@@ -6962,7 +6930,7 @@ fn RecurringRowCard(
     // Drill-down (5.4): tap to load + inline the actual transactions this
     // pattern was distilled from. Fetched lazily on first expand, once.
     let pattern_id = row.pattern_id.clone();
-    let amount_label = format!("{} {}", row.amount, row.commodity);
+    let amount_label = amount_as_is(&row.amount, &row.commodity);
     let mut expanded = use_signal(|| false);
     let mut matches: Signal<Vec<TransactionView>> = use_signal(Vec::new);
     let mut loading = use_signal(|| false);
@@ -7043,7 +7011,7 @@ fn RecurringRowCard(
                                     if txn.description.is_empty() {
                                         "{row.vendor}"
                                     } else {
-                                        "{txn.description}"
+                                        "{money::text(&txn.description)}"
                                     }
                                 }
                             }
@@ -7476,7 +7444,7 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
                     },
                     "{result.verifiability}"
                     if let Some(cb) = result.closing_balance.clone() {
-                        " Closing balance {cb}."
+                        " Closing balance {money::figure(&cb)}."
                     }
                 }
 
@@ -7898,11 +7866,13 @@ fn BulkConfirm(
                 .iter()
                 .map(|c| {
                     (
-                        format!("{} ↔ {}", c.primary.description, c.secondary.description),
-                        format!(
-                            "{} {}",
+                        money::text(&format!(
+                            "{} ↔ {}",
+                            c.primary.description, c.secondary.description
+                        )),
+                        amount_as_is(
                             unsigned(&c.primary.unmatched_amount),
-                            c.primary.unmatched_commodity
+                            &c.primary.unmatched_commodity,
                         ),
                     )
                 })
@@ -8052,7 +8022,7 @@ fn CandidateCard(
                     "{conf}"
                 }
                 span { class: "text-xs text-obsidian-text-muted",
-                    "{unsigned(&cand.primary.unmatched_amount)} {cand.primary.unmatched_commodity} · {days}"
+                    "{amount_as_is(unsigned(&cand.primary.unmatched_amount), &cand.primary.unmatched_commodity)} · {days}"
                 }
             }
             div { class: "space-y-2",
@@ -8089,9 +8059,9 @@ fn TxnSummary(txn: ReconciliationTxnPreview) -> Element {
     let accounts = txn.accounts.join(", ");
     rsx! {
         div { class: "space-y-0.5 text-xs min-w-0",
-            div { class: "text-sm text-obsidian-text font-medium break-words", "{txn.description}" }
+            div { class: "text-sm text-obsidian-text font-medium break-words", "{money::text(&txn.description)}" }
             div { class: "text-obsidian-text-muted",
-                "{txn.date} · {unsigned(&txn.unmatched_amount)} {txn.unmatched_commodity}"
+                "{txn.date} · {amount_as_is(unsigned(&txn.unmatched_amount), &txn.unmatched_commodity)}"
             }
             div { class: "text-obsidian-text-muted break-words",
                 "{txn.origin}"
@@ -8179,6 +8149,7 @@ fn BalanceCheckFormView(on_back: EventHandler<()>) -> Element {
                         r#type: "text",
                         inputmode: "decimal",
                         placeholder: "1500.00",
+                        style: "{money::input_style()}",
                         value: "{statement_balance.read()}",
                         oninput: move |e| statement_balance.set(e.value()),
                     }
@@ -8225,15 +8196,17 @@ fn BalanceCheckResultCard(result: BalanceCheckView) -> Element {
         "Balanced — cleared total matches the statement.".to_string()
     } else {
         format!(
-            "Discrepancy: {} {} ({} cleared vs {} on statement)",
-            result.discrepancy, result.commodity, result.cleared_total, result.statement_balance
+            "Discrepancy: {} ({} cleared vs {} on statement)",
+            amount_as_is(&result.discrepancy, &result.commodity),
+            money::figure(&result.cleared_total),
+            money::figure(&result.statement_balance)
         )
     };
     rsx! {
         div { class: "p-4 border rounded-lg space-y-2 {verdict_class}",
             div { class: "text-sm font-semibold", "{verdict_label}" }
             div { class: "text-xs opacity-80",
-                "Account: {result.account} · cleared total {result.cleared_total} {result.commodity}"
+                "Account: {result.account} · cleared total {amount_as_is(&result.cleared_total, &result.commodity)}"
             }
         }
     }
@@ -8412,7 +8385,7 @@ fn JournalImportView(on_back: EventHandler<()>) -> Element {
                         "{view.balance_failures.len()} transactions couldn't be balanced:"
                     }
                     for fail in view.balance_failures.iter().take(10) {
-                        div { class: "truncate", "• {fail}" }
+                        div { class: "truncate", "• {money::text(fail)}" }
                     }
                 }
             }
@@ -8566,7 +8539,7 @@ fn SampleTxnRow(txn: crate::types::JournalImportSampleTxn) -> Element {
     rsx! {
         div { class: "p-2 bg-obsidian-bg/60 border border-obsidian-border/5 rounded text-xs",
             div { class: "flex justify-between items-baseline",
-                div { class: "font-semibold text-obsidian-text", "{txn.date} · {txn.description}" }
+                div { class: "font-semibold text-obsidian-text", "{txn.date} · {money::text(&txn.description)}" }
                 div { class: "text-obsidian-text-muted font-mono", "{txn.txn_id}" }
             }
             div { class: "mt-1 space-y-0.5 font-mono",
@@ -8574,7 +8547,7 @@ fn SampleTxnRow(txn: crate::types::JournalImportSampleTxn) -> Element {
                     div { class: "flex justify-between text-obsidian-text-muted",
                         span { class: "truncate", "{posting.account}" }
                         span {
-                            "{posting.amount} {posting.commodity}"
+                            "{amount_as_is(&posting.amount, &posting.commodity)}"
                             if let Some(rate) = posting.fx_rate.as_ref() {
                                 if let Some(quote) = posting.fx_quote.as_ref() {
                                     span { class: "ml-1 text-emerald-400",
@@ -8830,33 +8803,7 @@ mod tests {
     // Attachment classification and metadata decoding moved with the viewer to
     // `components::attachment_viewer`, and their tests moved with them.
 
-    // --- Phase 4.4 money formatter --------------------------------------
-
-    #[test]
-    fn format_money_pads_fractional_to_two_digits() {
-        assert_eq!(format_money("5", "CAD"), "5.00 CAD");
-        assert_eq!(format_money("5.4", "CAD"), "5.40 CAD");
-        assert_eq!(format_money("5.40", "CAD"), "5.40 CAD");
-    }
-
-    #[test]
-    fn format_money_preserves_extra_precision_for_crypto() {
-        // BTC-style amounts shouldn't lose precision to a 2-digit floor.
-        assert_eq!(format_money("0.00123456", "BTC"), "0.00123456 BTC");
-    }
-
-    #[test]
-    fn format_money_adds_thousands_separators() {
-        assert_eq!(format_money("1234.5", "CAD"), "1,234.50 CAD");
-        assert_eq!(format_money("1234567.89", "CAD"), "1,234,567.89 CAD");
-        assert_eq!(format_money("999.99", "CAD"), "999.99 CAD");
-    }
-
-    #[test]
-    fn format_money_handles_negative_amounts() {
-        assert_eq!(format_money("-1450.18", "CAD"), "-1,450.18 CAD");
-        assert_eq!(format_money("-1.5", "CAD"), "-1.50 CAD");
-    }
+    // The money formatter's tests moved with it to `money.rs`.
 
     // --- Phase 4.5+4.6 dashboard helpers ---------------------------------
 

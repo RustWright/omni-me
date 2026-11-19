@@ -543,7 +543,7 @@ fn DocumentCard(doc: DocumentItem, on_open: EventHandler<String>) -> Element {
                         border-obsidian-border/5 hover:border-obsidian-accent/30 transition-colors",
                 div { class: "flex items-start justify-between gap-3",
                     div { class: "min-w-0 space-y-0.5",
-                        div { class: "text-sm text-obsidian-text truncate", "{doc.display_name()}" }
+                        div { class: "text-sm text-obsidian-text truncate", "{crate::money::text(&doc.display_name())}" }
                         div { class: "text-[11px] text-obsidian-text-muted flex flex-wrap gap-x-2",
                             if let Some(k) = &doc.kind {
                                 span { class: "text-obsidian-accent", "{humanise(k)}" }
@@ -641,7 +641,7 @@ fn DocumentDetail(
                     let meta = document_meta(&d);
                     rsx! {
                         // `break-all`: a filename has no spaces, and unbroken it panned the page.
-                        h1 { class: "text-lg font-semibold text-obsidian-text break-all", "{d.display_name()}" }
+                        h1 { class: "text-lg font-semibold text-obsidian-text break-all", "{crate::money::text(&d.display_name())}" }
 
                         // The reverse of the email view's attachment list. Without
                         // it the parent link is navigable one way only, and a
@@ -871,7 +871,7 @@ fn EmailView(document_id: String, on_open: EventHandler<String>) -> Element {
                                     for (k, v) in headers {
                                         div { class: "flex gap-2 text-xs",
                                             dt { class: "shrink-0 w-16 text-obsidian-text-muted", "{k}" }
-                                            dd { class: "text-obsidian-text break-words min-w-0", "{v}" }
+                                            dd { class: "text-obsidian-text break-words min-w-0", "{crate::money::text(&v)}" }
                                         }
                                     }
                                 }
@@ -879,7 +879,7 @@ fn EmailView(document_id: String, on_open: EventHandler<String>) -> Element {
                             pre {
                                 class: "px-3 py-3 text-xs text-obsidian-text whitespace-pre-wrap \
                                         break-words max-h-[28rem] overflow-y-auto",
-                                "{body}"
+                                "{crate::money::text(&body)}"
                             }
                         }
                     }
@@ -899,7 +899,7 @@ fn EmailView(document_id: String, on_open: EventHandler<String>) -> Element {
                                 onclick: move |_| on_open.call(kid.document_id.clone()),
                                 class: "w-full text-left px-3 py-2 rounded border border-obsidian-border/10 \
                                         hover:border-obsidian-accent/40 text-xs text-obsidian-text",
-                                "{kid.display_name()}"
+                                "{crate::money::text(&kid.display_name())}"
                             }
                         }
                     }
@@ -1792,6 +1792,7 @@ fn FieldRow(
                 div { class: "space-y-1.5",
                     input {
                         value: "{draft}",
+                        style: "{crate::money::text_input_style(&field.value)}",
                         oninput: move |e| draft.set(e.value()),
                         class: "w-full px-2 py-1 text-sm rounded bg-obsidian-bg border \
                                 border-obsidian-accent/40 text-obsidian-text focus:outline-none",
@@ -1823,13 +1824,13 @@ fn FieldRow(
                     }
                 }
             } else if read_only {
-                p { class: "text-sm text-obsidian-text", "{field.value}" }
+                p { class: "text-sm text-obsidian-text", "{crate::money::text(&field.value)}" }
             } else {
                 div { class: "flex items-start justify-between gap-2",
                     button {
                         onclick: move |_| editing.set(true),
                         class: "flex-1 text-left text-sm text-obsidian-text hover:text-obsidian-accent",
-                        "{field.value}"
+                        "{crate::money::text(&field.value)}"
                     }
                     // Only on an unchecked value: confirming one already checked
                     // would write a second event saying what the first said.

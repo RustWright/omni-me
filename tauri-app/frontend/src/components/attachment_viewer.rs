@@ -239,6 +239,8 @@ pub fn AttachmentViewer(meta: AttachmentMeta) -> Element {
     let wants_text = matches!(render, AttachmentRender::Csv | AttachmentRender::Text);
     let render_for_fetch = render.clone();
     let mut full_screen = use_signal(|| false);
+    // One tap past the privacy cover, for this viewer only.
+    let mut revealed = use_signal(|| false);
     let needs_bytes = !matches!(render, AttachmentRender::Unpreviewable(_));
 
     use_effect(move || {
@@ -309,6 +311,15 @@ pub fn AttachmentViewer(meta: AttachmentMeta) -> Element {
                     }
                 } else if let AttachmentRender::Unpreviewable(reason) = render {
                     UnpreviewableNotice { filename: meta.filename.clone(), reason: reason }
+                } else if crate::money::covers_documents() && !*revealed.read() {
+                    div { class: "p-6 rounded border border-obsidian-border/10 bg-obsidian-bg text-center space-y-2",
+                        p { class: "text-xs text-obsidian-text-muted", "Hidden while amounts are hidden." }
+                        button {
+                            class: "text-xs text-obsidian-accent hover:underline",
+                            onclick: move |_| revealed.set(true),
+                            "Show this document"
+                        }
+                    }
                 } else {
                     match loaded.read().as_ref() {
                         None => rsx! {
@@ -350,7 +361,7 @@ pub fn AttachmentViewer(meta: AttachmentMeta) -> Element {
                                     "data-scroll-x": "true",
                                     class: "max-h-[600px] overflow-auto p-3 rounded border border-obsidian-border/10 \
                                             bg-obsidian-bg text-[11px] font-mono text-obsidian-text whitespace-pre-wrap",
-                                    "{text}"
+                                    "{crate::money::text(text)}"
                                 }
                             },
                         },
@@ -656,7 +667,7 @@ fn CsvTable(text: String) -> Element {
                                     td {
                                         key: "{j}",
                                         class: "px-2 py-1 text-obsidian-text align-top whitespace-pre",
-                                        "{cell}"
+                                        "{crate::money::cell(cell)}"
                                     }
                                 }
                             }

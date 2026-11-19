@@ -7,6 +7,7 @@ use crate::components::primitives::{
 };
 use crate::continuity::use_continuity;
 use crate::features::use_features;
+use crate::money::MaskScope;
 use crate::{
     AccentPref, ThemePref, bridge,
     types::{
@@ -273,6 +274,9 @@ pub fn SettingsPage() -> Element {
                 // --- Base Currency (Phase 7.3) ---
                 BaseCurrencySection {}
             }
+
+            // Not gated on Finances: chat and documents carry amounts too.
+            PrivacySection {}
 
             if features.any(&[Feature::Journal, Feature::Notes]) {
                 // --- Editor appearance --- (the editor serves both)
@@ -801,6 +805,57 @@ fn EditorSection() -> Element {
                 }
             }
         }
+    }
+}
+
+/// How far the header's eye reaches.
+#[component]
+fn PrivacySection() -> Element {
+    let current = crate::money::scope();
+    let note = match current {
+        MaskScope::Amounts => {
+            "Hides the amounts the app formats: balances, totals, transactions and amount fields."
+        }
+        MaskScope::Text => {
+            "Also hides money written in text: chat replies, email bodies and subjects, descriptions and document fields."
+        }
+        MaskScope::Everything => "Also covers documents and photos until you tap Show on each one.",
+    };
+    rsx! {
+        div { class: "mb-10 space-y-6",
+            div { class: "border-b border-obsidian-border/5 pb-2 mb-4",
+                h2 { class: "text-lg font-bold text-obsidian-text", "Privacy" }
+            }
+            div {
+                label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block",
+                    "What the eye hides"
+                }
+                SegmentedNav {
+                    items: MaskScope::ALL
+                        .iter()
+                        .map(|s| (s.key().to_string(), scope_label(*s).to_string()))
+                        .collect::<Vec<_>>(),
+                    active: current.key().to_string(),
+                    on_select: move |key: String| {
+                        if let Some(s) = MaskScope::ALL.into_iter().find(|s| s.key() == key) {
+                            crate::money::set_scope(s);
+                        }
+                    },
+                }
+                p { class: "text-xs text-obsidian-text-muted mt-2", "{note}" }
+                p { class: "text-xs text-obsidian-text-muted mt-1",
+                    "The eye sits in the top bar. This device remembers it until you tap it again."
+                }
+            }
+        }
+    }
+}
+
+fn scope_label(s: MaskScope) -> &'static str {
+    match s {
+        MaskScope::Amounts => "Amounts",
+        MaskScope::Text => "+ Text",
+        MaskScope::Everything => "+ Documents",
     }
 }
 

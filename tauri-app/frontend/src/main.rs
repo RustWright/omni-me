@@ -9,6 +9,7 @@ mod duration;
 mod features;
 mod journal_template;
 mod keyboard;
+mod money;
 mod note_frontmatter;
 mod pages;
 mod reorder;
@@ -1071,6 +1072,7 @@ fn App() -> Element {
                             }
                         }
                     }
+                    components::privacy_eye::PrivacyEye {}
                     components::sync_status::SyncStatusIndicator {}
                 }
                 // Mobile bottom padding clears the Android gesture/system-nav

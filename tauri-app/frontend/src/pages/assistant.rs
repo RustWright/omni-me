@@ -377,7 +377,7 @@ fn ThreadRow(
                 class: "w-full text-left px-4 pt-3 pb-1",
                 onclick: move |_| on_open.call(()),
                 div { class: "text-obsidian-text text-sm font-medium line-clamp-2 break-words",
-                    "{title}"
+                    "{crate::money::text(&title)}"
                 }
             }
             div { class: "flex items-center gap-1 pl-4 pr-2 pb-1",
@@ -570,7 +570,7 @@ fn BeliefCard(belief: Belief) -> Element {
 
     rsx! {
         div { class: "{card}",
-            div { class: "text-obsidian-text text-sm", "{belief.statement}" }
+            div { class: "text-obsidian-text text-sm", "{crate::money::text(&belief.statement)}" }
 
             div { class: "flex flex-wrap items-center gap-2 text-xs text-obsidian-text-muted",
                 span { "{belief.confidence_label()}" }
@@ -596,7 +596,7 @@ fn BeliefCard(belief: Belief) -> Element {
                         span {
                             key: "{cite.kind}-{cite.id}",
                             class: "text-obsidian-text-muted text-xs px-1.5 py-0.5 rounded bg-obsidian-border/10",
-                            "{crate::citations::chip_label(&titles, &cite.kind, &cite.id, cite.title.as_ref())}"
+                            "{crate::money::text(&crate::citations::chip_label(&titles, &cite.kind, &cite.id, cite.title.as_ref()))}"
                         }
                     }
                 }
@@ -713,7 +713,7 @@ fn PermissionRow(record: ActionRecord, on_changed: EventHandler<()>) -> Element 
 
     rsx! {
         div { class: "rounded-md border border-obsidian-border/20 bg-obsidian-sidebar px-3 py-3 flex flex-col gap-2",
-            div { class: "text-obsidian-text text-sm font-medium", "{record.action}" }
+            div { class: "text-obsidian-text text-sm font-medium", "{crate::money::text(&record.action)}" }
             div { class: "text-obsidian-text-muted text-xs", "{record.evidence_label()}" }
 
             if !grantable {
@@ -994,7 +994,7 @@ fn MessageBubble(message: AssistantMessage) -> Element {
                 if let Some(note) = failure.clone() {
                     span { class: "text-obsidian-text-muted italic", "{note}" }
                 } else {
-                    "{message.text.clone().unwrap_or_default()}"
+                    "{crate::money::text(message.text.as_deref().unwrap_or_default())}"
                 }
             }
 
@@ -1005,7 +1005,7 @@ fn MessageBubble(message: AssistantMessage) -> Element {
                         span {
                             key: "{cite.kind}-{cite.id}",
                             class: "text-obsidian-text-muted text-xs px-1.5 py-0.5 rounded bg-obsidian-border/10",
-                            "{crate::citations::chip_label(&titles, &cite.kind, &cite.id, cite.title.as_ref())}"
+                            "{crate::money::text(&crate::citations::chip_label(&titles, &cite.kind, &cite.id, cite.title.as_ref()))}"
                         }
                     }
                 }
