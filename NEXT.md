@@ -5,7 +5,8 @@ live in `RULINGS.md`, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`
 `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
 ## ▶ NEXT ACTION — [0102], the UI design session, in a fresh session with him
-[0053] (the privacy eye) is done and he is happy with it; it reaches live with the next release (his go).
+1.2.7 (the privacy eye, [0053]) is released from `main` `ba4a54e` / overlay `1c6b204`; no server deploy
+(nothing server-side changed).
 Between sessions: [0101].
 
 ⛔ Live is the pause: every live step waits for his go, one at a time.
