@@ -330,16 +330,16 @@ impl NotesProjection {
 
     /// Add text to the end of a note's body without restating the rest of it.
     ///
-    /// ⚠️ **The only arm here that is not a plain overwrite, and the only one
-    /// that has to defend its own idempotency.** Every other fold sets an
+    /// The only arm here that is not a plain overwrite, and the only one
+    /// that has to defend its own idempotency. Every other fold sets an
     /// absolute value, so replaying it changes nothing for free. Concatenation
     /// replayed is text duplicated — and replay is routine: `rebuild()` clears
-    /// first, but `catch_up()` re-applies into a **live** table whenever the
+    /// first, but `catch_up()` re-applies into a live table whenever the
     /// minimum watermark regresses, which is exactly what turning the Notes
     /// feature off and on does.
     ///
     /// So the event id is recorded on the row and the fold skips an id it has
-    /// already seen. ⛔ Do not replace this with a timestamp comparison: events
+    /// already seen. Do not replace this with a timestamp comparison: events
     /// arrive from other devices whose clocks disagree, so a genuinely new
     /// append can carry an older stamp than one already folded, and it would be
     /// dropped in silence. Identity is skew-proof; time is not.
@@ -351,12 +351,12 @@ impl NotesProjection {
             .to_string();
         let ts = event.timestamp.to_rfc3339();
 
-        // ⚠️ Assignments in one SET clause are applied **in order**, so
+        // Assignments in one SET clause are applied in order, so
         // `applied_appends` has to be written *after* both clauses that read it.
         // Moving it up makes every append a no-op on its own first application —
         // and the note would silently never grow.
         //
-        // ⚠️ `updated_at` is guarded too. Letting a skipped replay bump it would
+        // `updated_at` is guarded too. Letting a skipped replay bump it would
         // make replay change the answer, which is the invariant every projection
         // here is built to hold, and it reorders anything sorted by recency.
         //
@@ -429,30 +429,30 @@ impl NotesProjection {
     }
 }
 
-/// A journal entry is "complete" when every **required** property of its record
+/// A journal entry is "complete" when every required property of its record
 /// type has a non-empty value in the YAML frontmatter at the top of the note.
 ///
-/// ⚠️ **An empty `required` list means `false`, not `true`.** `[].iter().all()` is
+/// An empty `required` list means `false`, not `true`. `[].iter().all()` is
 /// vacuously true, which would mark every entry complete the moment a record type
 /// declares no required properties — and `complete` is what `auto_close` acts on,
 /// so the whole back catalogue would close itself and go read-only. Nothing to fill
 /// in means nothing to finish, so this fails closed.
 ///
-/// **Fenced frontmatter is scanned in full.** When the note opens with a `---`
+/// Fenced frontmatter is scanned in full. When the note opens with a `---`
 /// fence (what the journal template and the property panel always emit), every
 /// line up to the closing `---` counts as frontmatter. Blank lines, indented
 /// continuation lines, and block-list items (`tags:\n  - daily_note`) are
-/// skipped rather than terminating the scan — so **key reordering, block-list
-/// values, and stray blank lines can't hide a later reflection key**. This is
+/// skipped rather than terminating the scan — so key reordering, block-list
+/// values, and stray blank lines can't hide a later reflection key. This is
 /// the shape that previously broke auto-close (the template worked around it by
 /// keeping `tags` inline; imported Obsidian notes routinely use block lists).
 ///
-/// **Fence-less notes stay forgiving.** For the mobile-entry shape with no
+/// Fence-less notes stay forgiving. For the mobile-entry shape with no
 /// leading `---`, the scan reads the leading run of `key: value` lines and
 /// stops at the first blank or non-kv line once a kv has been seen (that line
 /// is the body). Indented continuation lines still don't terminate it.
 ///
-/// **Duplicate-key semantics:** YAML 1.2 says duplicate keys are undefined.
+/// Duplicate-key semantics: YAML 1.2 says duplicate keys are undefined.
 /// We use "any-non-empty wins" via the running found-set — if a property key
 /// appears more than once and *any* occurrence has a non-empty value, the
 /// property counts as filled. This differs from Python yaml / Obsidian
@@ -555,8 +555,8 @@ mod tests {
     /// The keys the journal used before record types existed, taken from the
     /// preset that actually ships rather than restated as literals.
     ///
-    /// ⚠️ Every `is_complete_*` case below predates this phase and passes
-    /// **unchanged** through it. That is the migration claim at unit level: if the
+    /// Every `is_complete_*` case below predates this phase and passes
+    /// unchanged through it. That is the migration claim at unit level: if the
     /// generalized scanner and the reflective preset together disagree with the
     /// old hardcoded array on any of these shapes, one of these tests fails.
     fn reflective() -> RecordType {
@@ -690,7 +690,7 @@ mod tests {
 
     #[test]
     fn is_complete_is_false_when_no_properties_are_required() {
-        // ⚠️ The vacuous-truth trap. `[].iter().all()` is `true`, so the obvious
+        // The vacuous-truth trap. `[].iter().all()` is `true`, so the obvious
         // generalization would mark EVERY entry complete the moment a record type
         // declares nothing required — and `complete` is what `auto_close` acts on,
         // so the whole back catalogue would close itself and go read-only. The
@@ -1113,9 +1113,9 @@ mod tests {
         assert_eq!(title.as_deref(), Some("Trip"), "an append is not a rename");
     }
 
-    /// ⚠️ **The test this whole design exists for.** Every other arm here
+    /// The test this whole design exists for. Every other arm here
     /// overwrites, so replay is free; concatenation replayed is text duplicated.
-    /// `rebuild()` clears first, but `catch_up()` re-applies into a **live** table
+    /// `rebuild()` clears first, but `catch_up()` re-applies into a live table
     /// whenever the minimum watermark regresses — which is what re-enabling the
     /// Notes feature does — so this is a real path, not a hypothetical one.
     #[tokio::test]

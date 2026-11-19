@@ -10,7 +10,7 @@
 //! point the public engine at a bank's CSV export and get imports with config
 //! alone.
 //!
-//! **Dedup is batch-level.** The batch `dedup_key` is a content hash of the
+//! Dedup is batch-level. The batch `dedup_key` is a content hash of the
 //! whole file, so re-reading an *unchanged* file is a no-op (the projection
 //! UPSERTs on `{source}-{dedup_key}`). A *changed* file (e.g. new rows
 //! appended) produces a fresh batch containing every row — already-reviewed
@@ -182,7 +182,7 @@ fn resolve_col(spec: &str, header: Option<&csv::StringRecord>) -> Result<usize, 
 /// rather than failing the whole batch — one weird row shouldn't block an
 /// otherwise-good import, and the user reviews before commit anyway.
 ///
-/// Skipped rows are **returned** in [`ParseOutcome::failures`], not just
+/// Skipped rows are returned in [`ParseOutcome::failures`], not just
 /// logged: a `warn!` in a container log is not an accounting, and the caller
 /// needs the count to close the row identity.
 fn parse_csv(content: &str, cfg: &ParseCfg) -> Result<ParseOutcome, ImportError> {

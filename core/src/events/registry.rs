@@ -1,12 +1,12 @@
 //! Which features own which projections — the projection half of the feature map.
 //!
-//! A projection registers when **any** feature that owns it is enabled, because
+//! A projection registers when any feature that owns it is enabled, because
 //! ownership is many-to-many in both directions: `notes` serves three features,
 //! and `finances` owns two projections. The full map, including the tab,
 //! scheduler, command and settings columns that live in the client, is published
 //! in `docs/src/features.md`.
 //!
-//! ⚠️ A projection that no feature claims and that is not in [`NEVER_GATED`] will
+//! A projection that no feature claims and that is not in [`NEVER_GATED`] will
 //! never register at all. `every_projection_has_an_owner` is what stops that
 //! being a silent mistake — keep it passing rather than deleting the entry.
 
@@ -64,7 +64,7 @@ pub const ALL_PROJECTIONS: &[&str] = &[
 ///   because the assistant concluded something — turning the assistant off
 ///   therefore stops beliefs being maintained, which is the intended reading of
 ///   "the feature is inert".
-/// - `Documents` owns `documents` alone, and deliberately does **not** sit under
+/// - `Documents` owns `documents` alone, and deliberately does not sit under
 ///   `Finances`. The archive holds tax notices, paystubs and leases as readily as
 ///   statements — 16% of the first corpus is documents no statement parser can
 ///   touch — so filing it under finances would mean switching finances off took
@@ -101,7 +101,7 @@ pub fn enabled_projection_names(config: &ResolvedConfig) -> BTreeSet<&'static st
 
 /// Every production projection, in registration order.
 ///
-/// `BudgetProjection` **must** precede `JournalFile`: the latter re-reads the
+/// `BudgetProjection` must precede `JournalFile`: the latter re-reads the
 /// former's `transactions` table when re-rendering an updated transaction.
 ///
 /// Constructed here rather than at the call site so there is exactly one list.
@@ -111,7 +111,7 @@ pub fn enabled_projection_names(config: &ResolvedConfig) -> BTreeSet<&'static st
 fn all_projections(journal_path: PathBuf) -> Vec<Box<dyn Projection>> {
     vec![
         Box::new(ConfigProjection),
-        // `RecordTypeProjection` **must** precede `NotesProjection`: the latter
+        // `RecordTypeProjection` must precede `NotesProjection`: the latter
         // reads the declaration to decide whether an entry is complete, and
         // `ProjectionRunner` applies every projection to one event before moving
         // to the next. Ahead of it, a declaration applies to the events that
@@ -169,8 +169,8 @@ pub async fn clear_every_projection(
 /// Projections a host with no filesystem of its own must never register.
 ///
 /// `JournalFile` writes an hledger file through `tokio::fs`. It is owned only by
-/// `Finances`, so a finances-off config already omits it — but ⚠️ that is an
-/// accident of configuration, not a guarantee. A **cold-start** host has no
+/// `Finances`, so a finances-off config already omits it — but that is an
+/// accident of configuration, not a guarantee. A cold-start host has no
 /// config at all (the shared layer is itself a projection, so it is empty until
 /// events have been folded) and every feature falls back to its default, which
 /// is `true`. The config filter would let `JournalFile` through on exactly the
@@ -220,7 +220,7 @@ pub fn build_projections_server() -> Vec<Box<dyn Projection>> {
 mod tests {
     use super::*;
 
-    /// The agent must never register `JournalFile`, **whatever** the config says.
+    /// The agent must never register `JournalFile`, whatever the config says.
     ///
     /// The point of the test is the finances-on case: that is the one the
     /// ordinary feature filter would let through, and it is reachable on any
@@ -416,7 +416,7 @@ mod tests {
         );
     }
 
-    /// The **whole seam**, end to end: a real `ConfigSet` event lands in the store,
+    /// The whole seam, end to end: a real `ConfigSet` event lands in the store,
     /// the projection folds it into `app_config`, the next launch reads that table
     /// back with `load_persisted`, and the registration list narrows accordingly.
     ///

@@ -26,7 +26,7 @@ use super::tools::{LlmResponse, ToolCall, ToolDef};
 
 /// How many times a 429 is retried before the call is given up on.
 ///
-/// ⚠️ A 429 is not necessarily about *our* request rate, and treating it as one
+/// A 429 is not necessarily about *our* request rate, and treating it as one
 /// misreads the most common case. Pinning a gateway to a single upstream — which
 /// any measurement must do, or it cannot name the stack that answered — means a
 /// transient overload in that provider's shared pool comes back to us instead of
@@ -58,7 +58,7 @@ pub struct OpenAiCompatClient {
     /// `None` by default because "OpenAI-compatible" covers a local Ollama with
     /// no limit at all as well as a free tier allowing ten requests a minute —
     /// a fixed interval would either throttle the first or be useless for the
-    /// second. Where a cap exists this is a **correctness** control, not a
+    /// second. Where a cap exists this is a correctness control, not a
     /// politeness one: an agent loop makes several calls per question and a
     /// benchmark makes dozens, so without it the run reports rate-limit errors
     /// as model failures.

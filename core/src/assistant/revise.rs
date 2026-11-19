@@ -4,20 +4,20 @@
 //! the text to find, and what to put in its place. This module turns that pair
 //! into a finished body, or refuses.
 //!
-//! ⛔ **The anchor is content, never a position.** A byte offset into a body
+//! The anchor is content, never a position. A byte offset into a body
 //! another device has already rewritten points at the wrong place and the
 //! corruption is silent, which is why `GenericNoteAppendedPayload` refuses to
 //! carry one. Text carries its own identity.
 //!
-//! ⛔ **Exactly one match, or nothing happens.** Zero means the note moved under
+//! Exactly one match, or nothing happens. Zero means the note moved under
 //! the proposal; two or more means there is no single place the edit belongs. In
-//! both cases this returns an error and the caller must refuse the approval — ⛔
+//! both cases this returns an error and the caller must refuse the approval —
 //! never fall back to a fuzzy match, a normalized one, or the nearest paragraph.
 //! A near-miss anchor is the case where guessing is most likely to look right and
 //! be wrong, and the user's acceptance criterion for the whole feature is that it
 //! cannot quietly mangle a note.
 //!
-//! ⚠️ **The frontmatter is out of bounds, and that is not cosmetic.** A note's
+//! The frontmatter is out of bounds, and that is not cosmetic. A note's
 //! `raw_text` carries its `---` block, so an anchor matching a line inside it
 //! would splice through the note's own properties and the YAML would keep
 //! parsing. Matches are counted in the body alone and the frontmatter bytes come
@@ -37,7 +37,7 @@ pub enum ReviseError {
     Ambiguous(usize),
     /// The proposal names no text to find.
     ///
-    /// ⚠️ `validate_args` already refuses a blank `find`, so this is unreachable
+    /// `validate_args` already refuses a blank `find`, so this is unreachable
     /// through the inbox. It exists because [`splice`] is a pure function that
     /// must not depend on a distant validator: an empty anchor matches at every
     /// position, and the reasonable-looking outcome (insert at the start) is a
@@ -63,7 +63,7 @@ impl ReviseError {
 
 /// Replace `find` with `replace` in `raw_text`'s body, or say why not.
 ///
-/// Returns the **whole new `raw_text`**, frontmatter included and byte-identical,
+/// Returns the whole new `raw_text`, frontmatter included and byte-identical,
 /// because that is what a `GenericNoteUpdated` event carries.
 ///
 /// An empty `replace` is a deletion and is legal: removing a sentence is as
@@ -111,7 +111,7 @@ mod tests {
         );
     }
 
-    /// ⚠️ The whole reason this module slices past the frontmatter. `summary: due
+    /// The whole reason this module slices past the frontmatter. `summary: due
     /// in May` would otherwise be the *first* match, and splicing it rewrites the
     /// note's properties while leaving YAML that still parses.
     #[test]
@@ -205,7 +205,7 @@ mod tests {
         );
     }
 
-    /// ⚠️ Multi-byte text, because every index here is a byte index. A `char`
+    /// Multi-byte text, because every index here is a byte index. A `char`
     /// index would slice mid-codepoint and panic.
     #[test]
     fn a_multi_byte_body_slices_on_byte_boundaries() {

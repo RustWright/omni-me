@@ -11,7 +11,7 @@
 //! This is a bounded ring of the last [`CAPACITY`] failures, attached to a
 //! report by [`crate::components::feedback`].
 //!
-//! **Why a `thread_local!` and not a Dioxus signal.** Three of the four
+//! Why a `thread_local!` and not a Dioxus signal. Three of the four
 //! producers fire outside any Dioxus scope — a panic hook, two JS event
 //! listeners, and a patched `console.error` — where a signal write panics (the
 //! same constraint `sync_refresh.rs` hit). That module bridged back in with an
@@ -19,7 +19,7 @@
 //! read once, on demand, by a modal that is mounting anyway. wasm is
 //! single-threaded, so a thread-local is effectively a global.
 //!
-//! **Why a panic flushes to `localStorage` and nothing else does.** wasm has no
+//! Why a panic flushes to `localStorage` and nothing else does. wasm has no
 //! unwinding: a panic traps the module and there is no running app left to open
 //! the capture modal. The single most valuable entry is therefore the one an
 //! in-memory ring structurally cannot deliver, so the panic hook — and only the
@@ -29,7 +29,7 @@
 //! accumulate. Every other producer stays memory-only, because a debounced disk
 //! write per console line is the churn `screen_context.rs` was written to avoid.
 //!
-//! **Everything here is truncated.** Entries are capped in count and each one in
+//! Everything here is truncated. Entries are capped in count and each one in
 //! length, because this text is bound for a synced event. A stack trace or a
 //! serialized request body is exactly how something unbounded ends up in the
 //! event log.
@@ -181,7 +181,7 @@ pub fn record_invoke_failure(cmd: &str, err: &str) {
 
 /// A boot-race invoke that failed and then succeeded on retry.
 ///
-/// Recorded as a **warning, not a failure**: the call ultimately worked, so it
+/// Recorded as a warning, not a failure: the call ultimately worked, so it
 /// is not a defect the user experienced. It is kept because the retry would
 /// otherwise erase the only evidence that the race still happens — and the race
 /// getting slower (a bigger log, a slower device) is exactly the thing worth
@@ -299,7 +299,7 @@ fn install_window_listeners() {
 
 /// Wrap one `console` method so its calls are recorded as well as printed.
 ///
-/// The wrapper is built **in JS**, not as a Rust closure bound directly.
+/// The wrapper is built in JS, not as a Rust closure bound directly.
 /// `console.error` is variadic and a Rust closure cannot reach JS `arguments` —
 /// binding one would silently drop every argument past the first and change what
 /// the console prints. The factory below forwards `arguments` untouched to the

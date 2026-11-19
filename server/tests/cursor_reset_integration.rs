@@ -6,7 +6,7 @@
 //! wipe: rewinding a live mailbox re-archives every message it passes, so a
 //! caller holding the wrong host must be stopped before the registry is touched.
 //!
-//! ⚠️ Over a real socket against the production router, because the declared
+//! Over a real socket against the production router, because the declared
 //! instance lives in server state — calling `reset_cursor` in process reaches
 //! neither the gate nor the routing.
 
@@ -25,7 +25,7 @@ async fn reset(url: &str, source: &str, instance: &str) -> (reqwest::StatusCode,
 
 /// The gate fires before the registry is consulted.
 ///
-/// ⚠️ Asserted against an unknown source on purpose. If the handler looked the
+/// Asserted against an unknown source on purpose. If the handler looked the
 /// source up first, this would answer 404 — indistinguishable from a typo, and
 /// it would mean a correctly-named source on the wrong host got as far as the
 /// registry before anything checked which box it was.

@@ -159,14 +159,14 @@ pub struct CounterLegContext<'a> {
 ///
 /// Three tiers eventually fill that leg, and this trait is only the second:
 ///
-/// 1. **Receipts** pair *asynchronously* — a receipt draft carries its own
+/// 1. Receipts pair *asynchronously* — a receipt draft carries its own
 ///    `Unmatched` leg that cancels against the bank row's, and
 ///    `reconciliation::find_match_candidates` merges them. Nothing here.
-/// 2. **Determinate at import** — fees, interest, transfers between the user's
+/// 2. Determinate at import — fees, interest, transfers between the user's
 ///    own accounts. No receipt exists or ever will, and the account is knowable
 ///    from the transaction itself. That is what an implementation of this trait
 ///    decides.
-/// 3. **The no-receipt residue** — open, and downstream of the LLM work.
+/// 3. The no-receipt residue — open, and downstream of the LLM work.
 ///
 /// No implementation ships today; every source passes `None` and every
 /// balancing leg is `Unmatched`, exactly as before the trait existed. It is
@@ -202,7 +202,7 @@ pub fn make_counter_leg(
 
 /// Configured account names that no real posting uses.
 ///
-/// The failure this exists to catch is **silent**: an account name is just a
+/// The failure this exists to catch is silent: an account name is just a
 /// string, so a stale one stays well-formed and simply matches nothing. It
 /// surfaces as an empty row on a screen, or as a source importing into a name
 /// no report reads — never as an error. The pattern that produces it is the

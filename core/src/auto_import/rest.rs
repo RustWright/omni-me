@@ -7,12 +7,12 @@
 //! [`crate::auto_import::csv::CsvSource`]. So a non-coding user can point the
 //! public engine at a bank/fintech JSON API and get imports with config alone.
 //!
-//! **Auth rides the "secrets referenced by name" design.** The source holds a
+//! Auth rides the "secrets referenced by name" design. The source holds a
 //! `secret_ref` (a key into `[secrets]` in `credentials.toml`) and resolves the
 //! value at *fetch* time — reading its own credentials, so no API key ever
 //! lives in `sources.toml` and the builder needs no credential handle.
 //!
-//! **Dedup is batch-level** (same as CSV): the batch `dedup_key` is a content
+//! Dedup is batch-level (same as CSV): the batch `dedup_key` is a content
 //! hash of the response body, so an unchanged response is a projection no-op.
 
 use async_trait::async_trait;

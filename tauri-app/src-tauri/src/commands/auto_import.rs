@@ -1,12 +1,12 @@
 //! Auto-import observability commands + batch-review commands.
 //!
-//! **Observability half** is a pure HTTP proxy to `/auto_import/{status,tick}`
+//! Observability half is a pure HTTP proxy to `/auto_import/{status,tick}`
 //! on the sync server — the scheduler lives server-side
 //! (per [[feedback-llm-server-side]]), so the Tauri client has no in-process
 //! registry to query. Server errors surface inline on the Settings panel
 //! ("server returned 502: globepay upstream error").
 //!
-//! **Batch-review half** is fully local — the `AutoImportProjection` runs on
+//! Batch-review half is fully local — the `AutoImportProjection` runs on
 //! the client (not the server, per `core/src/events/mod.rs` wiring), so
 //! `list/commit/dismiss_batch` read & write through `state.db` directly.
 //! `commit_batch` fans out events: N × `TransactionRecorded` + an optional
@@ -33,7 +33,7 @@ use crate::AppState;
 use crate::commands::shared::require_feature;
 
 /// Transaction id for a committed draft: the source's stable `external_id`
-/// **plus a hash of the draft's own content**, so committing the same draft
+/// plus a hash of the draft's own content, so committing the same draft
 /// twice is a no-op while genuinely different rows stay distinct.
 ///
 /// This used to be a fresh `Ulid` per accepted draft, which quietly defeated
@@ -42,7 +42,7 @@ use crate::commands::shared::require_feature;
 /// stable id makes a duplicate commit collapse — while a random one wrote a
 /// second copy of the same upstream transaction and neither guard could tell.
 ///
-/// The content hash is **not** decoration: `external_id` alone is not unique
+/// The content hash is not decoration: `external_id` alone is not unique
 /// per row. One upstream card charge can arrive as several drafts sharing a
 /// reference number — a multi-currency charge yields one leg per balance
 /// currency (observed live: `CARD-…` as both −13.12 USD and −13.22 CAD). Keying
@@ -181,7 +181,7 @@ pub async fn trigger_auto_import_tick(
 }
 
 /// Drive interactive re-auth for one source by relaying a one-time code to the
-/// server's `POST /auto_import/reauth`. The OTP travels in the **JSON body**
+/// server's `POST /auto_import/reauth`. The OTP travels in the JSON body
 /// (never the query string) so it can't leak into access logs. The successful
 /// response is the `ReauthOutcome` verbatim — `{ "status": "active" }` |
 /// `{ "status": "invalid_otp" }` | `{ "status": "not_supported" }` |

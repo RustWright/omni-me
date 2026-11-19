@@ -1,6 +1,6 @@
 //! The finances screen: Overview, Ledger and Analyze.
 //!
-//! **Deliberately still one 7,000-line file.** Splitting it three ways along the
+//! Deliberately still one 7,000-line file. Splitting it three ways along the
 //! `surface_of()` seam below is the obvious move and is NOT being done yet, for
 //! a specific reason: that seam is the *output* of the finances IA rebuild, and
 //! the rebuild has not finished being verified. Its Overview / Ledger / Analyze
@@ -70,7 +70,7 @@ pub(crate) enum DocumentKind {
 /// extension when the MIME is generic (Android share apps sometimes hand us
 /// `application/octet-stream` for a PDF).
 ///
-/// **Permissive by design.** Anything in `application/*` with a `.pdf` name
+/// Permissive by design. Anything in `application/*` with a `.pdf` name
 /// (legacy `application/x-pdf`, misdeclared `application/zip`, the canonical
 /// `application/octet-stream` stripped-MIME case) routes to Pdf. The looseness
 /// is safe because the extractor is the actual validator downstream — a wrongly-
@@ -270,7 +270,7 @@ pub fn FinancesPage() -> Element {
 
     // A reminder row that named this tab asked for its review queue.
     //
-    // ⛔ Lands on the review inbox card, not inside one queue. The count that
+    // Lands on the review inbox card, not inside one queue. The count that
     // produced the row merges auto-import batches with assistant proposals, so
     // there is no single queue it can mean — the card is where that split is
     // visible, and it is one tap from either half. Before this the row switched
@@ -340,7 +340,7 @@ pub fn FinancesPage() -> Element {
     });
 
     // Assistant proposals awaiting review, counted the same way and on the same
-    // trigger. ⚠️ **Not gated on the LLM feature.** Turning the assistant off must
+    // trigger. Not gated on the LLM feature. Turning the assistant off must
     // not hide a proposal the user has already been offered — `core` leaves
     // deciding ungated for exactly this reason, and a count that vanished would
     // strand the card behind it with nothing to say it was there.
@@ -1090,7 +1090,7 @@ fn ReviewInboxCard(
     /// to zero showed "-1.50 CAD" over ~380 waiting on dev (2026-10-07).
     unmatched_count: u64,
     /// Arrived here by a reminder row naming this queue: bring the card into
-    /// view and mark it. ⚠️ On a phone it sits below the net-worth hero and the
+    /// view and mark it. On a phone it sits below the net-worth hero and the
     /// history chart, so without the scroll the destination is off-screen and
     /// the tap reads as having gone nowhere.
     highlight: bool,
@@ -1118,7 +1118,7 @@ fn ReviewInboxCard(
 
     rsx! {
         div {
-            // ⚠️ A wrapper rather than a prop on `Card`: `onmounted` is a DOM
+            // A wrapper rather than a prop on `Card`: `onmounted` is a DOM
             // attribute and `Card` is a component, so there is no element on it
             // to hang this from.
             onmounted: move |e| async move {
@@ -1152,11 +1152,11 @@ fn ReviewInboxCard(
                             span { class: "tabular-nums font-semibold {batch_tone}", "{pending_count}" }
                         }
                     }
-                    // ⛔ A row here rather than a queue of its own. One entry point
+                    // A row here rather than a queue of its own. One entry point
                     // means one number to watch — "things waiting for you in
                     // finances" — and the sections stay separate one tap in, where
                     // an import batch and an assistant proposal genuinely differ.
-                    // ⚠️ Shown even at zero, unlike a badge: the row is how the user
+                    // Shown even at zero, unlike a badge: the row is how the user
                     // learns the assistant can offer ledger changes at all.
                     button {
                         class: "w-full flex items-center justify-between text-sm rounded-md px-2 py-1.5 -mx-2 hover:bg-obsidian-border/5 transition-colors",
@@ -2727,7 +2727,7 @@ fn batch_needs_manual_fx(batch: &PendingBatchView) -> Option<String> {
 
 /// Assistant proposals that change the ledger, reviewed beside the ledger.
 ///
-/// ⛔ **Renders the shared [`ProposalCard`], never a finance-flavoured copy.**
+/// Renders the shared [`ProposalCard`], never a finance-flavoured copy.
 /// The card carries the two things that make an approval informed — the evidence
 /// row and the "this one cannot be undone" line — and a second renderer is a
 /// second place for either to be forgotten. `transaction.clear` is irreversible,
@@ -2768,7 +2768,7 @@ fn SuggestionsView(on_back: EventHandler<()>) -> Element {
             Some(Ok(rows)) if rows.is_empty() => rsx! {
                 div { class: "p-6 bg-obsidian-sidebar/60 border border-obsidian-border/5 rounded-lg text-center text-obsidian-text-muted text-sm",
                     p { "Nothing waiting." }
-                    // ⚠️ Says the rule rather than just the state. An empty list
+                    // Says the rule rather than just the state. An empty list
                     // otherwise reads as "the assistant does not touch money",
                     // which is the opposite of what is true — it does, and this
                     // is where it has to ask.
@@ -3025,9 +3025,9 @@ fn batch_headline(batch: &PendingBatchView) -> (String, Option<String>) {
 
 /// The archived email a batch came from, when it came from one.
 ///
-/// ⚠️ The key is written by `core::auto_import::imap::EMAIL_DOCUMENT_ID_KEY`.
+/// The key is written by `core::auto_import::imap::EMAIL_DOCUMENT_ID_KEY`.
 /// `source_metadata` is opaque JSON by design, so nothing but agreement on this
-/// spelling connects the two — ⛔ change one and change the other.
+/// spelling connects the two — change one and change the other.
 /// The archived document a capture batch was read from (`source = capture`).
 fn captured_document_id(batch: &PendingBatchView) -> Option<String> {
     batch
@@ -3225,7 +3225,7 @@ fn BatchLineagePanel(
 
 /// What `verify` concluded about the extraction behind a batch.
 ///
-/// ⚠️ These keys are written by `core::auto_import::receipts`, which spells them
+/// These keys are written by `core::auto_import::receipts`, which spells them
 /// `effective_confidence` and `needs_manual_review` — not the `confidence` /
 /// `needs_review` of the capture route's JSON. `source_metadata` is opaque by
 /// design, so only agreement on these spellings connects the two.
@@ -3255,12 +3255,12 @@ fn batch_verdict(batch: &PendingBatchView) -> Option<ExtractionVerdict> {
 
 /// The message a batch was derived from, shown beside its drafts.
 ///
-/// ⚠️ Renders the archive's **extracted** text (headers + body), not the raw
+/// Renders the archive's extracted text (headers + body), not the raw
 /// `.eml`: the raw form is mostly MIME scaffolding and base64 attachment
 /// payloads, so showing it would technically display the source while hiding
 /// what it says.
 ///
-/// ⛔ **Attachments render here, not by a link to the Archive.** The figures on
+/// Attachments render here, not by a link to the Archive. The figures on
 /// a receipt often live in a PDF while the covering mail states none of them, so
 /// a reviewer sent to another tab to check provenance is a reviewer approving a
 /// number they never saw. One viewer at a time, opened on tap — rendering every
@@ -3292,7 +3292,7 @@ fn SourceEmailPanel(document_id: String) -> Element {
                     Some(Err(e)) => rsx! {
                         p { class: "text-xs text-red-300", "Couldn't load the message: {e}" }
                     },
-                    // ⚠️ Says which, rather than rendering an empty box: a
+                    // Says which, rather than rendering an empty box: a
                     // message with no readable body is a real outcome, and the
                     // reviewer needs to know that is why they see nothing.
                     Some(Ok(None)) => rsx! {
@@ -3309,7 +3309,7 @@ fn SourceEmailPanel(document_id: String) -> Element {
                         }
                     },
                 }
-                // ⚠️ Silent when the message had none. "No attachments" on every
+                // Silent when the message had none. "No attachments" on every
                 // body-only receipt is a line the reviewer learns to skip, and
                 // the absence is already legible from the body being the receipt.
                 match children.read().as_ref() {
@@ -3520,7 +3520,7 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
                     current_total: charge_total(&b.draft_postings),
                 }
 
-                // ⛔ The source, shown — not a JSON dump of its metadata. This
+                // The source, shown — not a JSON dump of its metadata. This
                 // review step is the only control between a crafted email and a
                 // fabricated ledger entry (`receipts.rs` says so explicitly, and
                 // there is no SPF/DKIM check), and it cannot be that while the
@@ -4114,7 +4114,7 @@ fn posting_views(value: &serde_json::Value) -> Vec<PostingRowView> {
         .unwrap_or_default()
 }
 
-/// Ledger surface root (Stage C5) — a responsive **master-detail**. Desktop puts
+/// Ledger surface root (Stage C5) — a responsive master-detail. Desktop puts
 /// the transaction list and the selected transaction's detail side-by-side (uses
 /// the widened container); mobile shows the list, and tapping a row slides the
 /// detail over it. Selection lives here so the list can highlight the open row;
@@ -7101,7 +7101,7 @@ fn statement_label_stem(label: &str) -> &str {
 /// Roll a remembered label onto the current period: `ws-tfsa-2026-08` +
 /// September ⇒ `ws-tfsa-2026-09`.
 ///
-/// The period is **replaced**, not appended — appending would grow the label a
+/// The period is replaced, not appended — appending would grow the label a
 /// little longer every month (`ws-tfsa-2026-08-2026-09`), and the drift would
 /// only be noticed once the labels were already in the ledger.
 fn roll_statement_label(remembered: &str, today: chrono::NaiveDate) -> String {

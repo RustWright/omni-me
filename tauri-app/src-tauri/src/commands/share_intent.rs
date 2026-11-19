@@ -32,7 +32,7 @@ pub async fn take_pending_share_intent(
 ) -> Result<Option<PendingShareIntent>, String> {
     // `path().app_local_data_dir()` is the Tauri-managed app data root on
     // every platform. On Android it resolves via `PathPlugin.getDataDir` to
-    // **`activity.dataDir`** (`/data/user/0/<pkg>`) — NOT `filesDir`, which is
+    // `activity.dataDir` (`/data/user/0/<pkg>`) — NOT `filesDir`, which is
     // `dataDir/files`. An earlier version of this comment claimed the two were
     // the same directory; they are not, and `MainActivity.kt` was writing to
     // `filesDir` on that assumption, so the bytes landed where this command

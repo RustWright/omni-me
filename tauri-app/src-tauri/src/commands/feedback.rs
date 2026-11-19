@@ -7,7 +7,7 @@
 //! offline queue, retry, dedup and cross-device replication that carry every
 //! other event, none of which had to be rebuilt here.
 //!
-//! **The split of responsibilities is deliberate.** The frontend supplies only
+//! The split of responsibilities is deliberate. The frontend supplies only
 //! what it alone can know — the sentence, which screen was open, and what was on
 //! it. Everything identifying the *installation* (device, build, sync target,
 //! sandbox flag) is filled in here, where it cannot be stale or forged by a
@@ -126,13 +126,13 @@ const RECENT_EVENT_LIMIT: u32 = 20;
 /// The last few events authored on this device, oldest first, as
 /// `<timestamp> <event_type> <aggregate_id>` lines.
 ///
-/// **Built here rather than in the frontend, deliberately.** This is the same
+/// Built here rather than in the frontend, deliberately. This is the same
 /// split the module header draws for device and build identity: anything
 /// describing the *installation* is filled in on this side, where a stale or
 /// forged frontend cannot reach it. It also keeps the event list off the IPC
 /// wire entirely — the modal never needs to see it.
 ///
-/// **Payloads are never included.** Event payloads carry journal prose and
+/// Payloads are never included. Event payloads carry journal prose and
 /// transaction amounts; the type and aggregate id are what let a reader
 /// reconstruct a sequence, and a report is not a data export.
 ///

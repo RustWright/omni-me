@@ -1,7 +1,7 @@
 //! The one place an outbound `reqwest::Client` is built.
 //!
 //! Every client in this workspace used to be a bare `reqwest::Client::new()`,
-//! which has **no timeout of any kind** — not on connect, not on the response
+//! which has no timeout of any kind — not on connect, not on the response
 //! body. That is not merely "a request might hang". Two of these clients sit on
 //! single-task loops:
 //!
@@ -39,15 +39,15 @@ pub const LLM_TIMEOUT: Duration = Duration::from_secs(180);
 ///
 /// A single 2048px receipt through `Qwen3-VL-30B-A3B` on DeepInfra took 34s,
 /// 66s, 144s and ~194s on four real photos (2026-09-11). The last one sat
-/// **right on** the 180s LLM budget and failed intermittently, surfacing as an
+/// right on the 180s LLM budget and failed intermittently, surfacing as an
 /// opaque "error sending request" three minutes after the user took the photo.
 ///
-/// ⛔ Do NOT fix that by raising [`LLM_TIMEOUT`]: the assistant's verb loop
+/// Do NOT fix that by raising [`LLM_TIMEOUT`]: the assistant's verb loop
 /// shares it, and a five-minute hang there is far worse than a failed turn.
 /// The two workloads have genuinely different shapes — one is interactive and
 /// should give up, the other is a user-initiated batch that should finish.
 ///
-/// ⚠️ This is a floor under a latency problem, not a solution to it. 194s for
+/// This is a floor under a latency problem, not a solution to it. 194s for
 /// one receipt is bad on its own terms and wants a faster model or endpoint.
 pub const VISION_TIMEOUT: Duration = Duration::from_secs(300);
 

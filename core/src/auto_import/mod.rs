@@ -37,7 +37,7 @@ pub mod setup;
 pub mod subprocess;
 pub mod triage;
 
-/// What a record-oriented parse produced, including what it could **not**
+/// What a record-oriented parse produced, including what it could not
 /// parse.
 ///
 /// Returning a bare `Vec<DraftTransaction>` is what made row loss invisible in

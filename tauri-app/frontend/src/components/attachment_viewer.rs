@@ -1,10 +1,10 @@
 //! Rendering a stored document inline, from bytes already on the device.
 //!
-//! ⛔ **Every branch renders client-side.** `core::attachments` keeps a bounded
+//! Every branch renders client-side. `core::attachments` keeps a bounded
 //! cache so a captured document stays viewable offline; a viewer that reached
 //! for the server would defeat the thing the cache exists for.
 //!
-//! ⛔ **No download link, in any branch.** A download is what the old fallback
+//! No download link, in any branch. A download is what the old fallback
 //! did for every type it did not understand, and on Android WebView it silently
 //! does nothing — so the user sees a button that looks like an answer and is
 //! not one. An honest "no preview, here is what this is" is worth more.
@@ -14,8 +14,8 @@ use wasm_bindgen::{JsCast, JsValue};
 
 use crate::bridge;
 
-/// `<script src>` for the bundled pdf.js build. ⚠️ The worker sits beside it and
-/// `pdfview.js` names it by path, so **both** files must reach **both** copy
+/// `<script src>` for the bundled pdf.js build. The worker sits beside it and
+/// `pdfview.js` names it by path, so both files must reach both copy
 /// targets (`web/public` and the Android assets) — `package.json`'s
 /// `copy:editor:{dev,release}` do that.
 const PDF_BUNDLE_SRC: &str = "/assets/js/pdfview.bundle.js";
@@ -63,7 +63,7 @@ impl Drop for ObjectUrlGuard {
 
 /// How a document should be rendered.
 ///
-/// ⚠️ [`AttachmentRender::Unpreviewable`] carries its own reason rather than
+/// [`AttachmentRender::Unpreviewable`] carries its own reason rather than
 /// being a bare fallback. "No preview available" tells the user nothing they can
 /// act on; naming the format tells them whether to open it elsewhere or whether
 /// something is wrong.
@@ -71,7 +71,7 @@ impl Drop for ObjectUrlGuard {
 pub enum AttachmentRender {
     Image,
     Pdf,
-    /// Rendered as a table of the file's own rows. ⛔ Never the statement
+    /// Rendered as a table of the file's own rows. Never the statement
     /// parser's interpretation of them — correcting a misread value means seeing
     /// what the file actually says.
     Csv,
@@ -79,8 +79,8 @@ pub enum AttachmentRender {
     Unpreviewable(&'static str),
 }
 
-/// ⛔ **HEIC is unpreviewable, and this is the fix for a live bug rather than a
-/// limitation.** It used to route to the `<img>` branch, with a test asserting
+/// HEIC is unpreviewable, and this is the fix for a live bug rather than a
+/// limitation. It used to route to the `<img>` branch, with a test asserting
 /// that it did, while `core::extraction::media::prepare_image` refuses HEIC and
 /// neither Chrome nor Android WebView decodes it — so the classification passed
 /// and the render was blank. Transcoding on ingest is the other answer and stays
@@ -97,10 +97,10 @@ fn extension(filename: &str) -> String {
 
 /// Decide how to render, from the declared type and the filename together.
 ///
-/// ⚠️ **The filename is consulted, and it has to be.** Bulk ingest labels plenty
+/// The filename is consulted, and it has to be. Bulk ingest labels plenty
 /// of files `application/octet-stream` — `archive::mime_for` only recovers a type
 /// for extensions it knows — so classifying on the MIME alone would drop real
-/// CSVs into the unpreviewable branch. ⛔ The declared type still wins when it
+/// CSVs into the unpreviewable branch. The declared type still wins when it
 /// says something specific; the extension is consulted only when it does not.
 pub fn classify_attachment(mime: &str, filename: &str) -> AttachmentRender {
     let mime = mime.to_ascii_lowercase();
@@ -142,7 +142,7 @@ pub struct AttachmentMeta {
 
 /// The same four fields off an archived document.
 ///
-/// ⚠️ `None` when the row has no `sha256` — a fields event can fold before the
+/// `None` when the row has no `sha256` — a fields event can fold before the
 /// archive event that carries the hash, so a document can legitimately exist
 /// with nothing to render yet.
 ///
@@ -175,18 +175,18 @@ pub fn extract_attachment_meta(value: &serde_json::Value) -> Option<AttachmentMe
 
 /// Rows past this are not rendered.
 ///
-/// ⚠️ A statement export runs to a few hundred rows and a transaction dump to
+/// A statement export runs to a few hundred rows and a transaction dump to
 /// tens of thousands; one DOM node per cell is what makes the difference matter.
-/// ⛔ Truncation is always stated in the UI — a table that silently stops is a
+/// Truncation is always stated in the UI — a table that silently stops is a
 /// table someone will read as the whole file.
 const MAX_CSV_ROWS: usize = 500;
 
 /// Split one CSV line on commas, honouring double-quoted cells.
 ///
-/// ⚠️ Deliberately its own small function rather than a shared one: the frontend
+/// Deliberately its own small function rather than a shared one: the frontend
 /// is a separate workspace from `omni-me-core`, and this reads *raw* rows for
 /// display, which is a different job from parsing a statement into transactions.
-/// ⛔ It must never grow interpretation — no type inference, no number
+/// It must never grow interpretation — no type inference, no number
 /// formatting, no header semantics.
 fn split_csv_line(line: &str) -> Vec<String> {
     let mut cells = Vec::new();
@@ -220,7 +220,7 @@ fn csv_rows(text: &str) -> (Vec<Vec<String>>, usize) {
 
 /// What the fetch produced, in the shape the chosen branch needs.
 ///
-/// ⚠️ Text branches decode instead of making an object URL, and image/PDF
+/// Text branches decode instead of making an object URL, and image/PDF
 /// branches do the reverse. Keeping both would hold every document twice.
 enum Loaded {
     Url(ObjectUrlGuard),
@@ -493,7 +493,7 @@ fn call_global(name: &str, args: &[&str]) -> Result<JsValue, String> {
 
 /// A PDF, rendered page by page onto canvases by pdf.js.
 ///
-/// ⛔ **Not an `<iframe>`, and that is the whole point.** An iframe pointed at a
+/// Not an `<iframe>`, and that is the whole point. An iframe pointed at a
 /// `blob:` URL renders on desktop webkit and shows *nothing* on Android WebView,
 /// which has no built-in PDF renderer — so the corpus's most common document
 /// type failed silently on the device most likely to read it. Canvases render
@@ -523,7 +523,7 @@ fn PdfView(url: String, #[props(default)] full: bool) -> Element {
 
     rsx! {
         div { class: "space-y-2",
-            // ⚠️ Always present, never behind an `if`: the effect resolves the
+            // Always present, never behind an `if`: the effect resolves the
             // container by id, so a conditionally-rendered node would not exist
             // yet when the render call goes looking for it.
             div {
@@ -537,7 +537,7 @@ fn PdfView(url: String, #[props(default)] full: bool) -> Element {
                 Some(Err(e)) => rsx! {
                     p { class: "text-xs text-red-300", "{e}" }
                 },
-                // ⛔ Truncation is stated. A document that appears to stop at
+                // Truncation is stated. A document that appears to stop at
                 // page 30 otherwise reads as a complete document.
                 Some(Ok((pages, rendered))) if rendered < pages => rsx! {
                     p { class: "text-[10px] text-obsidian-text-muted",
@@ -556,7 +556,7 @@ fn PdfView(url: String, #[props(default)] full: bool) -> Element {
 
 /// Call `window.renderPdf(containerId, url)` and read back `{pages, rendered}`.
 ///
-/// ⚠️ Reached through `Reflect` rather than a `#[wasm_bindgen]` extern: the
+/// Reached through `Reflect` rather than a `#[wasm_bindgen]` extern: the
 /// bundle is loaded on demand, so the global is genuinely absent until it lands
 /// and a direct extern binding would trap instead of returning an error we can
 /// show.
@@ -646,7 +646,7 @@ fn CsvTable(text: String) -> Element {
                                 } else {
                                     "odd:bg-obsidian-bg/40"
                                 },
-                                // ⚠️ The line number is the file's, not the
+                                // The line number is the file's, not the
                                 // table's — it is what a person types into an
                                 // editor to go and look at the row.
                                 td { class: "px-2 py-1 text-obsidian-text-muted/50 select-none text-right align-top",
@@ -673,7 +673,7 @@ fn CsvTable(text: String) -> Element {
     }
 }
 
-/// ⛔ Says what the file is and why it cannot be shown. No download button.
+/// Says what the file is and why it cannot be shown. No download button.
 #[component]
 fn UnpreviewableNotice(filename: String, reason: &'static str) -> Element {
     rsx! {
@@ -707,7 +707,7 @@ mod tests {
 
     #[test]
     fn a_generic_type_falls_back_to_the_extension() {
-        // ⚠️ The case that matters: bulk ingest labels files
+        // The case that matters: bulk ingest labels files
         // `application/octet-stream`, and on MIME alone every one of the corpus's
         // CSVs would land in the unpreviewable branch.
         assert_eq!(
@@ -726,7 +726,7 @@ mod tests {
 
     #[test]
     fn heic_is_unpreviewable_by_either_route() {
-        // ⛔ Regression guard. This used to classify as `Image`, with a test
+        // Regression guard. This used to classify as `Image`, with a test
         // asserting it, and rendered a blank frame — the WebView cannot decode
         // HEIC and `prepare_image` refuses it too.
         assert_eq!(

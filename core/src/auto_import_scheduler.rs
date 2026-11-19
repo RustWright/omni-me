@@ -8,8 +8,8 @@
 //! Per-tick contract:
 //! - `pull()` returns `Ok(ImportSummary)` → reset backoff, sleep for the
 //!   configured interval, then tick again.
-//! - `pull()` returns `Err(ImportError::NeedsReauth(_))` → **halt this source's
-//!   loop** (circuit-breaker). The credential is expired and only the user can
+//! - `pull()` returns `Err(ImportError::NeedsReauth(_))` → halt this source's
+//!   loop (circuit-breaker). The credential is expired and only the user can
 //!   fix it, so re-`pull()`-ing on a schedule would just re-attempt login on
 //!   every tick — for a bank source that means repeated real login attempts
 //!   (lockout / fraud-flag risk). The source goes dormant in `NeedsReauth`; a
@@ -37,7 +37,7 @@ use crate::jobs::spend::Spend;
 /// land in exactly one of these, which is what makes a silent drop impossible
 /// to write (see [`ImportTally`]).
 ///
-/// The variants are separated by **what the user would have to do about it**,
+/// The variants are separated by what the user would have to do about it,
 /// not by where in the code the row was discarded — `Deduped` and
 /// `OutOfWindow` are both "working as intended", `Unmapped` is a config fix,
 /// `Failed` is a bug or bad upstream data. Blurring them is what let a
@@ -55,8 +55,8 @@ pub enum DropReason {
     /// that we failed to place: conflating the two would either bury real
     /// config gaps in noise or make every personal email look like lost money.
     Ignored,
-    /// No account mapping for this row's key. **A configuration gap, not a
-    /// no-op** — the row is real money the ledger will never see.
+    /// No account mapping for this row's key. A configuration gap, not a
+    /// no-op — the row is real money the ledger will never see.
     Unmapped,
     /// Fetched but could not be turned into a draft (parse failure, missing
     /// field, arithmetic that didn't balance).
@@ -96,7 +96,7 @@ pub struct DroppedRow {
 /// row that is never classified fails loudly instead of disappearing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ImportSummary {
-    /// Rows the upstream actually handed us this tick. Recorded **independently**
+    /// Rows the upstream actually handed us this tick. Recorded independently
     /// of the classification loop (from the raw response length), which is what
     /// makes the identity a real check rather than a tautology — deriving it as
     /// the sum of the parts would make an unclassified row invisible again.
@@ -228,11 +228,11 @@ impl ImportTally {
     ///
     /// Two distinct failures, both of which used to be silent successes:
     ///
-    /// - **`Unaccounted`** — the classifications don't sum to `fetched`. This is
+    /// - `Unaccounted` — the classifications don't sum to `fetched`. This is
     ///   an engine bug (a code path that discards a row without saying so), and
     ///   it is worth failing the tick over: the alternative is shipping a count
     ///   the user is being asked to trust.
-    /// - **`NothingMapped`** — rows were fetched and *every one* of them lacked
+    /// - `NothingMapped` — rows were fetched and *every one* of them lacked
     ///   an account mapping. Always a misconfiguration, never a legitimate
     ///   quiet tick, so it must not be reported as success. Previously this
     ///   guard existed in one source's helper binary only; hoisting it here
@@ -373,7 +373,7 @@ pub enum CursorResetOutcome {
     /// It was already at the start, so the next pull re-reads everything either
     /// way. Not an error — rewinding twice is rewinding once.
     ///
-    /// ⚠️ Also the answer for a source that had never polled. That one was not at
+    /// Also the answer for a source that had never polled. That one was not at
     /// the start in the same sense — an absent cursor anchors to the newest
     /// message — but the rewind has put it at the start now regardless.
     AlreadyAtStart,
@@ -432,7 +432,7 @@ pub trait AutoImportSource: Send + Sync {
     /// `NotSupported`: most sources are handed their material and keep no place
     /// in a stream.
     ///
-    /// ⚠️ This is not the inverse of a wipe. What returns is re-fetched, not
+    /// This is not the inverse of a wipe. What returns is re-fetched, not
     /// restored, so whatever the source archives on the way past it archives a
     /// second time. `docs/src/features.md` § Three things this does not cover.
     async fn reset_cursor(
@@ -775,7 +775,7 @@ impl SourceRegistry {
         true
     }
 
-    /// Pause a source live: abort its scheduler task but **keep** its registry
+    /// Pause a source live: abort its scheduler task but keep its registry
     /// entry (and thus its config). Returns whether a source by that name was
     /// registered. This is the runtime off-switch (#367) — for a compiled
     /// overlay bank source it's the only way to stop it from the app, and for a
@@ -851,7 +851,7 @@ impl SourceRegistry {
     /// Rewind `name`'s read position so its next tick re-fetches from the
     /// beginning. Clones the source under the read lock, like `trigger_manual`.
     ///
-    /// ⛔ Does not tick. Rewinding and re-fetching are separate so the position
+    /// Does not tick. Rewinding and re-fetching are separate so the position
     /// can be cleared while the source is paused — a reset that immediately
     /// re-pulled would give no chance to stop between them.
     pub async fn reset_cursor(
@@ -1061,7 +1061,7 @@ pub enum SourceHealth {
 /// Policy: the UI uses this to render the dot/badge next to each source
 /// (green/yellow/red/grey). The classification deliberately ignores
 /// `appended` — zero events is a legitimate Healthy outcome (no new data
-/// upstream) — but it does **not** ignore `lost()`. A tick that succeeded
+/// upstream) — but it does not ignore `lost()`. A tick that succeeded
 /// while discarding rows for want of a mapping is precisely the state that
 /// previously rendered green for months, so it gets its own badge.
 ///

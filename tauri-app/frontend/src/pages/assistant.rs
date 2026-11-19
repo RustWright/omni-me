@@ -1,6 +1,6 @@
 //! Asking omni-me a question and reading the answer.
 //!
-//! **Nothing here waits on a model.** Asking appends an event and returns; the
+//! Nothing here waits on a model. Asking appends an event and returns; the
 //! answer arrives later, through sync, from the agent that holds the database.
 //! So the screen has exactly two states — a question with an answer behind it,
 //! and one without — and "without" is not an error until the user decides it is.
@@ -24,7 +24,7 @@ use crate::types::{
 
 /// How often to nudge sync while a question is outstanding.
 ///
-/// ⚠️ **Only while outstanding.** The agent polls every 3s because it is on
+/// Only while outstanding. The agent polls every 3s because it is on
 /// mains power beside the server; a phone doing that continuously would be
 /// spending radio for nothing. Between questions this screen is silent and the
 /// ordinary background pull carries answers in.
@@ -107,7 +107,7 @@ fn ThreadList(
     let mut refresh = use_signal(|| 0u32);
     let mut show_archived = use_signal(|| false);
 
-    // ⚠️ Refetched on entry and on every inbound sync, never fetched once at
+    // Refetched on entry and on every inbound sync, never fetched once at
     // boot. A thread answered on another device — or a whole backfill — arrives
     // in a later pull, and a fetch-once provider would never show it. The same
     // goes doubly for proposals: they are authored by the agent, on another
@@ -285,7 +285,7 @@ fn NoticeRow(
     }
 }
 
-/// Queues waiting on the user **somewhere other than this screen**, with a tap
+/// Queues waiting on the user somewhere other than this screen, with a tap
 /// that goes there.
 ///
 /// This is the half of "notify and route" the nav badges cannot do. A badge is
@@ -293,17 +293,17 @@ fn NoticeRow(
 /// asks the assistant something and closes it again never looks at the nav, and
 /// for them an approval queue on another tab is invisible indefinitely.
 ///
-/// ⛔ **Excludes the assistant's own inbox**, which the suggestions banner above
+/// Excludes the assistant's own inbox, which the suggestions banner above
 /// already shows. Two rows for one queue, each with its own count, is a
 /// disagreement waiting to happen — and the banner is the one that can open the
 /// inbox without leaving the screen.
 ///
-/// ⚠️ Renders nothing when there is nothing waiting, rather than an
+/// Renders nothing when there is nothing waiting, rather than an
 /// all-clear line: a permanent row on the assistant's landing screen costs
 /// attention every visit and pays it back only occasionally.
 /// Where a "N items waiting" row should land inside the tab it names.
 ///
-/// ⛔ `None` is a landing at the tab root, which for a queue row is the bug this
+/// `None` is a landing at the tab root, which for a queue row is the bug this
 /// exists to fix — so a tab that grows a review queue must be added here. There
 /// is no warning if it is not: the row still navigates, it just arrives nowhere
 /// useful.
@@ -481,7 +481,7 @@ fn ProposalInbox(on_back: EventHandler<()>) -> Element {
 
 /// What the assistant believes about the user, and what it drew each from.
 ///
-/// ⚠️ Retired beliefs are one toggle away rather than gone. The published
+/// Retired beliefs are one toggle away rather than gone. The published
 /// contract's mitigation for a system that accumulates opinions is that the whole
 /// set is *auditable*, and a view that hides what was retired supports
 /// inspection, not audit — you could never ask "what did it used to think?".
@@ -582,7 +582,7 @@ fn BeliefCard(belief: Belief) -> Element {
                 }
             }
 
-            // ⚠️ Said out loud when absent. A conclusion with nothing behind it
+            // Said out loud when absent. A conclusion with nothing behind it
             // is the one most worth noticing, and a card that simply omits the
             // evidence row reads identically to one that has evidence off-screen.
             if belief.evidence.is_empty() {
@@ -611,7 +611,7 @@ fn BeliefCard(belief: Belief) -> Element {
 
 /// What the assistant may do without asking, and the record behind each choice.
 ///
-/// ⚠️ The evidence is shown **beside** the toggle, not on a separate screen. The
+/// The evidence is shown beside the toggle, not on a separate screen. The
 /// whole argument for granting anything is the approval record, and a permission
 /// switch with no record next to it is a guess wearing a control.
 #[component]
@@ -717,7 +717,7 @@ fn PermissionRow(record: ActionRecord, on_changed: EventHandler<()>) -> Element 
             div { class: "text-obsidian-text-muted text-xs", "{record.evidence_label()}" }
 
             if !grantable {
-                // ⛔ The rule, stated where the control would otherwise be. An
+                // The rule, stated where the control would otherwise be. An
                 // absent toggle with no explanation reads as an oversight.
                 div { class: "text-obsidian-text-muted text-xs italic",
                     "This one cannot be undone, so it will always ask."
@@ -981,7 +981,7 @@ fn MessageBubble(message: AssistantMessage) -> Element {
 
     rsx! {
         div { class: "flex flex-col gap-1",
-            // ⚠️ Said before the text, not after. The reader needs to know this
+            // Said before the text, not after. The reader needs to know this
             // was not their question *while* reading it — an answer to something
             // you never asked, rendered like one you did, reads as the assistant
             // volunteering opinions.
@@ -1124,12 +1124,12 @@ mod tests {
     }
     use crate::NavIntent;
 
-    /// ⛔ Every tab that can appear in a reminder row needs a destination inside
+    /// Every tab that can appear in a reminder row needs a destination inside
     /// it. Without one the row switches tabs and stops, which is what it did
     /// before: "12 items waiting in Archive" landed on an unfiltered list of the
     /// newest hundred documents, with no way to tell which twelve it meant.
     ///
-    /// ⚠️ Not asserted over `ALL_TABS` — Journal and Notes have no review queue
+    /// Not asserted over `ALL_TABS` — Journal and Notes have no review queue
     /// and correctly map to `None`. The list below is the set `core::approvals::
     /// summary` can actually produce a count for.
     #[test]

@@ -171,8 +171,8 @@ fn collect_expense_parsed(
 /// progress. The Tauri layer just supplies raw inputs — keeps the
 /// `ledger-utils` dep contained to core.
 ///
-/// **Prefer [`budget_progress_summary_from`] when a `Prices` table is already
-/// to hand.** The entire parse here exists to build one — nothing else touches
+/// Prefer [`budget_progress_summary_from`] when a `Prices` table is already
+/// to hand. The entire parse here exists to build one — nothing else touches
 /// `parsed` — so a caller holding a cached `Prices` (as the Tauri layer's
 /// `journal_artifacts()` does) is paying a full nom parse of the whole journal
 /// to rebuild a table it is already holding. This entry stays for callers that

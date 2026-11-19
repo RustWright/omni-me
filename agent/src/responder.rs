@@ -38,7 +38,7 @@ use tokio::sync::broadcast::error::RecvError;
 
 /// The floor under the pull-driven trigger.
 ///
-/// ⚠️ Not redundant with subscribing to [`PullEvent`]. A broadcast receiver that
+/// Not redundant with subscribing to [`PullEvent`]. A broadcast receiver that
 /// lags drops messages, a pull that fails emits nothing to act on, and a question
 /// that landed during a restart was never announced at all. The pusher's missing
 /// interval fallback is this codebase's own precedent for what a single edge
@@ -154,7 +154,7 @@ impl Responder<'_> {
 
     /// Raise the scheduled check-in, if one is due.
     ///
-    /// ⚠️ This authors an **ordinary question** and stops. The answering sweep
+    /// This authors an ordinary question and stops. The answering sweep
     /// picks it up like any other, so a check-in inherits the whole path: the
     /// same verbs, the same journal refusal, the same proposal gate, the same
     /// inbox, the same sync. Nothing here decides what the assistant may do — it
@@ -169,7 +169,7 @@ impl Responder<'_> {
         let last = match check_in::last_check_in(self.db).await {
             Ok(last) => last,
             Err(e) => {
-                // Not fatal, but **not** treated as "never ran" either. Falling
+                // Not fatal, but not treated as "never ran" either. Falling
                 // back to `None` on a read error would raise a check-in on every
                 // tick for as long as the error lasted.
                 tracing::warn!(error = %e, "could not read the last check-in; skipping this tick");
@@ -262,7 +262,7 @@ impl Responder<'_> {
 
     /// Answer everything waiting, oldest first.
     ///
-    /// ⚠️ **Strictly one at a time.** One question is several model calls, and on
+    /// Strictly one at a time. One question is several model calls, and on
     /// a rate-capped endpoint concurrency turns a backlog into a wall of 429s
     /// that the scorecard would read as the model failing. `LLM_MIN_INTERVAL_MS`
     /// exists for the same reason and does not cover this one: it spaces requests
@@ -308,7 +308,7 @@ impl Responder<'_> {
         } = pending;
         let message_id = ulid::Ulid::new().to_string();
 
-        // ⚠️ The horizon is a spend control, not tidiness. An agent that was down
+        // The horizon is a spend control, not tidiness. An agent that was down
         // for a day comes back to every question asked in the meantime — most of
         // which the user has since re-asked, given up on, or answered themselves.
         // Paying for all of them is the default behaviour, and it is the wrong one.
@@ -387,7 +387,7 @@ impl Responder<'_> {
             &outcome,
         );
 
-        // ⚠️ The answer and the proposals it made go out in **one batch**. Split
+        // The answer and the proposals it made go out in one batch. Split
         // apart, an answer that lands while its proposals do not reads as "I have
         // suggested creating that note" over an empty inbox — the user is told
         // about a decision they cannot find. Derived from the trace rather than
@@ -444,7 +444,7 @@ impl Responder<'_> {
         }
         self.append_batch(&payload.thread_id, events).await;
 
-        // ⚠️ Autonomy is applied **after** the batch has landed, never folded into
+        // Autonomy is applied after the batch has landed, never folded into
         // it. A granted action still produces a real proposal first, so the log
         // reads identically whether a person approved it or a standing grant did
         // — same proposal, same decision event, same audit trail. Collapsing the

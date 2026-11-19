@@ -94,7 +94,7 @@ pub fn tag_query_matches(tag_query: &TagQuery, tags: &[Tag]) -> bool {
 }
 
 fn tag_matches(tag_query: &TagQuery, txn: &QueryTxn) -> bool {
-    // ⚠️ Only the bare form reaches `top_tags`, so a transaction-level
+    // Only the bare form reaches `top_tags`, so a transaction-level
     // `key:value` tag is matched through the postings alone. Preserved exactly:
     // widening it here would quietly change the result of every saved query.
     let top = match tag_query {

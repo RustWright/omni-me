@@ -1,8 +1,8 @@
 //! Replay a statement against what the books actually recorded.
 //!
 //! This is the acceptance criterion for any bulk import, stated as code:
-//! for one account over one period, the **transaction count** and the
-//! **closing balance** must both match the statement.
+//! for one account over one period, the transaction count and the
+//! closing balance must both match the statement.
 //!
 //! ## Why both, and why per-statement
 //!
@@ -79,7 +79,7 @@ pub struct StatementVerdict {
     /// Lines the statement parser could not read. Non-empty means the oracle
     /// itself is incomplete and the verdict cannot be trusted either way.
     pub parse_skips: usize,
-    /// Ways the statement disagrees with **itself** — rows that break its own
+    /// Ways the statement disagrees with itself — rows that break its own
     /// running balance, plus any figure it declares that the parse does not
     /// reproduce (see [`StatementParse::declared_check_failures`]).
     ///
@@ -90,14 +90,14 @@ pub struct StatementVerdict {
     pub statement_self_check_failures: usize,
     /// Zero-amount statement rows, excluded from reconciliation.
     ///
-    /// Brokerage statements interleave **informational** events with cash ones:
+    /// Brokerage statements interleave informational events with cash ones:
     /// securities-lending notices ("7.0000 Shares on loan", "Loan terminated")
     /// and sub-cent staking accruals all arrive as rows with an amount of
     /// exactly `0`. They cannot move a balance and have no cash-account
     /// counterpart, so counting them as reconcilable rows reports a loss for
     /// every one of them — which is what the first real run of this did.
     ///
-    /// They are **counted and reported**, never quietly discarded: "excluded on
+    /// They are counted and reported, never quietly discarded: "excluded on
     /// a stated rule" and "vanished" have to stay distinguishable, which is the
     /// whole premise of this module.
     pub informational_rows: usize,
@@ -240,7 +240,7 @@ pub fn replay_statement(
 
 /// Greedy multiset pairing on (amount, date-within-tolerance).
 ///
-/// Amount is matched exactly and is the primary key; description is **not**
+/// Amount is matched exactly and is the primary key; description is not
 /// used at all. Descriptions in this ledger were normalised by hand over years,
 /// so they do not survive a round trip, and matching on them would pair rows
 /// that merely read alike. Amounts repeat heavily (hundreds of identical small
@@ -329,7 +329,7 @@ mod tests {
     }
 
     /// The failure this whole module exists to catch: a dropped row. It must
-    /// fail on **both** halves, and it must name the row.
+    /// fail on both halves, and it must name the row.
     #[test]
     fn a_dropped_row_fails_count_and_balance_and_is_named() {
         let s = parse_brokerage_statement(STATEMENT).unwrap();

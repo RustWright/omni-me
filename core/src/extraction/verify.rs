@@ -6,9 +6,9 @@
 //! this carefully" lane rather than auto-committing.
 //!
 //! Checks:
-//! - **Receipt / Paystub / BankStatement**: when `total` is present, verify
+//! - Receipt / Paystub / BankStatement: when `total` is present, verify
 //!   `sum(posting amounts).abs() ≈ total` within a small tolerance.
-//! - **Confidence gate**: any extraction below `DEFAULT_CONFIDENCE_THRESHOLD`
+//! - Confidence gate: any extraction below `DEFAULT_CONFIDENCE_THRESHOLD`
 //!   (after any verification-driven adjustment) is flagged for manual review.
 //!
 //! The report also records whether the total cross-check was an independent
@@ -481,7 +481,7 @@ mod tests {
 
     #[test]
     fn an_iso_printed_date_is_not_ambiguous() {
-        // ⚠️ Without the four-digit-year guard this reads as first=2026, second=9.
+        // Without the four-digit-year guard this reads as first=2026, second=9.
         let r = dated("2026-09-03", NaiveDate::from_ymd_opt(2026, 9, 3));
         let report = verify(&r, ExtractionHint::Receipt, DEFAULT_CONFIDENCE_THRESHOLD);
         assert!(!report.warnings.iter().any(|w| w.contains("ambiguous")));

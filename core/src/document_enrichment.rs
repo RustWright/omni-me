@@ -44,7 +44,7 @@ pub enum SkipReason {
 
 /// How many models may try to read one document before it is left alone.
 ///
-/// ⚠️ An empty transcription is a real outcome — a blank page reads as nothing —
+/// An empty transcription is a real outcome — a blank page reads as nothing —
 /// but it is also what a silently failed read looks like, and the two are
 /// indistinguishable from here. Two attempts buys a second opinion from a
 /// different model without letting the archive re-read every blank page forever;
@@ -306,7 +306,7 @@ const TRANSCRIBABLE_MIMES: [&str; 4] = ["image/jpeg", "image/png", "image/webp",
 
 /// Transcribe up to `max` documents nothing could read text off at ingest.
 ///
-/// ⚠️ An empty transcription IS appended, and that is deliberate. It records
+/// An empty transcription IS appended, and that is deliberate. It records
 /// that a named model looked on a given date and found no text, which is a real
 /// answer for a photograph of a blank page. It also lifts `text_source` off
 /// `none`, so the document stops being a candidate — without that, every blank
@@ -1190,7 +1190,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_same_model_never_re_reads_a_document_it_found_blank() {
-        // ⛔ The starvation case, and the shape of its fix. An empty transcription
+        // The starvation case, and the shape of its fix. An empty transcription
         // is a real answer and is still appended; what stops the re-read is the
         // attempt history in the event log, not the document going invisible.
         // Before, lifting text_source off `none` retired it on one blank answer.

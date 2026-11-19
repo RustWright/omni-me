@@ -30,9 +30,9 @@ pub enum EventError {
 /// A persisted event with a generated ID.
 ///
 /// Two clocks live on this struct and they are not interchangeable.
-/// `timestamp` is when the **authoring device** wrote the event — it is the
+/// `timestamp` is when the authoring device wrote the event — it is the
 /// display and ordering value, and it travels unchanged between nodes.
-/// `received_at` is when **this node** stored it, stamped locally at insert and
+/// `received_at` is when this node stored it, stamped locally at insert and
 /// never accepted from the wire.
 ///
 /// Sync cursors must key on `received_at`. Filtering a cursor issued by one node
@@ -84,7 +84,7 @@ impl From<&Event> for NewEvent {
 }
 
 /// Canonical envelope factories. These are the single place the grammar-bearing
-/// *create* events are shaped: the `aggregate_id` is **derived** from the
+/// *create* events are shaped: the `aggregate_id` is derived from the
 /// payload's own identity field (never hand-typed alongside it), the `event_type`
 /// is fixed, and the timestamp is stamped now — so a call site can't diverge the
 /// record key from the payload id (the journal-blank/date-key bug) or forget a
@@ -227,7 +227,7 @@ impl NewEvent {
 
     /// Envelope for an `AssistantQuestionAsked` event.
     ///
-    /// ⚠️ `aggregate_id == payload.thread_id`, **not** the message id — the
+    /// `aggregate_id == payload.thread_id`, not the message id — the
     /// aggregate is the conversation. Both assistant factories derive it the same
     /// way, which is what keeps a question and its answer on one aggregate and
     /// lets `get_by_aggregate` read a thread in order.
@@ -263,7 +263,7 @@ impl NewEvent {
 
     /// Envelope for an `AssistantProposalMade` event.
     ///
-    /// ⚠️ `aggregate_id == payload.proposal_id`, and this deliberately breaks the
+    /// `aggregate_id == payload.proposal_id`, and this deliberately breaks the
     /// two factories above. A message belongs to its conversation; a proposal is
     /// its own aggregate, so the approval inbox can fetch one by identity without
     /// reading the thread it came out of — an inbox on the phone must not depend
@@ -301,7 +301,7 @@ impl NewEvent {
 
     /// Envelope for a `DocumentArchived` event.
     ///
-    /// ⚠️ `aggregate_id == payload.document_id`, **not the blob hash**. The
+    /// `aggregate_id == payload.document_id`, not the blob hash. The
     /// document is the aggregate, so its archive event and every later extraction
     /// over it read back together — and identical bytes filed twice from two
     /// sources are two aggregates, which keying on the hash would silently merge.
@@ -358,7 +358,7 @@ impl NewEvent {
     /// Envelope for a `DocumentPurged` event. Same aggregate again, so the
     /// tombstone folds onto the row it retires no matter which device wrote it.
     ///
-    /// ⚠️ It can legitimately fold **before** the archive event it purges — the
+    /// It can legitimately fold before the archive event it purges — the
     /// pull filter runs on the authoring device's clock — which is why the
     /// projection materializes a purged stub rather than updating in place.
     pub fn document_purged(
@@ -375,7 +375,7 @@ impl NewEvent {
         })
     }
 
-    /// Envelope for a `DocumentRetentionSet` event. The **tag** is the aggregate,
+    /// Envelope for a `DocumentRetentionSet` event. The tag is the aggregate,
     /// not a document, so one tag's rule history reads back on its own.
     pub fn document_retention_set(
         device_id: impl Into<String>,
@@ -486,7 +486,7 @@ pub trait EventStore: Send + Sync {
 
     /// Delete only the events the given features own, and report how many went.
     ///
-    /// ⚠️ **The count is the point.** A wipe that reports success without saying
+    /// The count is the point. A wipe that reports success without saying
     /// what it removed cannot be checked against what was there, which is the same
     /// reason the server backup is verified by size rather than by exit code.
     ///
@@ -833,7 +833,7 @@ impl EventStore for SurrealEventStore {
         features: &[Feature],
         before: Option<DateTime<Utc>>,
     ) -> Result<usize, EventError> {
-        // ⛔ Refused rather than documented-as-unwise. A document event names a blob
+        // Refused rather than documented-as-unwise. A document event names a blob
         // by hash, and the only thing that knows whether other events still point at
         // that hash is the purge path's refcount. Deleting the events here would
         // leave the files on disk with nothing referring to them — invisible, and
@@ -1075,7 +1075,7 @@ mod tests {
         assert_eq!(drain_pages(&store, 1000).await, expected, "one big page");
     }
 
-    /// ⚠️ The case a timestamp-only cursor loses, written against rows forced to
+    /// The case a timestamp-only cursor loses, written against rows forced to
     /// share a `received_at` rather than against whatever the clock happens to
     /// produce. `append_batch` currently spreads its stamps by a few
     /// milliseconds, so a test that trusted the clock would pass either way and
@@ -1357,7 +1357,7 @@ mod tests {
     }
 
     /// The separation itself, which is what the user asked to see before a real
-    /// ledger wipe: finance events go, everything else stays. ⛔ Not a summary
+    /// ledger wipe: finance events go, everything else stays. Not a summary
     /// claim — each survivor is named, because "it should only affect finances" is
     /// a belief until something counts the rest.
     #[tokio::test]
@@ -1414,7 +1414,7 @@ mod tests {
             "note_created",
             "routine_group_created",
             "document_archived",
-            // ⛔ The two that must never be reachable by a feature wipe: the config
+            // The two that must never be reachable by a feature wipe: the config
             // says which features are on, and the audit trail records the wipe.
             "config_set",
             "feedback_captured",
@@ -1423,7 +1423,7 @@ mod tests {
         }
     }
 
-    /// ⛔ The generality has one hole, and it is closed here rather than in a
+    /// The generality has one hole, and it is closed here rather than in a
     /// comment: a document event names a blob, and only the purge path's refcount
     /// knows whether anything else still points at it.
     #[tokio::test]
@@ -1482,7 +1482,7 @@ mod tests {
         assert_eq!(store.purge_features(&[]).await.unwrap(), 0);
     }
 
-    /// ⚠️ The boundary the ledger wipe actually has to reckon with. A committed
+    /// The boundary the ledger wipe actually has to reckon with. A committed
     /// auto-import batch is the *second author* of a transaction, so a finances
     /// wipe claims the transaction and leaves the batch — and the batch is what
     /// carries the dedup key that would suppress re-importing the same statement.

@@ -1,6 +1,6 @@
 //! Asking the assistant a question, and reading what it said back.
 //!
-//! **The client never calls a model.** It appends an `AssistantQuestionAsked`
+//! The client never calls a model. It appends an `AssistantQuestionAsked`
 //! event and stops; the resident agent picks the question up through sync,
 //! answers it, and appends the answer, which arrives here the same way. That is
 //! why there is no timeout, no retry and no API key on this path — the question
@@ -105,7 +105,7 @@ pub async fn ask_assistant(
 
 /// Every conversation, most recently active first.
 ///
-/// ⚠️ The caller must refetch this **on tab entry**, not once at boot: a thread
+/// The caller must refetch this on tab entry, not once at boot: a thread
 /// answered on another device arrives through a later sync, and a fetch-once
 /// provider would never show it.
 #[tauri::command(rename_all = "snake_case")]
@@ -130,7 +130,7 @@ pub async fn read_assistant_thread(
 
 /// Everything the assistant has offered to do and the user has not decided.
 ///
-/// ⚠️ Refetch on tab entry, same as [`list_assistant_threads`]: a proposal is
+/// Refetch on tab entry, same as [`list_assistant_threads`]: a proposal is
 /// made by the agent on another machine and arrives through sync.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn list_assistant_proposals(state: State<'_, AppState>) -> Result<Vec<Proposal>, String> {
@@ -154,7 +154,7 @@ pub async fn read_thread_proposals(
 /// The proposals the finances screen reviews, which the assistant inbox does not
 /// show.
 ///
-/// ⛔ **Gated on `Finances`, not on `Llm`.** The guard belongs to the screen doing
+/// Gated on `Finances`, not on `Llm`. The guard belongs to the screen doing
 /// the reviewing: turning the assistant off must not strand a ledger proposal the
 /// user has already been offered — the same reasoning as
 /// [`decide_assistant_proposal`] — while turning *finances* off should take the
@@ -169,7 +169,7 @@ pub async fn list_finance_proposals(state: State<'_, AppState>) -> Result<Vec<Pr
 
 /// Accept or decline one proposal.
 ///
-/// ⚠️ **Deliberately not behind `require_feature(Llm)`.** Switching the assistant
+/// Deliberately not behind `require_feature(Llm)`. Switching the assistant
 /// off must not strand a proposal the user has already been shown — see
 /// `EventType::authoring_features`, where `AssistantProposalDecided` is ungated
 /// for this reason. Approving still authors the action's own events, and those
@@ -272,7 +272,7 @@ async fn append_thread_event(
 
 /// What the assistant currently believes about the user.
 ///
-/// ⚠️ `include_retired` exists because a memory you can only see the *current*
+/// `include_retired` exists because a memory you can only see the *current*
 /// state of can be inspected but not audited, and auditability is the entire
 /// mitigation for a system that accumulates opinions about a person. The default
 /// is the live set; the full history is one flag away, never unavailable.
@@ -335,7 +335,7 @@ pub async fn list_action_records(state: State<'_, AppState>) -> Result<Vec<Actio
 
 /// Allow or stop allowing one action to be carried out without asking.
 ///
-/// ⚠️ **There is no assistant-facing route to this.** Granting is the user's act
+/// There is no assistant-facing route to this. Granting is the user's act
 /// alone; an assistant able to propose its own promotion would invert the whole
 /// permission model. Granting an irreversible action is refused in `core`.
 #[tauri::command(rename_all = "snake_case")]
@@ -366,7 +366,7 @@ pub async fn set_action_autonomy(
 
 /// A thread's display name, taken from the question that started it.
 ///
-/// Truncation happens on a **character** boundary, not a byte one: the questions
+/// Truncation happens on a character boundary, not a byte one: the questions
 /// this app takes are prose, and slicing a multi-byte character in half would
 /// panic on the very input the feature exists to accept.
 fn title_from(question: &str) -> String {

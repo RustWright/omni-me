@@ -1,6 +1,6 @@
 //! What the open screen is showing — read only when a problem report is filed.
 //!
-//! **Why this is not the continuity store.** `continuity.rs` persists what would
+//! Why this is not the continuity store. `continuity.rs` persists what would
 //! be *lost* on an unmount or an Android app-kill, so it holds unsaved input and
 //! writes to disk on a debounce. A report wants what was *shown*, which is a
 //! different set: it includes loaded and derived state that was never at risk
@@ -12,7 +12,7 @@
 //! So pages publish into a memory-only signal instead, and only the capture
 //! modal reads it.
 //!
-//! **The rule for a describer: summarise, never quote.** A report may be read by
+//! The rule for a describer: summarise, never quote. A report may be read by
 //! someone other than the person who filed it, and Settings holds the server
 //! token field and the LLM key state — so it reports which section was open and
 //! nothing else. The editor buffer is the one deliberate exception, because

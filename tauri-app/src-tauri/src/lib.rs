@@ -45,7 +45,7 @@ const DEFAULT_SERVER_URL: &str = match option_env!("OMNI_DEFAULT_SERVER_URL") {
 /// hangs off this one directory, so overriding it is the single interception
 /// point that redirects a build onto throwaway data.
 ///
-/// Setting it also puts the app in a **non-production posture**: the sync server
+/// Setting it also puts the app in a non-production posture: the sync server
 /// is forced to `NON_PRODUCTION_SERVER_URL` unless `OMNI_SERVER_URL` says
 /// otherwise, and the UI shows a permanent banner. Without that coupling a dev
 /// build would happily backfill and then push to the live box.
@@ -70,7 +70,7 @@ const ROSTER_FILE: &str = "roster";
 /// This device's config overrides — a JSON object of key → value that outranks
 /// the shared, event-sourced layer.
 ///
-/// ⚠️ **This file must never be synced or pushed.** A device override exists
+/// This file must never be synced or pushed. A device override exists
 /// precisely to say "not here", and replicating it would make it the opposite of
 /// what it is. It is also why the overrides live in a file rather than in an
 /// event: there is no way to append one to the log and have it stay local.
@@ -168,7 +168,7 @@ pub struct AppState {
     pub roster: tokio::sync::RwLock<Vec<String>>,
     /// Both config layers plus the rule between them, resolved at startup.
     ///
-    /// The **shared** half is a snapshot of what the config projection had
+    /// The shared half is a snapshot of what the config projection had
     /// materialized *before* this launch registered its projections — that read
     /// has to happen before the projection list is built, so a value set on
     /// another device lands one launch later. Writes here keep the in-memory copy
@@ -180,7 +180,7 @@ pub struct AppState {
     /// welded into one type in `core` so every binary inherits all four.
     ///
     /// It also owns the feature snapshot the command guards read, which is
-    /// deliberately a **boot snapshot** rather than a live read of `config`: a
+    /// deliberately a boot snapshot rather than a live read of `config`: a
     /// feature is inert or it isn't. Its projections, schedulers and tabs were
     /// all decided at startup, so a command guard reading the live value would
     /// produce a half-off feature between the toggle and the relaunch — commands
@@ -245,7 +245,7 @@ impl AppState {
     /// Build a request to the box with the base URL resolved and the bearer
     /// token attached.
     ///
-    /// **This is the only sanctioned way for a command to talk to the box**, and
+    /// This is the only sanctioned way for a command to talk to the box, and
     /// `no_command_builds_a_box_request_by_hand` fails the build if anything
     /// reaches for `state.http` directly. The reason is not tidiness: before
     /// this existed, fourteen call sites each re-derived the URL and none of
@@ -294,7 +294,7 @@ impl AppState {
     /// cached `Arc` with no parse; on a miss it reads, parses once via
     /// [`ledger::parse_artifacts`], and repopulates the cache.
     ///
-    /// **Why a file stamp, not a bumped `journal_version` counter:** the journal
+    /// Why a file stamp, not a bumped `journal_version` counter: the journal
     /// is rewritten by the `JournalFile` projection inside *every*
     /// `apply_events` path — single-event commands, batch import, journal
     /// import, sync-pull, auto-import, and full rebuild. A hand-bumped counter
@@ -392,7 +392,7 @@ fn probe_target_from_url(url: &str) -> String {
 /// shutdown (SIGKILL, crash, etc.), which blocks subsequent opens.
 /// Remove a SurrealKV `LOCK` left behind by a process that is gone.
 ///
-/// The subtlety is the **self-restart** case, and it is why a single liveness
+/// The subtlety is the self-restart case, and it is why a single liveness
 /// probe is not enough. `app.restart()` (see `commands::update`) spawns the
 /// replacement process *before* the outgoing one has finished exiting, so at
 /// this point `/proc/<old pid>` normally still exists. The old code concluded
@@ -616,7 +616,7 @@ pub fn run() {
                 // authored under a non-bound id with no successful pull, i.e. data
                 // that can never be pushed (the stranding bug). Read-only, non-fatal.
                 //
-                // **Spawned, not awaited.** This is a `GROUP BY device_id` aggregate
+                // Spawned, not awaited. This is a `GROUP BY device_id` aggregate
                 // over the whole events table plus a `sync_state` lookup, and this
                 // whole block sits inside a `block_on` that gates the window
                 // appearing. Awaited, it was the largest unconditional scan on the

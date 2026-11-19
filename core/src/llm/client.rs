@@ -44,7 +44,7 @@ pub trait LlmClient: Send + Sync {
     /// hand tool *results* back and let the model continue, which a single prompt
     /// string cannot express.
     ///
-    /// **No default implementation, deliberately.** A default that returned
+    /// No default implementation, deliberately. A default that returned
     /// "unsupported" would let a new provider compile while silently being unable
     /// to run the assistant; requiring the method makes that a decision someone
     /// has to make on purpose.

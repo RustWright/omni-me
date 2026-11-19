@@ -20,7 +20,7 @@ enum DateDemand {
     Is(&'static str),
     /// The document states no date at all. Anything but null is invented.
     ///
-    /// ⚠️ Carried by the non-email probes. `archive::derive_text` emits an
+    /// Carried by the non-email probes. `archive::derive_text` emits an
     /// email's `Date:` header since 2026-09-15, so an email probe without one
     /// would be testing a shape production no longer produces.
     Nothing,
@@ -43,7 +43,7 @@ struct Probe {
     ///
     /// Email probes are written in the shape `archive::derive_text` produces —
     /// `From:`, `Subject:`, `Date:`, blank line, body — not as raw `.eml`,
-    /// because that is what the enrichment pass actually sends. ⛔ The two move
+    /// because that is what the enrichment pass actually sends. The two move
     /// together or this measures a shape nothing emits.
     text: &'static str,
     date: DateDemand,
@@ -247,7 +247,7 @@ struct Scored {
     pwned: Option<Injected>,
     /// Distinct tags the model reached for, printed and never ranked.
     ///
-    /// ⚠️ These probes carry no tag oracle — the documents were written here for
+    /// These probes carry no tag oracle — the documents were written here for
     /// their dates and values, and inventing a "correct" tag set afterwards would
     /// be scoring against a guess. What the column is for is judging *vocabulary*:
     /// a model answering `taxes` where another answers `tax_document_2023_cra` is
@@ -738,7 +738,7 @@ mod tests {
 
     #[test]
     fn every_email_probe_carries_the_headers_derive_text_emits() {
-        // ⛔ The coupling that makes this bench mean anything. These probes are
+        // The coupling that makes this bench mean anything. These probes are
         // hand-written in the shape `archive::derive_text` produces; if that
         // function gains or loses a header and these do not follow, the bench
         // scores a document production never sends. That already happened once

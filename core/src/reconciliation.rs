@@ -198,7 +198,7 @@ pub enum MergeRefusal {
 ///
 /// Merging drops both `Unmatched` legs and concatenates what is left. Since
 /// each side balances on its own, the leftovers sum to
-/// `-(a.unmatched + b.unmatched)` — so the merged transaction balances **iff**
+/// `-(a.unmatched + b.unmatched)` — so the merged transaction balances iff
 /// the two Unmatched legs cancel in a single commodity. These are the same two
 /// rules `find_match_candidates` filters on; keeping them in one function is
 /// what stops the generator and the consumer from drifting apart.
@@ -230,7 +230,7 @@ pub fn check_mergeable(a: &UnmatchedTxn, b: &UnmatchedTxn) -> Result<(), MergeRe
 
 /// Does merging these two clear a statement?
 ///
-/// Only when **exactly one** side traces back to a statement. Both-sourced is
+/// Only when exactly one side traces back to a statement. Both-sourced is
 /// deliberately false: two statement lines that cancel are the two halves of a
 /// transfer already reflected on both statements, so there is no third-party
 /// record left to reconcile against and nothing to mark cleared.

@@ -13,7 +13,7 @@
 //! event-declared action naming an event type this binary cannot build would be
 //! genericity in name only, so the declaration lives where the constructor does.
 //!
-//! ## ⛔ The journal is never proposable
+//! ## The journal is never proposable
 //!
 //! The user is its sole author. That is a product invariant, not a phase
 //! boundary: it does not lapse when autonomy is granted per action type, and it
@@ -72,26 +72,26 @@ pub enum ActionKind {
 pub enum ParamSource {
     /// The model supplies it in the `propose` call.
     Model,
-    /// **The system fills it from the run's trace** — the records the assistant
+    /// The system fills it from the run's trace — the records the assistant
     /// actually opened while reaching this conclusion.
     ///
-    /// ⚠️ Deliberately not something the model can author. Letting it list its
+    /// Deliberately not something the model can author. Letting it list its
     /// own evidence reopens exactly the hallucination surface `records_read`
     /// closes: a citation is only worth anything if it names a record that was
     /// demonstrably in hand.
     ///
-    /// ⚠️ **The guarantee is an overwrite, not a refusal — do not mistake one for
-    /// the other.** `describe_type` renders this parameter like any other (its
+    /// The guarantee is an overwrite, not a refusal — do not mistake one for
+    /// the other. `describe_type` renders this parameter like any other (its
     /// description is what tells the model it cannot set it), and
     /// [`validate_args`] *accepts* a well-shaped value, because it cannot tell a
     /// model's fresh call from a stored proposal being re-checked at approval,
     /// where the evidence is legitimately present. What makes model-authored
     /// evidence impossible is `answer::proposals`, which inserts the
-    /// trace-derived list over whatever is there. ⛔ Removing that insert on the
+    /// trace-derived list over whatever is there. Removing that insert on the
     /// belief that validation already guards this would silently hand the model
     /// its own citations.
     EvidenceFromTrace,
-    /// **The system fills it at approval, from the record being changed.**
+    /// The system fills it at approval, from the record being changed.
     ///
     /// The one argument that exists because of *when* it can be known rather than
     /// who knows it: `note.revise` sends an anchor and a replacement, and the
@@ -100,13 +100,13 @@ pub enum ParamSource {
     /// proposal was made would bake in a body that may be stale by the time
     /// anyone reads the card.
     ///
-    /// ⚠️ Same guarantee and same non-guarantee as
+    /// Same guarantee and same non-guarantee as
     /// [`ParamSource::EvidenceFromTrace`]: `validate_args` *accepts* a
     /// well-shaped value, because a stored proposal being re-checked at approval
     /// legitimately carries one. What makes a model-authored value impossible to
     /// apply is `inbox::resolve_args` writing over it.
     ///
-    /// ⛔ Never `required`. It is absent on the model's call and present on the
+    /// Never `required`. It is absent on the model's call and present on the
     /// re-check, and a declaration that demanded it would refuse every proposal
     /// at the moment it was made.
     ResolvedAtApproval,
@@ -124,7 +124,7 @@ pub enum ParamShape {
     /// A list of strings, each held to the same `max_chars` and the same
     /// validator a single [`ParamShape::Text`] argument would be.
     ///
-    /// ⚠️ **The count bound is part of the shape, not decoration.** One approval
+    /// The count bound is part of the shape, not decoration. One approval
     /// authors one event per element, and a card the user cannot check against
     /// reality is not an approval — it is a rubber stamp with a number on it.
     TextList { max_items: usize },
@@ -136,8 +136,8 @@ pub enum ParamShape {
 /// A domain parser an argument must satisfy, returning its own error text.
 ///
 /// Named because it appears on the field, on the builder and in every entry that
-/// uses one — and because the signature is the contract: **take the raw string,
-/// return the domain's message**, never a rewritten one.
+/// uses one — and because the signature is the contract: take the raw string,
+/// return the domain's message, never a rewritten one.
 pub type ParamValidator = fn(&str) -> Result<(), String>;
 
 /// One argument an action takes.
@@ -164,7 +164,7 @@ pub struct ActionParam {
     pub allowed: Option<&'static [&'static str]>,
     /// A domain parser the value must satisfy, returning its own error message.
     ///
-    /// ⚠️ Reached for **instead of** [`ActionParam::allowed`] wherever the domain
+    /// Reached for instead of [`ActionParam::allowed`] wherever the domain
     /// already owns a parser. A routine's frequency is the case that forced it:
     /// `daily`/`weekly`/`biweekly`/`monthly` would fit a list, but `custom:N`
     /// carries an integer with bounds, and re-listing what is legal here would
@@ -174,7 +174,7 @@ pub struct ActionParam {
     pub validator: Option<ParamValidator>,
     /// Keep the value's leading and trailing whitespace instead of trimming it.
     ///
-    /// ⚠️ **Trimming is right for a name and wrong for an anchor.** Every
+    /// Trimming is right for a name and wrong for an anchor. Every
     /// argument here was a title, an id or a whole added block until
     /// `note.revise`, and for those a stray newline is noise. For an anchored
     /// splice the whitespace *is* the edit: markdown indentation nests a list
@@ -183,7 +183,7 @@ pub struct ActionParam {
     /// That is the exact failure this feature was required not to have.
     pub verbatim: bool,
     pub source: ParamSource,
-    /// What the value looks like. ⚠️ Rendered to the model by `describe_type`,
+    /// What the value looks like. Rendered to the model by `describe_type`,
     /// which is the only way it can learn that an argument takes a list —
     /// nothing else in the registry is typed, so leaving this out of the
     /// rendering costs a turn per wrong guess.
@@ -209,11 +209,11 @@ impl ActionParam {
     /// A list of plain text arguments, each checked exactly as a
     /// [`ActionParam::text`] of the same `max_chars` would be.
     ///
-    /// ⚠️ **A batch is one decision, so it has to stay one claim.** What varies
+    /// A batch is one decision, so it has to stay one claim. What varies
     /// across the list is the identity; everything else about the proposal — the
     /// day, the routine, the evidence — is shared, and that is what lets the card
     /// state the batch in a sentence a person can accept or refuse as a whole.
-    /// ⛔ Do not reach for this to let one proposal span two days or two
+    /// Do not reach for this to let one proposal span two days or two
     /// routines: there is no partial approval, so a card the user half-agrees
     /// with has no outcome they can choose.
     pub const fn list(
@@ -245,7 +245,7 @@ impl ActionParam {
     /// (an argument is stored in an event, and every event syncs to the phone)
     /// applies here too.
     ///
-    /// ⚠️ `verbatim` is set but inert today: [`validate_args`] gives this source
+    /// `verbatim` is set but inert today: [`validate_args`] gives this source
     /// its own branch and never reaches `checked_text`. It is declared anyway so
     /// that removing that branch degrades to trimming-off rather than to silently
     /// trimming a note's trailing newline off every body it writes.
@@ -322,7 +322,7 @@ pub struct ActionType {
     pub params: &'static [ActionParam],
     /// The event types approving this action authors.
     ///
-    /// Declared as well as built so the ⛔ journal guard can be checked against a
+    /// Declared as well as built so the journal guard can be checked against a
     /// list rather than by running every action, and
     /// [`declared_events_match_what_is_built`] then holds the declaration to what
     /// [`build_events`] actually does. Either check alone is weak: the first
@@ -344,7 +344,7 @@ pub struct ActionType {
 
 /// What makes an action eligible to be proposed.
 ///
-/// ⚠️ **[`Trigger::OnRequest`] is prompt-enforced, not code-enforced**, and saying
+/// [`Trigger::OnRequest`] is prompt-enforced, not code-enforced, and saying
 /// so matters: there is no reliable way to classify "the user asked for a
 /// conclusion", and pretending otherwise would put a guarantee behind a
 /// heuristic. What is structural is the approval gate — an over-eager proposal
@@ -354,7 +354,7 @@ pub struct ActionType {
 /// One variant today by the user's decision (2026-09-10): beliefs are proposed
 /// only when asked for. The two wider policies considered — propose whenever a
 /// durable pattern is noticed, and propose only on repeated independent evidence
-/// — are **deferred to during or after Phase F, not dropped**, which is why this
+/// — are deferred to during or after Phase F, not dropped, which is why this
 /// is an enum rather than a comment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Trigger {
@@ -364,7 +364,7 @@ pub enum Trigger {
 
 /// Event types no action may author, whatever else changes.
 ///
-/// See this module's ⛔ note. The four journal events are listed individually
+/// See this module's note. The four journal events are listed individually
 /// rather than matched by prefix so that a fifth one added later fails
 /// [`no_action_touches_the_journal`] instead of being caught by a pattern nobody
 /// re-reads.
@@ -406,16 +406,16 @@ const NOTE_CREATE: ActionType = ActionType {
 
 /// Adding to the end of a note the user already has.
 ///
-/// ⚠️ **Appending rather than rewriting is the whole point of the action.** The
+/// Appending rather than rewriting is the whole point of the action. The
 /// alternative considered and rejected was a `note.update` carrying the finished
 /// body: it costs tokens in proportion to the note's length, and — the real
 /// objection — the model has to reproduce the parts it was not asked to change,
 /// so a quietly reworded paragraph is indistinguishable from the edit that was
 /// asked for. This action cannot drop what it did not send.
 ///
-/// ⛔ **The journal is not reachable from here**, and not because notes and
+/// The journal is not reachable from here, and not because notes and
 /// journals happen to use different events. The user is the journal's sole
-/// author; see this module's ⛔ note and [`NEVER_PROPOSABLE`].
+/// author; see this module's note and [`NEVER_PROPOSABLE`].
 const NOTE_APPEND: ActionType = ActionType {
     name: "note.append",
     kind: ActionKind::NoteAppend,
@@ -453,20 +453,20 @@ const NOTE_APPEND: ActionType = ActionType {
 /// [`NOTE_APPEND`]'s note records the objection: a model handed the finished body
 /// has to reproduce the parts it was not asked to change, so a quietly reworded
 /// paragraph is indistinguishable from the edit that was asked for. That
-/// objection is about **the model authoring the body**, not about the event that
+/// objection is about the model authoring the body, not about the event that
 /// overwrites one — `GenericNoteUpdated` is what every autosave from the notes
 /// editor already writes. So the model sends only the region it touched, and the
-/// **system** splices it into the live body at approval. Nothing that can reword a
+/// system splices it into the live body at approval. Nothing that can reword a
 /// paragraph ever sees the paragraphs it was not asked about.
 ///
-/// ## ⛔ Why the anchor is text and the splice happens at approval
+/// ## Why the anchor is text and the splice happens at approval
 ///
 /// A byte offset into a body another device has already rewritten points at the
 /// wrong place; `GenericNoteAppendedPayload` refuses to carry one for that reason.
 /// Text carries its own identity instead.
 ///
-/// The anchor is resolved **once, on the approving device**, and the event that
-/// reaches the log is the finished body. ⛔ Do not move the resolution into the
+/// The anchor is resolved once, on the approving device, and the event that
+/// reaches the log is the finished body. Do not move the resolution into the
 /// projection, however naturally an anchored `GenericNoteRevised` event seems to
 /// fit there: projections consume events in `received_at` order, which is local
 /// arrival time, so two devices legitimately fold the same events in different
@@ -475,7 +475,7 @@ const NOTE_APPEND: ActionType = ActionType {
 /// the phone and the desktop, permanently. Logging the outcome instead of the
 /// intent is what makes every device agree.
 ///
-/// ⚠️ What this does *not* fix is last-write-wins itself (`architecture.md`): a
+/// What this does *not* fix is last-write-wins itself (`architecture.md`): a
 /// device holding an older copy of the note writes an overwrite computed from it,
 /// exactly as that device's own editor would. This action adds no new exposure to
 /// that; it inherits the note editor's.
@@ -492,7 +492,7 @@ const NOTE_REVISE: ActionType = ActionType {
             "Identity of the note to change, from having read it.",
             64,
         ),
-        // ⚠️ The description carries the whole accuracy burden of this action.
+        // The description carries the whole accuracy burden of this action.
         // The match is exact and unique or it is refused, so a paraphrase of what
         // the model *remembers* reading is the failure mode to expect, and the
         // only place to head it off is here.
@@ -563,7 +563,7 @@ const NOTE_RENAME: ActionType = ActionType {
 
 /// The three confidence levels, as the model must spell them.
 ///
-/// ⚠️ Three words rather than a number, and that is the decision. A model asked
+/// Three words rather than a number, and that is the decision. A model asked
 /// for a numeric confidence returns something like `0.87` with no calibration
 /// behind it — precision the value does not have, which then reads as rigour to
 /// whoever sees it. Three levels are what a model can actually distinguish and
@@ -649,7 +649,7 @@ const BELIEF_SUPERSEDE: ActionType = ActionType {
 
 /// Where a new group or item is placed in its list.
 ///
-/// ⚠️ **The model is not asked for a position, and that is deliberate.** `order`
+/// The model is not asked for a position, and that is deliberate. `order`
 /// is meaningful only relative to a list the model cannot see, and a number
 /// guessed against an unknown list is worse than a predictable one. This sorts
 /// last; the user reorders on a screen built for it.
@@ -812,7 +812,7 @@ const ROUTINE_MODIFY_ITEM: ActionType = ActionType {
 
 /// A day in exactly the app's spelling, or the reason it is not one.
 ///
-/// ⚠️ **The round-trip check is the point, not pedantry.** `chrono` accepts
+/// The round-trip check is the point, not pedantry. `chrono` accepts
 /// `2026-8-14` for `%Y-%m-%d`, and a routine completion's row id is
 /// `{item_id}-{date}-done` built by concatenation — so an unpadded day keys a
 /// *different* row than the same tick made in the app, and the app's undo would
@@ -830,7 +830,7 @@ fn canonical_date(value: &str) -> Result<chrono::NaiveDate, String> {
 /// A day something is claimed to have happened on: canonical, and not ahead of
 /// today.
 ///
-/// ⚠️ Time-dependent, which a validator otherwise is not, and the direction is
+/// Time-dependent, which a validator otherwise is not, and the direction is
 /// what makes it safe. A stored proposal is re-validated at approval, so a
 /// clock-sensitive rule risks refusing something the user was already shown.
 /// Here the clock can only move a date the permissive way — future becomes past
@@ -850,7 +850,7 @@ fn valid_future_date(value: &str) -> Result<(), String> {
 
 /// One hledger transaction, checked by the parser that will build it.
 ///
-/// ⛔ Validation and construction must call the same function. A cheaper check
+/// Validation and construction must call the same function. A cheaper check
 /// here — "does it start with a date" — would accept entries `build_events` then
 /// refuses at approval, which is the worst moment to discover it: the user has
 /// already agreed to something the app cannot carry out.
@@ -865,7 +865,7 @@ fn valid_tag(value: &str) -> Result<(), String> {
 
 /// How many routine items one proposal may name.
 ///
-/// ⚠️ **Sized by what a person can check, not by what a routine can hold.** The
+/// Sized by what a person can check, not by what a routine can hold. The
 /// card states the batch as a count and the rationale names the items; past a
 /// dozen or so the user is agreeing to a number rather than to a claim, and the
 /// approval stops being one. A longer routine is not refused — it is two
@@ -874,14 +874,14 @@ const BATCH_LIMIT: usize = 12;
 
 /// Marking routine items done on a given day.
 ///
-/// ⚠️ **This is the one action whose argument is a claim about the world**, and
+/// This is the one action whose argument is a claim about the world, and
 /// it is why `date` and `evidence` are both required in spirit. Everything else
 /// here proposes a change the user can evaluate on its face — a note's wording
 /// is right there. A completion asserts that something happened, and the user
 /// reads their own history back as fact. So the proposal has to carry what it
 /// read: the card says *you wrote about it on the 14th*, not *done*.
 ///
-/// It is nonetheless **grantable like any other reversible action**, and that is
+/// It is nonetheless grantable like any other reversible action, and that is
 /// deliberate rather than an oversight of the three rules. Undo is derivable,
 /// nothing leaves the log, and nothing outside observed it. The user's stated
 /// reason for making the journal readable was precisely this — they write about
@@ -889,13 +889,13 @@ const BATCH_LIMIT: usize = 12;
 /// routines unused. Making completion permanently un-grantable would foreclose
 /// the behaviour the readability was for.
 ///
-/// ⚠️ **One proposal, many items — and no partial approval.** A morning written
+/// One proposal, many items — and no partial approval. A morning written
 /// up in one journal entry is one reading and one decision, so it is one card
 /// rather than five stacked ones the user clears by reflex. The cost is real and
 /// chosen: there is no way to accept four of five, and a user who disagrees with
 /// one item must refuse the batch and let the assistant re-propose. That is the
 /// right way round — refusing is the cheap outcome, and an inbox that trains
-/// reflex approval is the expensive one. ⛔ Do not "fix" this by splitting a
+/// reflex approval is the expensive one. Do not "fix" this by splitting a
 /// batch at approval; the proposal the user read is the thing being approved.
 const ROUTINE_COMPLETE: ActionType = ActionType {
     name: "routine.complete",
@@ -988,15 +988,15 @@ const ROUTINE_SKIP: ActionType = ActionType {
 
 /// One ledger entry, written as the user's own journal would hold it.
 ///
-/// ⚠️ **hledger text rather than structured arguments, and the reason is the
-/// balancing leg.** A bank import knows one side of a payment; what it was *for*
+/// hledger text rather than structured arguments, and the reason is the
+/// balancing leg. A bank import knows one side of a payment; what it was *for*
 /// comes off a receipt that has no schema — a photo, an email body — which is
 /// why this action exists at all. Two-account arguments would cover the common
 /// case and silently refuse a split receipt (groceries and household in one
 /// purchase), so the entry is expressed in the syntax that can hold it.
 ///
-/// ⛔ **`journal_import::parse_one_entry` is the parser, and there must not be a
-/// second one.** Elided amounts, `@@` total-cost prices, virtual-posting refusal
+/// `journal_import::parse_one_entry` is the parser, and there must not be a
+/// second one. Elided amounts, `@@` total-cost prices, virtual-posting refusal
 /// and inline tags are each subtle and each already solved there — see
 /// `unsupported_syntax`'s comment, which is a list of those mistakes made once.
 /// Validating here and rebuilding differently in `build_events` would be the same
@@ -1039,7 +1039,7 @@ const TRANSACTION_RECORD: ActionType = ActionType {
     trigger: Trigger::OnRequest,
 };
 
-/// ⚠️ The batch that earns its keep. Categorising is the ledger's drudge work and
+/// The batch that earns its keep. Categorising is the ledger's drudge work and
 /// is nearly always "these twelve are all Groceries" — one claim over many rows,
 /// which is exactly the shape [`ActionParam::list`] documents.
 const TRANSACTION_CATEGORIZE: ActionType = ActionType {
@@ -1080,7 +1080,7 @@ const TRANSACTION_CATEGORIZE: ActionType = ActionType {
     trigger: Trigger::OnRequest,
 };
 
-/// ⛔ **One transaction, unlike its neighbour, because tagging *replaces*.**
+/// One transaction, unlike its neighbour, because tagging *replaces*.
 /// `TransactionTaggedPayload` overwrites the whole set, so a batch would apply one
 /// list of tags to rows whose existing tags differ — approving a single card would
 /// silently erase distinctions the user made by hand. The batch shape is right for
@@ -1118,14 +1118,14 @@ const TRANSACTION_TAG: ActionType = ActionType {
     trigger: Trigger::OnRequest,
 };
 
-/// ⛔ **Description and date only — deliberately not the postings.**
+/// Description and date only — deliberately not the postings.
 ///
 /// `TransactionUpdatedPayload.changes` is a free-form object and the projection
 /// will happily apply a `postings` rewrite; that path exists for the
 /// reconciliation review, which converts an `Unmatched` leg into a real one
 /// against a statement it has in hand. Reaching it from here would let a model
 /// restate what an amount was, and "the amount is what the bank said" stops being
-/// true — with the change presented as a wording fix. ⚠️ If a proposed amount is
+/// true — with the change presented as a wording fix. If a proposed amount is
 /// ever wanted, it belongs in its own action whose card shows both numbers, not
 /// as another key accepted quietly by this one.
 const TRANSACTION_UPDATE: ActionType = ActionType {
@@ -1159,16 +1159,16 @@ const TRANSACTION_UPDATE: ActionType = ActionType {
 
 /// Marking a transaction reconciled against a named statement.
 ///
-/// 🔴 **This one asserts that something was checked, which no other action does.**
+/// 🔴 This one asserts that something was checked, which no other action does.
 /// `cleared` means an authority — a bank statement — agreed the payment happened,
 /// and that is the same kind of claim `verified` exists to keep a model from
 /// making about extracted fields. It is proposable anyway, on the user's decision
 /// (2026-09-13), and what makes that safe is the shape of the argument list rather
-/// than a promise: ⛔ `statement_source` is **required**, so the proposal cannot be
+/// than a promise: `statement_source` is required, so the proposal cannot be
 /// "I believe this cleared" — it must name the statement, and the card shows which
 /// one. The user is then confirming a citation, not a feeling.
 ///
-/// ⚠️ **The only irreversible action here.** There is no un-clear event, so
+/// The only irreversible action here. There is no un-clear event, so
 /// `reversible: false` is the honest answer and the card says so.
 const TRANSACTION_CLEAR: ActionType = ActionType {
     name: "transaction.clear",
@@ -1271,7 +1271,7 @@ pub type ArgError = String;
 /// Check a proposal's arguments against its declaration, returning the normalized
 /// object to store.
 ///
-/// ⚠️ **Unknown keys are rejected, not dropped.** Arguments are model output and
+/// Unknown keys are rejected, not dropped. Arguments are model output and
 /// may carry text lifted out of a record, so the object has to be closed: a key
 /// that means nothing today is a key that means something after the next action
 /// is added, and a silently-dropped one leaves a proposal whose stored form does
@@ -1323,8 +1323,8 @@ pub fn validate_args(action: &ActionType, args: &Value) -> Result<Value, ArgErro
             continue;
         }
 
-        // ⚠️ Its own branch rather than the optional-text path below, for one
-        // reason that path cannot give it: **an empty value has to survive.**
+        // Its own branch rather than the optional-text path below, for one
+        // reason that path cannot give it: an empty value has to survive.
         // Blank-and-optional is dropped down there, which is right for an
         // argument the model declined to fill and wrong here — a splice that
         // deletes a note's last line resolves to an empty body, and dropping it
@@ -1444,7 +1444,7 @@ fn checked_text(
     let Some(text) = value.as_str() else {
         return Err(format!("{}'s `{label}` must be text", action.name));
     };
-    // ⚠️ Trimmed unless the parameter asked not to be. See
+    // Trimmed unless the parameter asked not to be. See
     // [`ActionParam::verbatim`] for why an anchored splice is the exception: a
     // trimmed replacement can come back byte-identical to what it replaces.
     // Blankness is still judged on the trimmed form either way, so a verbatim
@@ -1494,7 +1494,7 @@ pub fn evidence_key(action: &ActionType) -> Option<&'static str> {
 
 /// Turn approved arguments into the events that carry them out.
 ///
-/// ⚠️ **The only place per-kind branching lives.** Adding an action means one arm
+/// The only place per-kind branching lives. Adding an action means one arm
 /// here and one entry above; anything else that grows a match on [`ActionKind`]
 /// has put a second copy of this decision somewhere it will drift.
 ///
@@ -1520,7 +1520,7 @@ pub fn build_events(
                 device_id, &note_id, title, body, None,
             )])
         }
-        // ⚠️ Both key on the note they change, not on a fresh identity — the
+        // Both key on the note they change, not on a fresh identity — the
         // aggregate is the note, and `NotesProjection` addresses the row by
         // `aggregate_id`. A minted id here would write to a note nobody has.
         ActionKind::NoteAppend => {
@@ -1535,7 +1535,7 @@ pub fn build_events(
                 }),
             )])
         }
-        // ⛔ Reads the body it writes, never builds one. The splice lives in
+        // Reads the body it writes, never builds one. The splice lives in
         // `revise::splice` and runs in `inbox::resolve_args`, which is the only
         // place that can see the note as it stands at approval. An absent
         // `raw_text` means that step did not run, and the only safe answer is to
@@ -1647,7 +1647,7 @@ pub fn build_events(
             )])
         }
         ActionKind::RoutineModifyItem => {
-            // ⚠️ The `changes` object is built here, key by key, rather than
+            // The `changes` object is built here, key by key, rather than
             // taken from the model. `RoutineItemModifiedPayload.changes` is
             // free-form JSON, so passing a model-authored blob through would
             // hand it a write surface wider than the action declares — the one
@@ -1674,14 +1674,14 @@ pub fn build_events(
                 json!({ "item_id": item_id, "changes": Value::Object(changes) }),
             )])
         }
-        // ⚠️ The batch stops here. One proposal fans out into one event per item,
+        // The batch stops here. One proposal fans out into one event per item,
         // each carrying the singular `item_id` the app's own tick writes — so the
         // projection, the sync payload and the undo path never learn that
-        // batching exists. ⛔ Do not add a plural payload key to "match" the
+        // batching exists. Do not add a plural payload key to "match" the
         // argument: a second event shape for the same fact is a second thing the
         // projection has to fold, and the app would still only write the first.
         ActionKind::RoutineComplete => {
-            // ⚠️ Recorded once, outside the loop, so every tick in one approval
+            // Recorded once, outside the loop, so every tick in one approval
             // shares a timestamp. Per-item clock reads would order the batch by
             // nothing more than iteration, and this column is a tiebreak
             // (`db::queries`) — a false ordering is worse than none.
@@ -1697,7 +1697,7 @@ pub fn build_events(
                             "item_id": item_id,
                             "group_id": args["group_id"].as_str().unwrap_or_default(),
                             "date": args["date"].as_str().unwrap_or_default(),
-                            // ⚠️ When it was *recorded*, not when the activity
+                            // When it was *recorded*, not when the activity
                             // happened — `date` carries that, and a retroactive
                             // tick must not invent a clock time it never read.
                             // Safe because the column is only ever an ordering
@@ -1730,7 +1730,7 @@ pub fn build_events(
                 )
             })
             .collect()),
-        // ⛔ Parsed again rather than carried over from `validate_args`. The
+        // Parsed again rather than carried over from `validate_args`. The
         // validator answers "could this be built"; this builds it, and the entry's
         // note explains why both go through the same function. A parse cached at
         // validation time would also be a parse from *whenever the proposal was
@@ -1787,7 +1787,7 @@ pub fn build_events(
                 json!({ "txn_id": txn_id, "tags": tags }),
             )])
         }
-        // ⛔ `changes` is assembled key by key from the declared arguments, never
+        // `changes` is assembled key by key from the declared arguments, never
         // passed through from the model. The projection applies whatever keys it
         // recognises, `postings` among them, so forwarding an object wholesale
         // would make the entry's "description and date only" a comment rather than
@@ -1869,7 +1869,7 @@ fn routine_event(
 
 /// Envelope for a ledger or budget event.
 ///
-/// ⚠️ **The aggregate differs by action and is not always a transaction id** — a
+/// The aggregate differs by action and is not always a transaction id — a
 /// budget's aggregate is its category, because `on_budget_set` UPSERTs the row
 /// keyed by that. Passing it in rather than deriving it here is what lets the two
 /// coexist without a branch that would have to be kept in step with the
@@ -1892,7 +1892,7 @@ fn finance_event(
 
 /// The identities a batched action names, in the order proposed.
 ///
-/// ⚠️ **Refuses an empty list rather than yielding one**, even though
+/// Refuses an empty list rather than yielding one, even though
 /// [`validate_args`] has already run and cannot let one through. An action that
 /// quietly builds no events would mark its proposal approved, write nothing, and
 /// leave the user believing the tick landed — the one failure this path must not
@@ -1948,7 +1948,7 @@ mod tests {
         ResolvedConfig::new(global, Default::default())
     }
 
-    /// ⛔ The journal invariant. See this module's header — the user is the sole
+    /// The journal invariant. See this module's header — the user is the sole
     /// author of the journal, permanently.
     #[test]
     fn no_action_touches_the_journal() {
@@ -2038,7 +2038,7 @@ mod tests {
             .expect("200 characters is 200 characters");
     }
 
-    /// ⛔ The journal's empty list is the assertion that matters here, and it is a
+    /// The journal's empty list is the assertion that matters here, and it is a
     /// product invariant rather than a gap: the user is its sole author. Notes
     /// are checked by name rather than by count so that adding a fourth note
     /// action does not silently pass a test about which ones exist.
@@ -2060,7 +2060,7 @@ mod tests {
                 "note_id": "01NOTE000000000000000001",
                 "added_text": "Booked the appointment for the 3rd.",
             }),
-            // ⚠️ Carries `raw_text`, because this is the shape at *approval* —
+            // Carries `raw_text`, because this is the shape at *approval* —
             // which is the only point `build_events` is reached from. A sample
             // without it would make `declared_events_match_what_is_built` assert
             // over an input the builder is designed to refuse.
@@ -2114,7 +2114,7 @@ mod tests {
                 "date": "2026-08-14",
                 "reason": "Travelling.",
             }),
-            // ⚠️ Two postings that balance to zero, with real account names. A
+            // Two postings that balance to zero, with real account names. A
             // fixture that did not balance would be refused by the parser, and the
             // well-formedness tests would then be asserting over an error rather
             // than over an event.
@@ -2161,7 +2161,7 @@ mod tests {
         );
     }
 
-    /// ⛔ The guard that stops an unresolved proposal from authoring an event. The
+    /// The guard that stops an unresolved proposal from authoring an event. The
     /// two things it prevents are writing an empty body over the note and writing
     /// the anchor as if it were the body.
     #[test]
@@ -2175,7 +2175,7 @@ mod tests {
         assert!(err.contains("resolved"), "{err}");
     }
 
-    /// ⚠️ An emptied body is a legal outcome — deleting a note's last line — and
+    /// An emptied body is a legal outcome — deleting a note's last line — and
     /// must not read as a resolution that never ran. Blank-and-optional is dropped
     /// for every model-supplied argument, which is exactly why the resolved source
     /// has its own branch in `validate_args`.
@@ -2195,7 +2195,7 @@ mod tests {
         assert_eq!(events[0].payload["raw_text"], json!(""));
     }
 
-    /// ⚠️ The trap [`ActionParam::verbatim`] exists for. A trimmed `replace` can
+    /// The trap [`ActionParam::verbatim`] exists for. A trimmed `replace` can
     /// come back byte-identical to the `find` it replaces — the splice applies,
     /// the note does not change, and the card says it worked.
     #[test]
@@ -2232,7 +2232,7 @@ mod tests {
         assert_eq!(args["raw_text"].as_str().map(str::len), Some(150_000));
     }
 
-    /// ⛔ The whole feature refuses rather than guesses, so an anchor the model
+    /// The whole feature refuses rather than guesses, so an anchor the model
     /// left blank cannot be accepted: it would match everywhere.
     #[test]
     fn a_blank_anchor_is_refused() {
@@ -2247,7 +2247,7 @@ mod tests {
 
     // Routines
 
-    /// ⚠️ Validated by the domain's own parser, not a list re-stated here. The
+    /// Validated by the domain's own parser, not a list re-stated here. The
     /// custom form carries bounds a list cannot express, and a second copy of
     /// those bounds would drift silently.
     #[test]
@@ -2303,7 +2303,7 @@ mod tests {
         }
     }
 
-    /// ⚠️ `changes` is free-form JSON on the payload, so it is assembled key by
+    /// `changes` is free-form JSON on the payload, so it is assembled key by
     /// key here. A model-authored blob would be a write surface wider than the
     /// action declares.
     #[test]
@@ -2335,7 +2335,7 @@ mod tests {
         assert!(err.contains("name"), "{err}");
     }
 
-    /// ⚠️ The model is never asked where a new thing goes: `order` is relative to
+    /// The model is never asked where a new thing goes: `order` is relative to
     /// a list it cannot see, and a guess against an unknown list is worse than a
     /// predictable position the user can correct.
     #[test]
@@ -2389,7 +2389,7 @@ mod tests {
         );
     }
 
-    /// ⚠️ A completion asserts something happened. The user reads their own
+    /// A completion asserts something happened. The user reads their own
     /// history back as fact, so the proposal has to be able to show what it read
     /// — the same reason `belief.record` carries evidence, applied to a claim
     /// about the world rather than about the user.
@@ -2414,7 +2414,7 @@ mod tests {
         }
     }
 
-    /// ⚠️ The day comes from what was read, so a model reaching for "today" by
+    /// The day comes from what was read, so a model reaching for "today" by
     /// default is the error worth catching — but the hard refusal is the future,
     /// which no record can evidence.
     #[test]
@@ -2446,7 +2446,7 @@ mod tests {
         }
     }
 
-    /// ⚠️ `chrono` accepts `2026-8-14` for `%Y-%m-%d`, and a completion's row id
+    /// `chrono` accepts `2026-8-14` for `%Y-%m-%d`, and a completion's row id
     /// is `{item_id}-{date}-done` built by concatenation — so an unpadded day
     /// keys a different row than the same tick made in the app, and the app's
     /// undo would leave this one behind. Every date field is checked the same
@@ -2495,7 +2495,7 @@ mod tests {
         );
     }
 
-    /// ⚠️ The batch is a proposal-layer idea and must not survive into the log:
+    /// The batch is a proposal-layer idea and must not survive into the log:
     /// each event has to be shaped exactly like the one the app writes when the
     /// user ticks that item by hand, or the projection folds two spellings of
     /// the same fact and the app's undo only knows one of them.
@@ -2558,7 +2558,7 @@ mod tests {
             validate_args(&ROUTINE_COMPLETE, &args(json!([]))).expect_err("nothing to approve");
         assert!(empty.contains("empty"), "{empty}");
 
-        // ⚠️ Deduplicating would hide the confusion entirely: the completion
+        // Deduplicating would hide the confusion entirely: the completion
         // UPSERT makes the second write a no-op, so a model ticking one item
         // twice looks identical to one ticking it once.
         let repeat = validate_args(&ROUTINE_COMPLETE, &args(json!(["i1", "i2", "i1"])))
@@ -2642,7 +2642,7 @@ mod tests {
         assert_eq!(out["confidence"], json!("high"));
     }
 
-    /// ⚠️ Evidence is system-filled. The model must not be able to name its own
+    /// Evidence is system-filled. The model must not be able to name its own
     /// sources — that is the whole reason the parameter has a separate source.
     #[test]
     fn the_model_is_not_offered_evidence_as_an_argument() {

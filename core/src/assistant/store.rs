@@ -23,7 +23,7 @@ const SNIPPET_CHARS: usize = 240;
 
 /// How much of one text column `read` may return.
 ///
-/// ⛔ **A bare cap would be a different bug, not a fix.** `read` is the verb that
+/// A bare cap would be a different bug, not a fix. `read` is the verb that
 /// means "you now have this record", so a body cut in silence leaves the model
 /// answering about a document it believes it saw whole — and a confident wrong
 /// answer drawn from two thirds of a tax notice is worse than no answer. Every
@@ -39,7 +39,7 @@ const READ_BODY_CHARS: usize = 12_000;
 
 /// Markers `search::highlight` wraps around matched terms.
 ///
-/// ⚠️ **Internal only — they never reach the model.** `search::highlight` marks up
+/// Internal only — they never reach the model. `search::highlight` marks up
 /// the *whole field* rather than returning a window, so the markers are used to
 /// locate the match and are stripped by [`keyword_in_context`] before the snippet
 /// is returned. A marked snippet handed over as-is gets quoted back verbatim: the
@@ -60,7 +60,7 @@ pub struct SearchHit {
     pub id: String,
     /// What a person would call it: a date, a title, a routine's name.
     pub handle: String,
-    /// BM25 relevance **within this type only**. See [`search`].
+    /// BM25 relevance within this type only. See [`search`].
     pub score: f64,
     /// Matched text with the match marked, when the type has a body distinct
     /// from its handle. `None` for a type whose only text *is* its handle.
@@ -75,7 +75,7 @@ pub struct TypeResults {
     /// How many matched before the limit was applied, so the model can tell
     /// "that is all of them" from "there are more".
     ///
-    /// ⚠️ Matching is **any** content word, not all of them, so this counts
+    /// Matching is any content word, not all of them, so this counts
     /// records touching the question rather than records answering it. It is a
     /// completeness signal and was never a relevance one.
     pub total_matches: usize,
@@ -126,18 +126,18 @@ struct RawHit {
 
 /// Full-text search one catalogued type.
 ///
-/// ⚠️ **Scores are comparable within a type and not across types.** BM25 is
+/// Scores are comparable within a type and not across types. BM25 is
 /// relative to its own corpus — its document count and average length — so a note
 /// scoring 1.7 and a journal entry scoring 1.7 have not been measured against
 /// each other. This function therefore returns one type's results, ranked among
 /// themselves, and sorts nothing across types.
 ///
 /// Merging across types happens in [`super::retrieval::merge`], which fuses by
-/// **rank** rather than score for exactly this reason — positions are comparable
+/// rank rather than score for exactly this reason — positions are comparable
 /// where these numbers are not. Do not "simplify" that by summing or normalising
 /// the scores; the arithmetic would look reasonable and mean nothing.
 ///
-/// ⚠️ **Never filter on `score > 0`.** Classic BM25's IDF term is
+/// Never filter on `score > 0`. Classic BM25's IDF term is
 /// `log((N - n + 0.5)/(n + 0.5))`, which is *exactly zero* when a term appears in
 /// one of two documents. On a fresh install with a handful of records a perfectly
 /// good match scores 0.0, and a threshold would silently drop it. Matching on any
@@ -149,11 +149,11 @@ struct RawHit {
 /// The [`CatalogEntry::hidden_when`] exclusion as SQL, or `None` when the entry
 /// hides nothing.
 ///
-/// ⚠️ Written as `!= true` rather than `= false` on purpose. The column is
+/// Written as `!= true` rather than `= false` on purpose. The column is
 /// `TYPE bool` on a SCHEMAFULL table today, so the two agree — but if a row ever
 /// reaches the table without it, `= false` hides it and `!= true` shows it, and
 /// of the two failures a row that should have been hidden appearing is the one a
-/// person notices. ⛔ The opposite failure is a transaction vanishing from the
+/// person notices. The opposite failure is a transaction vanishing from the
 /// assistant's view with nothing to indicate it was ever there.
 fn hidden_clause(entry: &CatalogEntry) -> Option<String> {
     entry.visible_condition()
@@ -169,7 +169,7 @@ pub async fn search(
     // them; the numbering is local to this statement. Each text field needs its
     // own FULLTEXT index, which is why they are separate clauses rather than one.
     //
-    // ⚠️ `,OR@` is not decoration. A bare `@n@` defaults to requiring **every**
+    // `,OR@` is not decoration. A bare `@n@` defaults to requiring every
     // word of the query, so a question never matched anything a person phrased as
     // a question. Do not simplify it back.
     let text_match = entry
@@ -179,7 +179,7 @@ pub async fn search(
         .map(|(i, f)| format!("{f} @{i},OR@ $q"))
         .collect::<Vec<_>>()
         .join(" OR ");
-    // ⛔ The OR chain must be parenthesised before anything is AND-ed to it.
+    // The OR chain must be parenthesised before anything is AND-ed to it.
     // Without the brackets `a OR b AND removed != true` binds as
     // `a OR (b AND removed != true)`, so a deleted row still comes back through
     // the first text field — which is the exact failure `hidden_when` exists to
@@ -463,7 +463,7 @@ pub async fn list(
             NarrowOp::Gte => format!("{} >= ${param}", n.column),
             NarrowOp::Lte => format!("{} <= ${param}", n.column),
             NarrowOp::Eq => format!("{} = ${param}", n.column),
-            // ✅ Needs no coalesce, checked against a real database rather than
+            // Needs no coalesce, checked against a real database rather than
             // assumed: `NONE CONTAINS 'x'` is `false`, not an error. That matters
             // because `documents.tags` is the first `option<array>` to reach here —
             // every earlier `FilterKind::Tag` column is `TYPE array` and so never
@@ -492,7 +492,7 @@ pub async fn list(
     let order = entry.list_order;
     let direction = if order.descending { "DESC" } else { "ASC" };
     let body_field = entry.text_fields[entry.text_fields.len() - 1];
-    // ⚠️ The ordering column is selected as `order_key` and ordered by that alias.
+    // The ordering column is selected as `order_key` and ordered by that alias.
     // SurrealDB requires an `ORDER BY` idiom to appear in the statement's
     // selection — "Missing order idiom `order_num` in statement selection" — which
     // is not how ordinary SQL behaves. Ordering by the bare column name only works
@@ -563,10 +563,10 @@ pub async fn read(
     entry: &CatalogEntry,
     id: &str,
 ) -> Result<Option<FullRecord>, DbError> {
-    // ⚠️ A hidden row reads as **absent**, not as an error. The model reached this
+    // A hidden row reads as absent, not as an error. The model reached this
     // id from somewhere — a stale search result, its own earlier turn — and "no
     // such record" is both true from its point of view and the answer that stops
-    // it reasoning about the row. ⛔ Reporting "this one is deleted" would leak the
+    // it reasoning about the row. Reporting "this one is deleted" would leak the
     // description of a transaction the user removed.
     let where_clause = match hidden_clause(entry) {
         Some(hidden) => format!(" WHERE {hidden}"),
@@ -590,13 +590,13 @@ pub async fn read(
         })
         .unwrap_or_else(|| id.to_string());
 
-    // ⚠️ **After the handle is taken, deliberately.** The handle is what a person
+    // After the handle is taken, deliberately. The handle is what a person
     // recognises the row by, and a mis-declared hidden field should not be able to
     // turn it into a bare ULID — a degradation that would show up in the model's
     // answer rather than here. Stripping afterwards keeps the two independent.
     hide_fields(&mut fields, entry.hidden_fields);
 
-    // ⚠️ After hiding, never before: capping a column that is about to be removed
+    // After hiding, never before: capping a column that is about to be removed
     // would report a cut the caller never receives.
     let truncated = cap_text_fields(&mut fields, entry.text_fields);
 
@@ -625,7 +625,7 @@ pub async fn read(
 /// Cut declared text columns to [`READ_BODY_CHARS`], stating each cut in the text
 /// itself as well as returning it.
 ///
-/// **Only `text_fields` are touched.** They are the columns a catalog entry
+/// Only `text_fields` are touched. They are the columns a catalog entry
 /// declares to hold prose, which makes them both the ones that can be large and
 /// the ones a model can get back to with `search` — every other column is a
 /// scalar the row would be wrong without.
@@ -712,7 +712,7 @@ fn derive(view: DerivedView, children: &serde_json::Map<String, Value>) -> Value
 
 /// Drop a row's bookkeeping columns before anyone sees it.
 ///
-/// ⚠️ Exists because both queries that feed the model select `*`, which is the
+/// Exists because both queries that feed the model select `*`, which is the
 /// right default — a column added to a projection reaches the assistant without
 /// anyone having to remember a second list, and the alternative (naming every
 /// column here) fails by silently *omitting* a real field. The cost of that
@@ -740,7 +740,7 @@ fn hide_fields(row: &mut Value, hidden: &[&str]) {
 /// and an uncapped history would quietly become the largest thing in a prompt.
 /// Whatever the entry owning `table` hides, as SQL.
 ///
-/// ⚠️ Resolved from the **table**, not from the parent entry. A child collection
+/// Resolved from the table, not from the parent entry. A child collection
 /// can read a different table than its parent, so inheriting the parent's rule
 /// would apply the wrong one — it is only by coincidence that today's single case
 /// (`document` → its own `attachments`) reads the same table.
@@ -756,7 +756,7 @@ async fn fetch_children(
     child: &ChildCollection,
     parent_id: &str,
 ) -> Result<Vec<serde_json::Value>, DbError> {
-    // ⛔ Whatever the child's table hides, this must hide too. An attachment is a
+    // Whatever the child's table hides, this must hide too. An attachment is a
     // document, so a purged one reached the model through its parent email long
     // after `search`, `list` and `read` had all stopped returning it — the same
     // shape of leak the vector index has, through a different door.
@@ -957,7 +957,7 @@ mod tests {
             snippet.contains("rent"),
             "snippet missed the match: {snippet}"
         );
-        // ⚠️ Regression: the first live run answered "Landlord posted the «rent»
+        // Regression: the first live run answered "Landlord posted the «rent»
         // «notice» today" — the model quoted the markers straight back. They are
         // internal and must never reach it.
         assert!(
@@ -1024,7 +1024,7 @@ mod tests {
         assert_eq!(out.total_matches, 9, "the limit must not hide the count");
     }
 
-    /// ⚠️ **The defect this whole path was rebuilt for.** A bare `@n@` requires
+    /// The defect this whole path was rebuilt for. A bare `@n@` requires
     /// every word of the query, so a question phrased as a question matched
     /// nothing — the keyword arm scored 19% found on the retrieval fixture.
     #[tokio::test]
@@ -1123,7 +1123,7 @@ mod tests {
         assert!(got.children.contains_key("completions"));
     }
 
-    /// ⚠️ Regression. Completion ids are `{item_id}-{date}-{done|skip}`, so
+    /// Regression. Completion ids are `{item_id}-{date}-{done|skip}`, so
     /// `ORDER BY id` sorts by *item* and only then by date. The older item's
     /// oldest completion sorted above the newer item's newest one, while the
     /// declaration promised "newest first" — wrong in a way nothing would report.
@@ -1211,10 +1211,10 @@ mod tests {
         assert!(out.hits[0].snippet.is_none(), "handle is the only text");
     }
 
-    /// ⛔ An attachment is a document, so a purged one must not come back through
+    /// An attachment is a document, so a purged one must not come back through
     /// the email it arrived in.
     ///
-    /// ⚠️ This is the door the catalogue's structural guard used to hold shut by
+    /// This is the door the catalogue's structural guard used to hold shut by
     /// forbidding the shape entirely. `documents` is self-referential, so the
     /// moment it gained a hidden rule the shape existed — and `fetch_children`
     /// queries the child table directly, with none of `search`/`list`/`read`'s
@@ -1259,7 +1259,7 @@ mod tests {
         assert_eq!(names, vec!["kept.pdf"], "a purged attachment came back");
     }
 
-    /// ⛔ The twin of the purged-attachment case, and it was already shipping.
+    /// The twin of the purged-attachment case, and it was already shipping.
     ///
     /// `routine_items` has a `removed` column and no catalogue entry, so there was
     /// nothing for `fetch_children` to inherit — while the completion rollup over
@@ -1321,14 +1321,14 @@ mod tests {
         assert_eq!(ids, ["t2", "t1"]);
     }
 
-    /// The archive is the first catalogued type whose tag column can be **absent**:
+    /// The archive is the first catalogued type whose tag column can be absent:
     /// `journal.tags` and `note.tags` are `TYPE array` and always `[]`, while
     /// `documents.tags` is `option<array>` and is absent for most of a real corpus.
     ///
-    /// ✅ It works without a coalesce — `NONE CONTAINS 'x'` is `false`. This test
+    /// It works without a coalesce — `NONE CONTAINS 'x'` is `false`. This test
     /// exists because that is not the guessable answer: `string::lowercase(NONE)` in
     /// the neighbouring query *is* a hard error, and reasoning by analogy from it
-    /// produces a coalesce nothing needs. ⛔ So the fixture carries an untagged row,
+    /// produces a coalesce nothing needs. So the fixture carries an untagged row,
     /// and the assertion is that the query returns rather than fails.
     #[tokio::test]
     async fn a_tag_filter_survives_a_row_with_no_tags_at_all() {
@@ -1406,12 +1406,12 @@ mod tests {
         assert_eq!(days[1]["skipped"], 1, "but stays visible as a skip");
     }
 
-    /// ⛔ Bookkeeping columns must not reach the model. `applied_appends` holds the
+    /// Bookkeeping columns must not reach the model. `applied_appends` holds the
     /// ids of append events already folded in; handed over inside a record called a
     /// note, those are event ids the assistant can quote back as if the user had
     /// written them.
     ///
-    /// ⚠️ The row is created *with* the column populated, which is the only version
+    /// The row is created *with* the column populated, which is the only version
     /// of this test worth having — against a row that never had one it passes
     /// whether or not anything is stripped.
     #[tokio::test]
@@ -1524,7 +1524,7 @@ mod tests {
 
     /// The verbs must survive a row whose text columns are all absent.
     ///
-    /// ⚠️ Every catalogued type before `document` declares its text columns
+    /// Every catalogued type before `document` declares its text columns
     /// `TYPE string`, so nothing here had ever met a NONE. The failure would not
     /// be this record rendering oddly — `search` and `list` build one statement
     /// per type, so a deserialization error takes the whole archive out at once.
@@ -1561,7 +1561,7 @@ mod tests {
         assert_eq!(listed.hits.len(), 10, "list choked on the absent columns");
     }
 
-    /// ⛔ The blob address and the ingesting device must never reach the model.
+    /// The blob address and the ingesting device must never reach the model.
     #[tokio::test]
     async fn reading_a_document_hides_its_plumbing() {
         let db = test_db().await;
@@ -1587,7 +1587,7 @@ mod tests {
         );
     }
 
-    /// ⛔ **The unstated cut is the bug, not the cap itself.** `read` is the verb
+    /// The unstated cut is the bug, not the cap itself. `read` is the verb
     /// that means "you have this record now", so a 40-page scan handed back two
     /// thirds complete with nothing saying so turns a retrieval limit into a
     /// confidently wrong answer.
@@ -1658,7 +1658,7 @@ mod tests {
         );
     }
 
-    /// ⛔ A deleted transaction must be gone from **every** read path, not most.
+    /// A deleted transaction must be gone from every read path, not most.
     ///
     /// Written as one test over all three deliberately. The failure this guards
     /// is not "the exclusion is wrong" — it is "the exclusion was added to two
@@ -1681,12 +1681,12 @@ mod tests {
 
         let listed = list(&db, entry("transaction"), &[], 50).await.unwrap();
         assert_eq!(listed.hits.len(), 9, "list returned the deleted row");
-        // ⚠️ The count is a separate query over the same clause, and it is what the
+        // The count is a separate query over the same clause, and it is what the
         // model is told the total is. A list of 9 reported as "10 matches" sends it
         // looking for the tenth.
         assert_eq!(listed.total_matches, 9, "the tally counted the deleted row");
 
-        // ⚠️ The positive half first, and it is not a courtesy. Without a FULLTEXT
+        // The positive half first, and it is not a courtesy. Without a FULLTEXT
         // index on `description` a search returns nothing at all rather than
         // failing, so "the deleted row is absent" would pass while the ledger was
         // entirely unsearchable — the assertion proving itself by being unreachable.
@@ -1766,7 +1766,7 @@ mod tests {
         );
     }
 
-    /// ⛔ Merge bookkeeping names rows that are the same payment or no longer
+    /// Merge bookkeeping names rows that are the same payment or no longer
     /// shown; quoted back, they read as separate spending.
     #[tokio::test]
     async fn reading_a_transaction_hides_its_merge_trail() {

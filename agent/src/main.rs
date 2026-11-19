@@ -7,7 +7,7 @@
 //! and the shape that forces is also the one worth wanting — contained failure,
 //! inherited machinery, proposals that sync for free.
 //!
-//! **It answers questions.** A question authored on any device arrives here the
+//! It answers questions. A question authored on any device arrives here the
 //! ordinary way — pulled, projected — and the answer goes back the same way. That
 //! is not an implementation detail: `surrealkv` holds an exclusive lock on its
 //! directory, so a resident agent's database cannot be opened by a second process
@@ -55,7 +55,7 @@ const SERVER_TOKEN_FILE: &str = "server_token";
 
 /// Runtime override for the agent's data root.
 ///
-/// Setting it also puts the agent in a **non-production posture** — see
+/// Setting it also puts the agent in a non-production posture — see
 /// `omni_me_core::runtime`. Deliberately a different variable from the client's
 /// `OMNI_DATA_DIR`: the two must never share a data root, because pointing two
 /// processes at one embedded database is the corruption case the device shape
@@ -81,7 +81,7 @@ const LLM_EXTRA_BODY_ENV: &str = "OMNI_AGENT_LLM_EXTRA_BODY";
 
 /// Minimum milliseconds between model requests.
 ///
-/// ⚠️ On a rate-capped endpoint this is a **correctness** setting, not politeness.
+/// On a rate-capped endpoint this is a correctness setting, not politeness.
 /// One question makes several calls and `--bench` makes dozens; without spacing,
 /// a free tier's cap returns rate-limit errors that a scorecard would then report
 /// as the model failing. For a ten-per-minute tier, 7000 leaves retry headroom.
@@ -102,7 +102,7 @@ const LLM_API_KEY_ENV: &str = "OMNI_AGENT_LLM_API_KEY";
 ///
 /// The quality-against-cost balance is found by trying, and a tuning loop
 /// runs from here rather than from a phone's settings screen. Injected as the
-/// **device layer** of the resolved config (see [`learn_config`]) so it lands
+/// device layer of the resolved config (see [`learn_config`]) so it lands
 /// in the same resolution and the same clamp as a value set from Settings —
 /// an override that bypassed `int_of` could set a budget the app itself would
 /// refuse.
@@ -110,7 +110,7 @@ const MAX_TURNS_ENV: &str = "OMNI_AGENT_MAX_TURNS";
 
 /// How long the agent waits between sync pulls, in milliseconds.
 ///
-/// ⚠️ Deliberately **not** [`sync::DEFAULT_PULL_INTERVAL`]'s 20s. That default is
+/// Deliberately not [`sync::DEFAULT_PULL_INTERVAL`]'s 20s. That default is
 /// sized for a phone: a radio, a battery, and a person who does not notice a
 /// twenty-second lag on a note edit. This process sits on the same host as the
 /// server it polls, on mains power, and its pull latency is a limb of the
@@ -169,23 +169,23 @@ struct Args {
     /// happily and never syncs, because `pusher::run_loop` has no interval
     /// fallback to cover for the missing nudge.
     ///
-    /// ⚠️ This writes a real note into whatever log it is pointed at. That is a
+    /// This writes a real note into whatever log it is pointed at. That is a
     /// throwaway hub, never a real one.
     probe: bool,
 
     /// Put one question through the assistant, print the trace, and exit.
     ///
-    /// ⚠️ **Test scaffolding, not ops surface** — unlike [`Args::read_only`] and
+    /// Test scaffolding, not ops surface — unlike [`Args::read_only`] and
     /// [`Args::probe`], which answer questions about a *host* and are permanent.
     /// This exists because the verbs have no real interface yet; the chat surface
     /// that replaces it is separate, later work. Do not build tooling on it.
     ask: Option<String>,
 
     /// Score verb selection over fixed cases, free-form and schema-constrained,
-    /// and report the difference — the **constraint tax**, as a measured number
+    /// and report the difference — the constraint tax, as a measured number
     /// rather than an assumption.
     ///
-    /// ⚠️ Test scaffolding, on the same terms as [`Args::ask`].
+    /// Test scaffolding, on the same terms as [`Args::ask`].
     bench: bool,
 
     /// Re-embed every record, even ones whose text has not changed.
@@ -197,7 +197,7 @@ struct Args {
 
     /// Run [`Args::ask`] under grammar-constrained decoding.
     ///
-    /// Exists so the constrained half can be tried **once** before `--bench`
+    /// Exists so the constrained half can be tried once before `--bench`
     /// tries it a hundred times. Two things can only be settled against a real
     /// endpoint: whether it accepts the verb-call schema at all, and whether a
     /// constrained reply can reach the `answer` exit rather than re-calling
@@ -214,7 +214,7 @@ struct Args {
     /// deterministic and needs none of them. Folding them together would make the
     /// retrieval number cost tokens to obtain.
     ///
-    /// ⚠️ Test scaffolding, on the same terms as [`Args::ask`].
+    /// Test scaffolding, on the same terms as [`Args::ask`].
     bench_retrieval: bool,
 
     /// Score the document extractor — role C1 — against labels the corpus
@@ -225,7 +225,7 @@ struct Args {
     /// different trait against a different endpoint: `DocumentExtractor` on
     /// `[llm.extractor]`, where that one measures `LlmClient` on `[llm]`.
     ///
-    /// ⚠️ Test scaffolding, on the same terms as [`Args::ask`].
+    /// Test scaffolding, on the same terms as [`Args::ask`].
     bench_extraction: bool,
 
     /// Score the note structurer — role D — on what it invents before what it
@@ -236,7 +236,7 @@ struct Args {
     /// different endpoint (`[llm.structurer]`) and a different question. It
     /// needs no database and no corpus on disk.
     ///
-    /// ⚠️ Test scaffolding, on the same terms as [`Args::ask`].
+    /// Test scaffolding, on the same terms as [`Args::ask`].
     bench_structuring: bool,
 
     /// Score the document reader — role C2 — on what it invents before what it
@@ -247,7 +247,7 @@ struct Args {
     /// that one's endpoint (`[llm.extractor]`) but asks the other question: what
     /// *is* this document, rather than what transactions does it contain.
     ///
-    /// ⚠️ Test scaffolding, on the same terms as [`Args::ask`].
+    /// Test scaffolding, on the same terms as [`Args::ask`].
     bench_reading: bool,
 
     /// Score the transcriber — role C3 — against the text layer a born-digital
@@ -257,19 +257,19 @@ struct Args {
     /// and exact: render the file to images, transcribe those, and compare with
     /// what the file itself states.
     ///
-    /// ⚠️ Test scaffolding, on the same terms as [`Args::ask`].
+    /// Test scaffolding, on the same terms as [`Args::ask`].
     bench_transcription: bool,
 
     /// Score role B on its own job: the scheduled belief review, against beliefs
     /// seeded with `scripts/seed-bench-hub.py --with-beliefs`.
     ///
-    /// ⚠️ Test scaffolding, on the same terms as [`Args::ask`].
+    /// Test scaffolding, on the same terms as [`Args::ask`].
     bench_review: bool,
 
     /// Score the phone's failed requests on what they proposed. See
     /// `case_bench`.
     ///
-    /// ⚠️ Test scaffolding, on the same terms as [`Args::ask`].
+    /// Test scaffolding, on the same terms as [`Args::ask`].
     bench_cases: bool,
 
     /// Author a question event, then exit — a stand-in for the client.
@@ -281,7 +281,7 @@ struct Args {
     /// path rather than a shortcut through it — two processes, separate data
     /// roots, one hub, exactly as a phone and the box relate.
     ///
-    /// ⚠️ Writes a real event into whatever log it is pointed at.
+    /// Writes a real event into whatever log it is pointed at.
     ask_event: Option<String>,
 
     /// Continue an existing thread instead of starting one. Only meaningful
@@ -412,7 +412,7 @@ fn parse_args() -> Result<Args, String> {
     {
         return Err("--bench-cases is its own run; pick one".to_string());
     }
-    // With `--bench` this means **bench the constrained arm only**, and it is
+    // With `--bench` this means bench the constrained arm only, and it is
     // deliberate rather than a mistake: some endpoints offer `response_format`
     // and no `tools` parameter at all, so the free-form arm cannot be run there
     // and a both-arms bench aborts in pre-flight instead of measuring anything.
@@ -511,7 +511,7 @@ async fn run_agent() {
         }
     };
 
-    // ⚠️ **Above `run`, deliberately.** `run` connects to the real database and
+    // Above `run`, deliberately. `run` connects to the real database and
     // sweeps the real corpus into the vector index before it reaches any
     // one-shot branch. For every other mode that is what you want; for this one
     // it would embed the whole journal to answer a question about a fixture, and
@@ -663,7 +663,7 @@ fn build_assistant_llms() -> Result<AssistantLlms, String> {
 
 /// The per-run endpoint options this process was started with.
 ///
-/// ⛔ Shared by every seat, and that is the point. Until 2026-09-27 only roles A
+/// Shared by every seat, and that is the point. Until 2026-09-27 only roles A
 /// and B were given these, so the bench's upstream pin, `require_parameters` and
 /// the `zdr` / `data_collection: "deny"` terms were applied to the chat seats and
 /// to no document request at all — `MODEL_BENCH.md` R27. A seat built without
@@ -690,14 +690,14 @@ fn client_options_from_env() -> Result<omni_me_core::llm::ClientOptions, String>
 /// Refuse a corpus-reading bench that would send real documents through a gateway
 /// with nothing attached about what may be done with them.
 ///
-/// ⛔ R27: the privacy terms travel in `extra_body`, and until 2026-09-27 role C's
+/// R27: the privacy terms travel in `extra_body`, and until 2026-09-27 role C's
 /// builders took no options — so every `--bench-extraction` and
 /// `--bench-transcription` run sent real statements through OpenRouter with neither
 /// `zdr` nor `data_collection: "deny"`. The plumbing is fixed; this is the guard
 /// against the same omission arriving by a different route, such as an
 /// `OMNI_AGENT_LLM_EXTRA_BODY` that overwrites the default object and drops them.
 ///
-/// ⚠️ Keyed on the gateway's hostname, and that is a real limitation rather than a
+/// Keyed on the gateway's hostname, and that is a real limitation rather than a
 /// shortcut: `zdr` and `data_collection` are OpenRouter's request vocabulary, and a
 /// direct provider ignores them — its guarantee comes from its own policy plus the
 /// open-weights refusal. So a second gateway needs its name added here, and the
@@ -875,7 +875,7 @@ async fn build_embedder(
 
 /// Load the cross-encoder, if this host is configured to run one.
 ///
-/// ⚠️ **`None` here is two different situations and the log must say which.** Off
+/// `None` here is two different situations and the log must say which. Off
 /// by config is a choice; failed to load is a degradation. Both leave retrieval
 /// working, which is exactly why the second one would otherwise go unnoticed.
 async fn build_reranker(config: &ResolvedConfig) -> Option<omni_me_core::assistant::Reranker> {
@@ -1122,7 +1122,7 @@ async fn run(args: Args) -> Result<(), String> {
     // Inbound half: startup backfill, then interval and network-online pulls. On
     // a cold start this batch is the entire log arriving.
     //
-    // ⚠️ `spawn_with`, not `spawn`: the default 20s interval is a phone's, and
+    // `spawn_with`, not `spawn`: the default 20s interval is a phone's, and
     // here it would sit in the middle of the ask-to-answer path. See
     // `PULL_INTERVAL_ENV`.
     let pull_interval = Duration::from_millis(env_u64(PULL_INTERVAL_ENV, DEFAULT_PULL_INTERVAL_MS));
@@ -1301,7 +1301,7 @@ fn title_from(question: &str) -> String {
 /// *this process* wires them, which is the half no unit test can reach — a test
 /// constructs its own writer and so cannot catch a mistake in `run`'s ordering.
 ///
-/// Non-fatal either way, because a refusal is a **result**, not a failure: with
+/// Non-fatal either way, because a refusal is a result, not a failure: with
 /// the feature that owns notes switched off, being refused here is the correct
 /// outcome and the one worth confirming.
 async fn probe_once(writer: &EventWriter) {
@@ -1327,7 +1327,7 @@ async fn probe_once(writer: &EventWriter) {
 
 /// Env overrides for this run, as the config's device layer.
 ///
-/// ⚠️ An unparseable value is **named, not ignored**. Silently falling back to
+/// An unparseable value is named, not ignored. Silently falling back to
 /// the configured budget during a tuning run would attribute the resulting
 /// numbers to a setting that was never applied.
 fn device_overrides() -> ConfigMap {
@@ -1487,7 +1487,7 @@ mod tests {
         }
     }
 
-    /// ⚠️ A direct provider is not held to this: `zdr` and `data_collection` are a
+    /// A direct provider is not held to this: `zdr` and `data_collection` are a
     /// gateway's vocabulary, and the direct guarantee is the provider's own policy
     /// plus the open-weights refusal. Refusing here would be theatre.
     #[test]

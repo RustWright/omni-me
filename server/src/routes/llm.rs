@@ -1,10 +1,10 @@
-//! LLM endpoint config route — **read-only**.
+//! LLM endpoint config route — read-only.
 //!
 //! `GET /llm/config` reports the current `[llm]` selection WITHOUT the secret
 //! key (a `has_key` bool stands in for it), so a client can answer "is a model
 //! wired, and which one".
 //!
-//! ⚠️ **There is deliberately no write route.** A `PUT` existed and wrote the
+//! There is deliberately no write route. A `PUT` existed and wrote the
 //! `[llm]` section — including an API key — into `credentials.toml` over an
 //! endpoint with the same unauthenticated posture as the rest of the server
 //! (behind Tailscale, per [[project-auth-deferred]]). It was removed with the

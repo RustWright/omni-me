@@ -1,7 +1,7 @@
 //! The Tauri IPC boundary: one `invoke_*` wrapper per backend command, plus a
 //! complete `mock` implementation of the same surface for browser-only runs.
 //!
-//! **Two deferrals live here; only one of them is what it first looks like.**
+//! Two deferrals live here; only one of them is what it first looks like.
 //!
 //! The first is size. An earlier review said to collapse these wrappers with a
 //! macro if the pattern count ever grew a lot. It grew a lot — and the remedy
@@ -30,7 +30,7 @@ use wasm_bindgen::prelude::*;
 /// Marker string compiled into the WASM binary whenever the `mock` feature is
 /// on, so packaging can refuse to ship a mock build.
 ///
-/// **Why a sentinel and not a `compile_error!`.** The obvious guard is
+/// Why a sentinel and not a `compile_error!`. The obvious guard is
 /// `#[cfg(all(feature = "mock", not(debug_assertions)))] compile_error!(...)`,
 /// and it would not have caught the one time this actually happened
 /// (friction 1.13, an APK that shipped with mock data). `dx serve --features
@@ -106,7 +106,7 @@ pub fn listen_backend_event(event: &str, on_event: impl FnMut() + 'static) {
 /// number arrives as `None` rather than being silently coerced.
 ///
 /// Tauri delivers `{ event, id, payload }` to the JS handler, so the emitted
-/// value is the `payload` **field** of the object handed to the closure — not
+/// value is the `payload` field of the object handed to the closure — not
 /// the object itself. Reading the wrong field here fails silently (every emit
 /// looks like `None`), which is indistinguishable from a backend that never
 /// sends anything, so this is worth checking against the running app rather than
@@ -197,7 +197,7 @@ pub fn set_editor_font_px(px: Option<u32>) {
 
 /// Whether the OS is asking for a dark UI.
 ///
-/// Defaults to **dark** when the query can't be answered, matching the app's own
+/// Defaults to dark when the query can't be answered, matching the app's own
 /// default so an unsupported WebView lands on the theme it has always had.
 pub fn os_prefers_dark() -> bool {
     web_sys::window()
@@ -212,7 +212,7 @@ pub fn os_prefers_dark() -> bool {
 
 /// Stamp the resolved theme onto `<html data-theme>`.
 ///
-/// `system` is resolved to a concrete value **here**, never passed through. That
+/// `system` is resolved to a concrete value here, never passed through. That
 /// keeps one rule for every consumer downstream: the CSS token blocks and
 /// `editor.js` both only ever see `dark` or `light`, so neither needs its own
 /// copy of the preference logic (and neither can disagree with the other about
@@ -298,14 +298,14 @@ pub fn blur_active_element() {
 /// Inject a bundled script (once) and resolve when `global_name` is a callable
 /// on `window`. `false` if it never appeared within the polling window.
 ///
-/// **POLLING, not `script.onload`.** The old release-only onload path could hang
+/// POLLING, not `script.onload`. The old release-only onload path could hang
 /// forever in an embedded Tauri webview — the script loads, but the awaited
 /// onload never resolves — stranding the caller on its loading state. Polling is
-/// robust across `dx serve`, embedded release builds, and Android. ⚠️ One path
+/// robust across `dx serve`, embedded release builds, and Android. One path
 /// for all build modes: a previous `cfg(debug_assertions)` split meant the
 /// release path was never exercised until a real desktop webview ran it.
 ///
-/// ⚠️ **The window must be generous.** On a cold first launch — empty webview
+/// The window must be generous. On a cold first launch — empty webview
 /// cache, a ~1 MB bundle parsed for the first time while the wasm frontend and
 /// DB init compete for the main thread — the embedded webkit webview can take
 /// well over 5s to define its global. A 5s cap stranded the editor on
@@ -411,8 +411,8 @@ extern "C" {
 // `diagnostics::record_invoke_failure` — no per-wrapper change, and no way for
 // a new wrapper to be added without inheriting it.
 //
-// Two consequences, stated here rather than discovered later. **Mock builds
-// record nothing**: the `#[cfg(feature = "mock")]` branches return canned data
+// Two consequences, stated here rather than discovered later. Mock builds
+// record nothing: the `#[cfg(feature = "mock")]` branches return canned data
 // without reaching these helpers at all, which is correct — a failed invoke is
 // device behaviour and the browser loop has no IPC to fail. And
 // `submit_feedback` itself rides `invoke`, so a failed send records its own
@@ -430,7 +430,7 @@ extern "C" {
 #[cfg(not(feature = "mock"))]
 const BOOT_RETRY_DEADLINE_MS: f64 = 10_000.0;
 
-/// Tauri refused the call **before dispatch** because `AppState` is not managed
+/// Tauri refused the call before dispatch because `AppState` is not managed
 /// yet, so the command provably never ran.
 ///
 /// That "never ran" is what makes retrying safe even for a mutating command,
@@ -549,9 +549,9 @@ async fn invoke_unit(cmd: &str, args: &impl serde::Serialize) -> Result<(), Stri
 /// `invoke`, but bounded: resolves to `Err` if the promise has not settled
 /// within `timeout_ms`.
 ///
-/// **Use this for anything fired during app boot.** On Android's cold
+/// Use this for anything fired during app boot. On Android's cold
 /// first-open an invoke issued before Tauri's native IPC handler is ready is
-/// silently **dropped** — its promise never resolves *and* never rejects, so
+/// silently dropped — its promise never resolves *and* never rejects, so
 /// awaiting it parks the caller forever. That has now bitten this codebase
 /// twice: it hung the fresh-install boot on `get_workspace` (root-caused
 /// on-device 2026-07-05), and it froze `tz_signal` at its `Tz::UTC` default on
@@ -613,8 +613,8 @@ async fn invoke_timed<T: serde::de::DeserializeOwned>(
                 // Both signatures are the same boot race seen from either side of the
                 // window: `state not managed` is Tauri refusing before dispatch,
                 // `__ipc_timeout__` is the invoke being dropped before the native IPC
-                // handler existed. Retrying `__ipc_timeout__` is safe **here and only
-                // here** — this helper is documented as boot-only and its callers are
+                // handler existed. Retrying `__ipc_timeout__` is safe here and only
+                // here — this helper is documented as boot-only and its callers are
                 // reads. A timeout does not prove the command did not run, so the
                 // untimed helpers deliberately do not retry on it.
                 if (backend_not_ready(&e) || e.contains("__ipc_timeout__"))
@@ -1565,7 +1565,7 @@ pub async fn invoke_update_timezone(timezone: &str) -> Result<(), String> {
 /// nothing persisted yet; mock has no backend so it returns empty. Resolves to
 /// `Err` if the invoke's promise hasn't settled within `timeout_ms`: on a cold
 /// first-open (Android), an invoke fired before Tauri's native IPC handler is
-/// ready can be **dropped** — its
+/// ready can be dropped — its
 /// promise then never resolves *and* never rejects. Awaiting it directly parks
 /// the caller forever, which was the fresh-install "Loading…" hang: the
 /// continuity boot read (continuity.rs) stalled on the first `get_workspace`
@@ -1749,7 +1749,7 @@ pub async fn invoke_update_base_currency(currency: &str) -> Result<(), String> {
 
 use crate::types::{ConfigEntry, ConfigValue};
 
-/// `get_config`, bounded — the **boot-path** variant.
+/// `get_config`, bounded — the boot-path variant.
 ///
 /// Fired during boot from `main.rs`, so it is exposed to the dropped-invoke race
 /// on [`invoke_timed`]: an invoke issued before the native IPC handler is ready
@@ -3330,7 +3330,7 @@ pub struct StatementTarget<'a> {
     pub product: Option<&'a str>,
 }
 
-/// Upload a statement **document** (a PDF, possibly encrypted) rather than an
+/// Upload a statement document (a PDF, possibly encrypted) rather than an
 /// export. Parsing happens on the server, where the credentials are.
 ///
 /// `password_secret` names an entry in the server's credentials `secrets` map;
@@ -5041,11 +5041,11 @@ pub async fn invoke_install_desktop_update() -> Result<(), String> {
 
 // --- Assistant (Phase D-1) ---
 //
-// ⚠️ The mock half below re-implements *behaviour*, not just canned values — it
+// The mock half below re-implements *behaviour*, not just canned values — it
 // is a fifth store of the kind this file's header flags. It is kept deliberately
 // crude: one canned answer, no verbs, no retrieval. Its whole job is to let the
-// pending → answered transition be driven in a browser. **Never read a latency
-// or a citation off it**, and mirror any change to the pending rule in
+// pending → answered transition be driven in a browser. Never read a latency
+// or a citation off it, and mirror any change to the pending rule in
 // `conversation::read_thread` here in the same commit.
 
 /// Append one question. `thread_id` continues a conversation; `None` starts one.
@@ -5148,7 +5148,7 @@ pub async fn invoke_read_assistant_thread(
 /// Every review surface with something waiting on it, for the nav badges and the
 /// assistant's reminder row.
 ///
-/// ⛔ Spans features, so unlike its neighbours it is not one feature's read. The
+/// Spans features, so unlike its neighbours it is not one feature's read. The
 /// gating is inside `core::approvals::summary`: a switched-off feature omits its
 /// entry, and the command returns a shorter list rather than refusing — refusing
 /// would take every other feature's badge down with it.
@@ -5158,11 +5158,11 @@ pub async fn invoke_pending_approvals() -> Result<Vec<crate::types::PendingAppro
         // Three surfaces, so a sweep sees a badge on a tab the assistant owns,
         // one it does not, and the domain-reviewed one.
         //
-        // ⚠️ **The two proposal counts come from the mock's own stores, not from
-        // constants.** `pending_proposals` shrinks when a card is decided, which
+        // The two proposal counts come from the mock's own stores, not from
+        // constants. `pending_proposals` shrinks when a card is decided, which
         // is what makes the epoch-bump path observable in the browser at all: a
         // hardcoded number refetches to the same value and proves nothing.
-        // ⛔ The document count has no such store and stays fixed — so a *cleared*
+        // The document count has no such store and stays fixed — so a *cleared*
         // document queue cannot be demonstrated here and rides the real backend.
         Ok(vec![
             crate::types::PendingApprovals {
@@ -5210,7 +5210,7 @@ pub async fn invoke_list_assistant_proposals()
 
 /// The proposals the finances screen reviews.
 ///
-/// ⛔ Disjoint from [`invoke_list_assistant_proposals`] by construction, not by
+/// Disjoint from [`invoke_list_assistant_proposals`] by construction, not by
 /// convention — `inbox::pending` subtracts exactly what this returns. A change
 /// to money is decided beside the money.
 pub async fn invoke_list_finance_proposals() -> Result<Vec<crate::types::AssistantProposal>, String>
@@ -5584,7 +5584,7 @@ mod mock_assistant {
                 let asked = q.text.clone().unwrap_or_default();
                 let answer_id = next_id("mock-msg");
 
-                // ⚠️ The proposal path needs a **deterministic** trigger, not a
+                // The proposal path needs a deterministic trigger, not a
                 // random one: it is the only way a browser sweep can reach the
                 // approval cards at all. Asking anything containing "note" makes
                 // the mock propose one.
@@ -5641,7 +5641,7 @@ mod mock_assistant {
         });
     }
 
-    /// ⚠️ Two fixtures, one of them retired, because the retired case is the one
+    /// Two fixtures, one of them retired, because the retired case is the one
     /// a browser sweep would otherwise never reach — and it is the half that
     /// carries the audit claim.
     pub fn beliefs(include_retired: bool) -> Vec<crate::types::Belief> {
@@ -5690,7 +5690,7 @@ mod mock_assistant {
             .collect()
     }
 
-    /// ⚠️ One fixture is **irreversible**, so a browser sweep reaches the case
+    /// One fixture is irreversible, so a browser sweep reaches the case
     /// where the toggle must not be offered. Every real action today is
     /// reversible, which means that half of the rule is otherwise unreachable.
     pub fn action_records() -> Vec<crate::types::ActionRecord> {
@@ -5725,7 +5725,7 @@ mod mock_assistant {
         ]
     }
 
-    /// ⛔ Refuses an irreversible action, mirroring `core`. A mock that allowed
+    /// Refuses an irreversible action, mirroring `core`. A mock that allowed
     /// it would make a browser sweep prove the opposite of the real rule.
     pub fn set_autonomy(action: &str, granted: bool) -> Result<(), String> {
         if granted
@@ -5759,12 +5759,12 @@ mod mock_assistant {
         })
     }
 
-    /// ⚠️ **Seeded, unlike [`pending_proposals`], which starts empty.** The
+    /// Seeded, unlike [`pending_proposals`], which starts empty. The
     /// assistant inbox fills as the mock conversation runs; the finances review
     /// section has no such path in the browser, so without a standing fixture a
     /// sweep would render an empty state and prove nothing about the section.
     ///
-    /// ⚠️ One reversible and one **irreversible** (`transaction.clear` — nothing
+    /// One reversible and one irreversible (`transaction.clear` — nothing
     /// un-clears a transaction), so the sweep reaches the warning as well as the
     /// ordinary card.
     pub fn finance_proposals() -> Vec<AssistantProposal> {
@@ -5812,7 +5812,7 @@ mod mock_assistant {
         })
     }
 
-    /// ⚠️ Records the decision and **nothing else**. The real command authors the
+    /// Records the decision and nothing else. The real command authors the
     /// note; this one cannot, so a green browser sweep proves the inbox flow and
     /// says nothing about whether approving actually creates anything.
     pub fn decide(proposal_id: &str, approve: bool) -> Result<AssistantProposal, String> {
@@ -5919,7 +5919,7 @@ mod mock_assistant {
 
 /// Documents matching an optional search string and an optional kind.
 ///
-/// ⚠️ The mock deliberately covers the *awkward* states rather than a tidy
+/// The mock deliberately covers the *awkward* states rather than a tidy
 /// three: a document with no extracted text, one with no fields at all, and one
 /// whose fields are unverified. Mock data that is uniformly complete is how a
 /// blank-render bug reaches a device — see `project-fresh-device-refetch-on-use`.
@@ -5954,7 +5954,7 @@ pub async fn invoke_list_documents(
                 Some(m) if !m.is_empty() => d.mime_type.as_deref() == Some(m.as_str()),
                 _ => true,
             })
-            // ⚠️ Whole-element equality, matching the `CONTAINS` the real query
+            // Whole-element equality, matching the `CONTAINS` the real query
             // emits. A `contains()` on the string here would make the mock accept
             // a prefix the backend rejects.
             .filter(|d| match &tag {
@@ -5970,7 +5970,7 @@ pub async fn invoke_list_documents(
     }
     #[cfg(not(feature = "mock"))]
     {
-        // ⛔ The filter is nested, matching `list_documents`'s
+        // The filter is nested, matching `list_documents`'s
         // `Option<DocumentListFilter>`. Flat fields deserialize to a default
         // filter and return the whole archive unnarrowed — no error, just the
         // wrong rows, which is the failure mode worth naming here.
@@ -6082,7 +6082,7 @@ pub async fn invoke_document_tags() -> Result<Vec<String>, String> {
     }
 }
 
-/// One document's extracted text. ⚠️ Not on `DocumentItem` — see
+/// One document's extracted text. Not on `DocumentItem` — see
 /// `queries::document_text` for why the list path never carries text.
 pub async fn invoke_get_document_text(document_id: &str) -> Result<Option<String>, String> {
     #[cfg(feature = "mock")]
@@ -6123,7 +6123,7 @@ pub async fn invoke_get_document_text(document_id: &str) -> Result<Option<String
     }
 }
 
-/// Record a correction. ⛔ Only callable from a surface showing the document —
+/// Record a correction. Only callable from a surface showing the document —
 /// the value lands `verified: true`, and the person reading it is the oracle.
 pub async fn invoke_correct_document_field(
     document_id: &str,
@@ -6162,7 +6162,7 @@ pub async fn invoke_correct_document_field(
 
 /// Replace a document's tag set.
 ///
-/// ⚠️ **Send the whole set, not the delta** — to add a tag, pass the current tags
+/// Send the whole set, not the delta — to add a tag, pass the current tags
 /// plus the new one. The backend normalizes (trim, lowercase) and refuses the
 /// whole set if any tag is malformed, so a caller must not pre-sanitize here and
 /// assume the two agree.
@@ -6204,7 +6204,7 @@ pub async fn invoke_set_document_retention(
     }
 }
 
-/// Every tag with a live rule. ⚠️ A tag absent from this list is kept forever.
+/// Every tag with a live rule. A tag absent from this list is kept forever.
 /// The retention categories as (tag, label). See `list_retention_classes`.
 pub async fn invoke_list_retention_classes() -> Result<Vec<(String, String)>, String> {
     #[cfg(feature = "mock")]
@@ -6239,13 +6239,13 @@ pub async fn invoke_list_document_retention() -> Result<Vec<crate::types::Retent
     }
 }
 
-/// Documents past their retention, grouped by the rule that caught them. ⛔ A
+/// Documents past their retention, grouped by the rule that caught them. A
 /// proposal: opening one goes to the ordinary purge preview and confirm.
 pub async fn invoke_list_retention_candidates() -> Result<Vec<crate::types::RetentionGroup>, String>
 {
     #[cfg(feature = "mock")]
     {
-        // ⚠️ One group with a plausible count, so the surface can be looked at
+        // One group with a plausible count, so the surface can be looked at
         // without a governed archive behind it.
         Ok(vec![crate::types::RetentionGroup {
             tag: "newsletter".into(),
@@ -6263,7 +6263,7 @@ pub async fn invoke_list_retention_candidates() -> Result<Vec<crate::types::Rete
     }
 }
 
-/// What purging this group would remove. ⛔ Writes nothing.
+/// What purging this group would remove. Writes nothing.
 pub async fn invoke_preview_document_purge(
     tag: &str,
     // Retention's cutoff, from `RetentionGroup::cutoff`. `None` previews the tag.
@@ -6288,7 +6288,7 @@ pub async fn invoke_preview_document_purge(
                 counted_from: None,
                 ingest_source: d.ingest_source.clone(),
                 size: d.size,
-                // ⚠️ One shared item in the fixture on purpose: a preview where
+                // One shared item in the fixture on purpose: a preview where
                 // everything is reclaimable cannot show that the surface
                 // distinguishes the two.
                 bytes_shared: d.mime_type.as_deref() == Some("text/csv"),
@@ -6333,7 +6333,7 @@ pub async fn invoke_preview_document_purge(
     }
 }
 
-/// What deleting this one document would remove. ⛔ Writes nothing; the confirm
+/// What deleting this one document would remove. Writes nothing; the confirm
 /// is [`invoke_confirm_document_purge`], as for any group.
 pub async fn invoke_preview_document_delete(document_id: &str) -> Result<PurgePreview, String> {
     #[cfg(feature = "mock")]
@@ -6376,7 +6376,7 @@ pub async fn invoke_preview_document_delete(document_id: &str) -> Result<PurgePr
     }
 }
 
-/// ⛔ Irreversible. Only ever called with a set the user has just confirmed, and
+/// Irreversible. Only ever called with a set the user has just confirmed, and
 /// the `token` is what lets the server check that.
 pub async fn invoke_confirm_document_purge(
     token: &str,
@@ -6516,7 +6516,7 @@ fn mock_documents_seed() -> Vec<DocumentItem> {
             ]),
             parent_document_id: None,
         },
-        // ⚠️ The case a tidy fixture would omit: archived, unreadable, and
+        // The case a tidy fixture would omit: archived, unreadable, and
         // uncatalogued. It must still render and still be clickable.
         DocumentItem {
             document_id: "doc-scan".into(),
@@ -6530,19 +6530,19 @@ fn mock_documents_seed() -> Vec<DocumentItem> {
             kind: None,
             title: None,
             document_date: None,
-            // ⚠️ Never tagged. Distinct from the cleared case below, and the
+            // Never tagged. Distinct from the cleared case below, and the
             // state most of a real archive is in.
             tags: None,
             purged: None,
             fields: None,
             parent_document_id: None,
         },
-        // ⚠️ An email and the attachment that arrived inside it — the pair, not
+        // An email and the attachment that arrived inside it — the pair, not
         // just the email. A lone email fixture would render its body fine and
         // leave the children list permanently empty, which is the half of the
         // view that cannot be checked any other way.
         //
-        // ⛔ No `kind`, deliberately: `kind` comes from field extraction, which
+        // No `kind`, deliberately: `kind` comes from field extraction, which
         // has not run for mail. A fixture that gave mail a kind would hide the
         // reason `is_email` keys on the MIME type instead.
         DocumentItem {
@@ -6557,7 +6557,7 @@ fn mock_documents_seed() -> Vec<DocumentItem> {
             kind: None,
             title: None,
             document_date: None,
-            // ⚠️ Tags cleared by a person — `Some(vec![])`, not `None`. A fixture
+            // Tags cleared by a person — `Some(vec![])`, not `None`. A fixture
             // carrying only one of these two states cannot show that the UI
             // distinguishes them.
             tags: Some(vec![]),
@@ -6582,7 +6582,7 @@ fn mock_documents_seed() -> Vec<DocumentItem> {
             fields: None,
             parent_document_id: Some("doc-email".into()),
         },
-        // ⛔ The adversarial one, and the reason it exists is worth keeping. The
+        // The adversarial one, and the reason it exists is worth keeping. The
         // detail view overflowed the screen on a real statement and every other
         // fixture here is narrow enough to have rendered it clean — a viewport
         // check run against them would have reported green on the broken build.
@@ -6616,7 +6616,7 @@ fn mock_documents_seed() -> Vec<DocumentItem> {
 /// Bytes behind the archive fixtures, so the viewer's branches are actually
 /// reachable in the browser.
 ///
-/// ⚠️ Without these the CSV table — the branch covering 276 real files — can only
+/// Without these the CSV table — the branch covering 276 real files — can only
 /// ever render its error state during UI work, which is how a viewer ships
 /// having never been looked at.
 #[cfg(feature = "mock")]
@@ -6635,7 +6635,7 @@ fn mock_document_bytes(sha256: &str) -> Option<Vec<u8>> {
                 .to_vec(),
         )
     } else if sha256 == "f".repeat(64) {
-        // ⛔ Deliberately far wider than a phone. `whitespace-pre` cells cannot
+        // Deliberately far wider than a phone. `whitespace-pre` cells cannot
         // wrap, so this is what pushes the CSV table past its container — the
         // exact shape that made the archive detail view pan sideways. Narrowing
         // it to tidy the fixture would silently retire the only case that fails.

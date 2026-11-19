@@ -119,7 +119,7 @@ pub fn home_tab(features: &types::Features) -> Tab {
 /// every page to serve one caller is the alternative, and it puts a nav prop on
 /// pages that never navigate.
 ///
-/// ⛔ **A request, not a command.** [`App`] refuses one for a tab this launch is
+/// A request, not a command. [`App`] refuses one for a tab this launch is
 /// not rendering, the same way the share intent already does — a page can be
 /// holding a destination that a feature toggle removed.
 #[derive(Clone, Copy)]
@@ -127,7 +127,7 @@ pub struct NavRequest(pub Signal<Option<NavTarget>>);
 
 /// Where inside a tab a caller wants to land.
 ///
-/// ⛔ **A tab alone is not a destination.** Switching to Finances mounts its
+/// A tab alone is not a destination. Switching to Finances mounts its
 /// Overview and switching to Archive mounts an unfiltered list, so a reminder
 /// row saying "12 items waiting" used to leave the user on a screen that shows
 /// neither the 12 items nor a way to find them. Typed rather than a string key:
@@ -137,7 +137,7 @@ pub struct NavRequest(pub Signal<Option<NavTarget>>);
 pub enum NavIntent {
     /// Finances: draw attention to the review inbox card.
     ///
-    /// ⚠️ Not a jump to one queue. The count behind it merges auto-import
+    /// Not a jump to one queue. The count behind it merges auto-import
     /// batches with assistant proposals (`core::approvals::summary` adds both
     /// under `Feature::Finances`), so the honest landing is the one card where
     /// the split is visible and each half is one tap away.
@@ -155,7 +155,7 @@ pub struct NavTarget {
 
 /// The intent from the last honoured [`NavRequest`], for the page it named.
 ///
-/// ⚠️ **The page clears it once acted on.** Left set, returning to that tab by
+/// The page clears it once acted on. Left set, returning to that tab by
 /// hand would re-apply a filter the user had just cleared.
 #[derive(Clone, Copy)]
 pub struct PendingNavIntent(pub Signal<Option<NavIntent>>);
@@ -260,7 +260,7 @@ pub fn use_page_back(depth: impl Fn() -> u32 + Copy + 'static, on_pop: impl FnMu
 /// Pages extend that cover with [`use_boot_hold`]: a page that is mounted but
 /// still showing its own loader holds the splash down until it has real content.
 ///
-/// Holds are **one-shot**. Once the splash lifts, `armed` goes false, every
+/// Holds are one-shot. Once the splash lifts, `armed` goes false, every
 /// outstanding hold releases and no new one is taken — so a later tab switch can
 /// never bring the splash back mid-session.
 #[derive(Clone, Copy)]
@@ -365,7 +365,7 @@ const EDGE_SWIPE_OPEN_PX: f64 = 48.0;
 const EDGE_SWIPE_CLOSE_PX: f64 = 48.0;
 
 /// Quiet period after a header toggle during which scrolling cannot toggle it
-/// again. **Must exceed the header's 300ms CSS transition.**
+/// again. Must exceed the header's 300ms CSS transition.
 ///
 /// Toggling animates the header's height, and every frame of that animation
 /// reflows the scroll column and fires `onscroll`. The direction logic reads
@@ -454,7 +454,7 @@ fn App() -> Element {
             );
             return;
         }
-        // ⛔ Set before the tab switch: the page reads this as it mounts, and a
+        // Set before the tab switch: the page reads this as it mounts, and a
         // write landing after that mount arrives too late to place it.
         pending_nav_intent.set(target.intent);
         active_tab.set(target.tab);
@@ -601,7 +601,7 @@ fn App() -> Element {
     use_context_provider(|| SyncRefresh(sync_epoch));
 
     // What is waiting on the user, for the nav badges and the assistant's
-    // reminder row. ⚠️ Mounted *after* `SyncRefresh` and in the same component,
+    // reminder row. Mounted *after* `SyncRefresh` and in the same component,
     // because it subscribes to that epoch — provided any later and the counts
     // would load once at boot and then never move.
     approvals::use_pending_approvals_provider();
@@ -1272,7 +1272,7 @@ mod tab_visibility_tests {
     /// Auto-import owns no tab — it lives as a sub-surface of Finances, so
     /// switching it off must not remove one.
     ///
-    /// ⚠️ **LLM used to be in this list and no longer is.** It gained the
+    /// LLM used to be in this list and no longer is. It gained the
     /// Assistant tab, which is exactly the case the next test pins down.
     #[test]
     fn the_tabless_features_do_not_hide_a_tab() {

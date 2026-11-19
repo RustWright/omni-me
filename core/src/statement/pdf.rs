@@ -1,8 +1,8 @@
 //! Turn a statement PDF into the layout-preserved text
 //! [`super::rendered`] parses.
 //!
-//! Shells out to `pdftotext -layout` (poppler), which is a **system
-//! dependency** — the dev box has it, and any host running this needs
+//! Shells out to `pdftotext -layout` (poppler), which is a system
+//! dependency — the dev box has it, and any host running this needs
 //! `poppler-utils` installed.
 //!
 //! ## Why `-layout` is not optional
@@ -58,12 +58,12 @@ pub enum PdfTextError {
 
 /// What poppler prints when the password is wrong.
 ///
-/// ⚠️ A string match, and it has to be: measured against poppler 24.02, a wrong
-/// password, an empty password and a damaged file **all exit 1**. The man page
+/// A string match, and it has to be: measured against poppler 24.02, a wrong
+/// password, an empty password and a damaged file all exit 1. The man page
 /// documents no code for encryption — only 0, 1, 2, 3 and 99 — so stderr is the
 /// only place the two are distinguishable, and the callers need to be: "none of
 /// your passwords opened this" and "this file is damaged" are different jobs.
-/// ⛔ If a poppler release rewords this, [`is_wrong_password`] silently stops
+/// If a poppler release rewords this, [`is_wrong_password`] silently stops
 /// recognising it, and an encrypted document is then reported as a damaged one
 /// rather than mis-opened. That is why the fallback keeps poppler's own words.
 const WRONG_PASSWORD_STDERR: &str = "Incorrect password";
@@ -89,7 +89,7 @@ pub struct Opened {
     pub opened_by: Option<usize>,
 }
 
-/// ⛔ Never derive `Debug` here — `text` is a whole statement, and a log line is
+/// Never derive `Debug` here — `text` is a whole statement, and a log line is
 /// the easiest place for a person's records to escape. Length only.
 impl std::fmt::Debug for Opened {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -102,7 +102,7 @@ impl std::fmt::Debug for Opened {
 
 /// Extract text, trying each candidate password until one opens the file.
 ///
-/// ⚠️ The empty password is always tried first, and that is what keeps this cheap:
+/// The empty password is always tried first, and that is what keeps this cheap:
 /// an unencrypted file opens on it, and poppler *succeeds* on an unencrypted file
 /// given a wrong password anyway — so the 80% of a corpus that is not encrypted
 /// still costs exactly one `pdftotext` run however many passwords are configured.
@@ -172,7 +172,7 @@ pub async fn extract_layout_text(pdf_bytes: &[u8], password: &str) -> Result<Str
 
 /// As [`extract_layout_text`], for a file already on disk.
 ///
-/// ⚠️ **The password is passed on argv**, where it is visible to anything that
+/// The password is passed on argv, where it is visible to anything that
 /// can read the process table. The obvious fix — a password *file* — does not
 /// exist: checked against poppler 24.02, `pdftotext` offers only `-opw` and
 /// `-upw`, both taking the value inline, with no stdin or file variant.

@@ -4,7 +4,7 @@
 //! may call [`EventStore::append`] directly. Rationale in `docs/src/assistant.md`
 //! § "The assistant is a device, not a feature".
 //!
-//! ⚠️ **This covers local authoring only.** The sync pull path builds its own
+//! This covers local authoring only. The sync pull path builds its own
 //! store from the `Database` handle (`sync::SyncClient::pull_only`), so inbound
 //! events never pass through here — which is what lets a device keep a complete
 //! log of features it has switched off. Injecting a writer into the pull path
@@ -38,7 +38,7 @@ pub enum WriteError {
 /// Holds the three things that must happen together on every local write. They
 /// are welded into one type rather than left as a convention because the
 /// convention had already been forgotten six times: `sync::pusher`'s loop blocks
-/// on a trigger with **no interval fallback**, so an append that skips the nudge
+/// on a trigger with no interval fallback, so an append that skips the nudge
 /// does not sync slowly — it does not sync at all, until an unrelated edit or a
 /// manual sync happens along.
 pub struct EventWriter {
@@ -281,7 +281,7 @@ mod tests {
         );
     }
 
-    /// **Inbound events are never feature-guarded**, and this is the test that
+    /// Inbound events are never feature-guarded, and this is the test that
     /// keeps it that way.
     ///
     /// The separation is currently structural — `SyncClient::pull_only` builds

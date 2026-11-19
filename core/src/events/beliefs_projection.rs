@@ -8,10 +8,10 @@
 //!
 //! `AssistantProjection` materializes the *conversation* — what was asked, what
 //! was answered, what was proposed. That is a record of the assistant's activity.
-//! Beliefs are a record of **the user**, which the assistant happens to have
+//! Beliefs are a record of the user, which the assistant happens to have
 //! derived, and the difference is not filing: the conversation tables are
 //! deliberately absent from `assistant::catalog` so the assistant cannot mine its
-//! own past guesses as evidence, while `beliefs` **is** catalogued and is meant
+//! own past guesses as evidence, while `beliefs` is catalogued and is meant
 //! to be read back. One projection holding both would make that boundary a matter
 //! of remembering which table is which.
 //!
@@ -231,7 +231,7 @@ mod tests {
         }
     }
 
-    /// ⚠️ Asked as a `WHERE`, not by reading the column back.
+    /// Asked as a `WHERE`, not by reading the column back.
     ///
     /// Both obvious readings are wrong in opposite directions, and neither fails
     /// loudly: taking a `datetime` as `Option<String>` yields `None` for a real
@@ -290,7 +290,7 @@ mod tests {
         assert!(is_retired(&db, "b1").await);
     }
 
-    /// ⚠️ The arrival-order case. A supersession authored on a device whose clock
+    /// The arrival-order case. A supersession authored on a device whose clock
     /// trails the agent's can be folded first; if it cannot land, a retired
     /// belief keeps showing as live.
     #[tokio::test]

@@ -1,6 +1,6 @@
 //! The capture modal — one sentence, visible context, send.
 //!
-//! **Mounted only while open**, rather than rendered always and class-toggled
+//! Mounted only while open, rather than rendered always and class-toggled
 //! the way `NavDrawer` is. The drawer needs the always-rendered form so its
 //! slide can animate from off-screen; this needs the opposite, because mounting
 //! *is* the snapshot: the description of the screen underneath is taken in
@@ -8,7 +8,7 @@
 //! exactly what gets sent even if a background sync changes the page beneath the
 //! scrim while they are typing.
 //!
-//! **No category picker, no severity, no triage state.** Those are reading-side
+//! No category picker, no severity, no triage state. Those are reading-side
 //! concerns, and the reader here is a person at a terminal working through a
 //! markdown list. Every field a capture form adds is another reason to close it
 //! and carry on being annoyed instead.

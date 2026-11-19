@@ -4,13 +4,13 @@
 //! report because every device pushes its events here, so one endpoint over the
 //! tailnet serves all of them regardless of which device filed them.
 //!
-//! **Two representations, one query.** `?format=md` renders markdown for a
+//! Two representations, one query. `?format=md` renders markdown for a
 //! person (the default, because the reader is a session at a terminal); JSON is
 //! there for anything that wants to route reports onward. Whatever calls this is
 //! what makes the destination pluggable — a script writing into a private
 //! overlay, or one opening issues — so the app needs no plugin seam of its own.
 //!
-//! **What this endpoint deliberately is not:** a triage API. There is no state
+//! What this endpoint deliberately is not: a triage API. There is no state
 //! to mark a report done, because the acting-on happens in a repo and a commit,
 //! not in the app.
 
@@ -47,8 +47,8 @@ pub fn feedback_routes() -> Router<AppState> {
     Router::new().route("/feedback", get(list_handler))
 }
 
-/// ⚠️ **The error type must carry a `StatusCode`.** `Err(String)` is an axum
-/// `IntoResponse` that answers **`200 OK` with a plain-text body**, so a failed
+/// The error type must carry a `StatusCode`. `Err(String)` is an axum
+/// `IntoResponse` that answers `200 OK` with a plain-text body, so a failed
 /// query reached the caller as a success with no reports in it — indistinguishable
 /// from a quiet week. That is how a broken query went unnoticed for two months:
 /// nothing was silent about it except the status line.

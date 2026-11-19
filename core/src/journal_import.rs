@@ -332,9 +332,9 @@ fn consume_items(ledger: ParserLedger, parent: &Path, source: &Path, state: &mut
 
 /// One hledger transaction in omni's own shapes, before anything file-specific.
 ///
-/// ⚠️ Extracted from [`convert_transaction`] so the assistant's
-/// `transaction.record` action can reuse it. ⛔ **Do not write a second parser
-/// for this syntax.** Elided amounts, `@@` total-cost prices, virtual-posting
+/// Extracted from [`convert_transaction`] so the assistant's
+/// `transaction.record` action can reuse it. Do not write a second parser
+/// for this syntax. Elided amounts, `@@` total-cost prices, virtual-posting
 /// refusal and inline header tags are each subtle, each already solved here, and
 /// each silently wrong when reimplemented — `unsupported_syntax`'s doc comment is
 /// a list of exactly those mistakes, made once already.
@@ -347,7 +347,7 @@ pub(crate) struct ParsedEntry {
 
 /// Read exactly one transaction out of free hledger text.
 ///
-/// ⚠️ **Exactly one, and the refusals are not pedantry.** Nothing here is an
+/// Exactly one, and the refusals are not pedantry. Nothing here is an
 /// import: this reads a snippet a model wrote, and one approval must correspond
 /// to one ledger entry. Two transactions in the text would author two events off
 /// a card describing one, and none means the text was prose the parser skipped
@@ -492,13 +492,13 @@ fn convert_transaction(
 ///
 /// Each one used to be silently *misread* rather than rejected:
 ///
-/// * **Virtual postings.** `convert_explicit_posting` never read
+/// * Virtual postings. `convert_explicit_posting` never read
 ///   `ParserPosting::reality` (the word appeared nowhere in `core/src`), so
 ///   `ledger-parser` stripped the brackets and `[Assets:Budget:Food] 50.00 CAD`
-///   was imported as a **real** posting — inventing 50 CAD of assets and net
+///   was imported as a real posting — inventing 50 CAD of assets and net
 ///   worth. `infer_elided_postings` then summed virtual amounts into the same
 ///   pot as real ones, where ledger keeps the two balances strictly separate.
-/// * **Balance assertions.** The explicit/elided split is exactly
+/// * Balance assertions. The explicit/elided split is exactly
 ///   `p.amount.is_some()` and never consulted `p.balance`, so
 ///   `Assets:Cash = 500.00 CAD` (amount `None`) was classified as *the elided
 ///   leg* and handed the negation of the other legs — ledger would compute
@@ -506,14 +506,14 @@ fn convert_transaction(
 ///   elided slot, so a genuinely elided leg in the same entry was rejected.
 ///   Assertions were dropped on re-render anyway, erasing every reconciliation
 ///   checkpoint in the file.
-/// * **Lot prices.** `infer_elided_postings` matched only `price` (`@`/`@@`)
+/// * Lot prices. `infer_elided_postings` matched only `price` (`@`/`@@`)
 ///   and never `lot_price` (`{…}`), so `Assets:NWG 10 NWG {50.00 CAD}` with an
 ///   elided cash leg balanced at raw quantity and produced `Assets:Cash -10 NWG`
 ///   — a nonsense commodity on a cash account, which then surfaced in
 ///   `account_summaries`.
 ///
 /// Refusing rather than supporting is a deliberate scope call: a scan of the
-/// user's real journal (10,209 transactions) found **zero** instances of all
+/// user's real journal (10,209 transactions) found zero instances of all
 /// three. If that changes, the failure is visible and the transaction is
 /// recoverable, rather than quietly wrong in the balances.
 fn unsupported_syntax(t: &ParserTxn) -> Option<String> {
@@ -573,8 +573,8 @@ fn convert_explicit_posting(p: &ParserPosting) -> Option<Posting> {
     })
 }
 
-/// One elided posting balances each commodity in the explicit postings **at
-/// cost** — exactly as ledger does. A priced leg contributes its cost in the
+/// One elided posting balances each commodity in the explicit postings at
+/// cost — exactly as ledger does. A priced leg contributes its cost in the
 /// quote commodity (`@ unit` → `qty × unit`; `@@ total` → the total, signed by
 /// the posting's direction); an unpriced leg contributes its own amount. For a
 /// single-commodity transaction this yields one balancing posting; for a
@@ -800,7 +800,7 @@ mod tests {
 ";
 
     /// Importing a journal that declares accounts must work — including
-    /// omni-me's **own** regenerated `budget.journal`, where the `JournalFile`
+    /// omni-me's own regenerated `budget.journal`, where the `JournalFile`
     /// projection writes an `account <name>  ; commodity:<c>` block for every
     /// per-account override (rename / hide / liquid).
     ///

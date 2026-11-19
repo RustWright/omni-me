@@ -84,7 +84,7 @@ pub fn documents_routes() -> Router<AppState> {
             post(extract_pages_handler).layer(DefaultBodyLimit::max(MAX_CAPTURE_PAGES_BYTES)),
         )
         .route("/documents/archive", post(archive_handler))
-        // ⛔ Two routes, never one. The preview is what the user reads; the
+        // Two routes, never one. The preview is what the user reads; the
         // confirm may only act on what that preview returned.
         .route("/documents/purge/preview", post(purge_preview_handler))
         .route("/documents/purge", post(purge_handler))
@@ -122,10 +122,10 @@ pub struct ArchiveResponse {
 /// Body: raw document bytes. `Content-Type` carries the MIME; `x-filename` the
 /// name to file it under.
 ///
-/// ⚠️ **Archiving is not extracting.** This stores the bytes and whatever text
+/// Archiving is not extracting. This stores the bytes and whatever text
 /// they already carry, and deliberately runs no model — a document nothing can
 /// read is archived all the same, and gains fields later from a separate event.
-/// ⛔ Do not fold `/documents/extract` into this: that route answers "what does
+/// Do not fold `/documents/extract` into this: that route answers "what does
 /// this receipt say", which is a different question with a finance-shaped answer.
 async fn archive_handler(
     State(state): State<AppState>,
@@ -177,7 +177,7 @@ async fn archive_handler(
         filename,
         mime,
         source,
-        // ⛔ A single uploaded file has no container. Only email ingest nests.
+        // A single uploaded file has no container. Only email ingest nests.
         None,
     )
     .await
@@ -187,7 +187,7 @@ async fn archive_handler(
     // no `ResolvedConfig`, so `EventWriter`'s guard has nothing to read here.
     // Pre-existing and shared with every auto-import source — see `tasks.md`.
     //
-    // ⚠️ **One batch, not one call per event.** The fields event is about the
+    // One batch, not one call per event. The fields event is about the
     // document the archive event creates; appending them separately would let a
     // crash in between leave fields for a document nothing else records.
     let appended = state
@@ -223,7 +223,7 @@ async fn archive_handler(
     }))
 }
 
-/// ⛔ Rejects an unknown value rather than defaulting to one. Silently filing a
+/// Rejects an unknown value rather than defaulting to one. Silently filing a
 /// typo'd `source` as `upload` would put a wrong provenance on a permanent event.
 fn parse_ingest_source(s: &str) -> Option<archive::IngestSource> {
     match s {
@@ -454,13 +454,13 @@ async fn archive_capture(
 
 /// A preview the user has been shown, and the only set a purge may act on.
 ///
-/// ⛔ **The gate that keeps deletion out of a caller's hands.** `apply` accepts a
+/// The gate that keeps deletion out of a caller's hands. `apply` accepts a
 /// subset of the ids the matching preview returned and nothing else, so a client
 /// — buggy, or driven from a console — cannot purge a group nobody looked at, and
 /// cannot widen a set the user narrowed. It is `last_import_root`'s pattern,
 /// moved server-side because this is where the bytes are.
 ///
-/// ⚠️ Single-use and single-slot. A second preview replaces the first, so a stale
+/// Single-use and single-slot. A second preview replaces the first, so a stale
 /// ticket cannot be replayed later against a group that has since changed.
 #[derive(Debug, Clone)]
 pub struct PurgeTicket {
@@ -543,7 +543,7 @@ async fn purge_preview_handler(
             .collect(),
     };
 
-    // ⚠️ A group larger than one preview page cannot be confirmed in one action,
+    // A group larger than one preview page cannot be confirmed in one action,
     // and that is deliberate rather than a limitation to route around: the ruling
     // is that every item going is *listed*, so a confirm covering rows the user
     // never saw would be the thing the grouped preview exists to avoid.
@@ -557,7 +557,7 @@ async fn purge_preview_handler(
     }))
 }
 
-/// Purge a confirmed set. ⛔ Irreversible.
+/// Purge a confirmed set. Irreversible.
 async fn purge_handler(
     State(state): State<AppState>,
     Json(body): Json<PurgeRequest>,
@@ -572,7 +572,7 @@ async fn purge_handler(
         ));
     };
 
-    // ⛔ Subset only. Sparing items shrinks the set, which is the whole point of
+    // Subset only. Sparing items shrinks the set, which is the whole point of
     // the checkboxes; nothing may add to it.
     if let Some(stray) = body
         .document_ids

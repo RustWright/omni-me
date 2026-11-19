@@ -1,18 +1,18 @@
 //! Financial-health glance dashboard aggregation.
 //!
 //! Produces the four widget payloads that `DashboardView` renders:
-//! - **Net worth** — sum of listable accounts' base-currency values, with
+//! - Net worth — sum of listable accounts' base-currency values, with
 //!   liabilities subtracted automatically (negative balances on
 //!   `Liabilities:*` come back as negative `value_in_base`, so the sum is
 //!   already correct).
-//! - **`Unmatched` balance** — single number; the reconciliation-pending
+//! - `Unmatched` balance — single number; the reconciliation-pending
 //!   signal per `project_unmatched_account_pattern.md`. Click-through on
 //!   the screen filters the transaction list to `account: Unmatched`.
-//! - **Monthly income / spending trend** — last N months of (income,
+//! - Monthly income / spending trend — last N months of (income,
 //!   spending) per the user's base currency, bucketed by year-month.
 //!   Foreign-commodity legs are excluded (documented limitation; revisit
 //!   when more than 5% of activity isn't in `base_currency`).
-//! - **Recurring obligations** — confirmed `RecurringPattern` rows pulled
+//! - Recurring obligations — confirmed `RecurringPattern` rows pulled
 //!   from the projection table. `recurring_scanner` proposes patterns and
 //!   `confirm_recurring` promotes them; this list stays empty until the user
 //!   confirms at least one.
@@ -73,7 +73,7 @@ pub struct DashboardSummary {
     pub net_worth_in_base: Option<Decimal>,
     /// 3.10: sum of the accounts the user has marked *liquid* (spendable), for
     /// the liquidity-aware "Can I afford X?" verdict. `None` carries a specific
-    /// meaning — **no account is marked liquid** (opt-in unused), so
+    /// meaning — no account is marked liquid (opt-in unused), so
     /// [`can_i_afford`] falls back to net worth. `Some(x)` means the liquid
     /// policy is active with spendable total `x` (possibly `0` if the marked
     /// accounts are empty or unconvertible).
@@ -182,8 +182,8 @@ fn sum_listable_net_worth(summaries: &[AccountSummary]) -> Option<Decimal> {
 
 /// Sum of the accounts the user marked *liquid* (3.10), for the afford verdict.
 ///
-/// The `None` vs `Some` distinction is load-bearing: `None` means **no account
-/// is marked liquid** (opt-in unused) → [`can_i_afford`] falls back to net
+/// The `None` vs `Some` distinction is load-bearing: `None` means no account
+/// is marked liquid (opt-in unused) → [`can_i_afford`] falls back to net
 /// worth. Once ≥1 account is marked liquid we return `Some(total)` even if that
 /// total is `0` (e.g. the marked accounts are empty or unconvertible), so a
 /// deliberate "no spendable cash" reads as "can't afford it", not as a fallback
@@ -420,7 +420,7 @@ pub fn net_worth_series(
 
 /// Build the net-worth history from an already-parsed [`Ledger`] + price table.
 ///
-/// Walks the transactions **in date order**, accumulating a running [`Balance`]
+/// Walks the transactions in date order, accumulating a running [`Balance`]
 /// of the roster's balance-bearing accounts (excluding `Unmatched`, matching
 /// [`sum_listable_net_worth`]), and samples net worth at each boundary date for
 /// the requested `range`. One pass over the postings; FX conversion at each
@@ -633,13 +633,13 @@ fn distill_parsed_recurring(
 /// Compute the verdict for "can I afford `amount`?" against a dashboard
 /// summary.
 ///
-/// 3.10 makes this **liquidity-aware**: the spendable pool is the accounts the
+/// 3.10 makes this liquidity-aware: the spendable pool is the accounts the
 /// user has marked liquid (opt-in), not full net worth. Two pools are in play:
 ///
 /// - [`DashboardSummary::liquid_assets_in_base`] — `Some(x)` once ≥1 account is
 ///   marked liquid; the spendable total (possibly `0`). The primary pool.
 /// - [`DashboardSummary::net_worth_in_base`] — the fallback pool when
-///   **nothing** is marked liquid (`liquid_assets_in_base == None`), preserving
+///   nothing is marked liquid (`liquid_assets_in_base == None`), preserving
 ///   pre-3.10 behavior so the feature degrades gracefully.
 ///
 /// Both pools subtract the next month's recurring obligations before the
@@ -648,7 +648,7 @@ fn distill_parsed_recurring(
 /// remaining > 0`. `Unmatched` is excluded from both pools (clearing account),
 /// so it never inflates a verdict.
 ///
-/// **Deliberately caller-less — do not remove as dead code.** This is the
+/// Deliberately caller-less — do not remove as dead code. This is the
 /// affordability policy itself, kept while the UI that asked the question is
 /// gone: the Can-I-Afford widget was retired on purpose, because questions of
 /// that shape are to be answered by the LLM chat rather than a bespoke screen.

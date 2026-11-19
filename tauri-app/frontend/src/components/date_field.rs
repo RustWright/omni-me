@@ -1,10 +1,10 @@
 //! Shared validated date field with an in-app calendar popover.
 //!
 //! The native `<input type="date">` can't be used: on the Linux desktop it opens
-//! the **webkit2gtk native date picker** — a GTK popup that grabs focus and never
+//! the webkit2gtk native date picker — a GTK popup that grabs focus and never
 //! hands it back to the wry window, freezing the whole app until you click away to
 //! another OS window (friction 2026-07-05). So this field takes plain `YYYY-MM-DD`
-//! text (validated inline) **and** offers a calendar icon that opens an in-app
+//! text (validated inline) and offers a calendar icon that opens an in-app
 //! month grid (pure HTML/Dioxus — no native control, no freeze) to tap a day.
 //! Typing full dates every time was "torture" on mobile; the popover fixes that
 //! while keeping the field typeable. (batch-2 #3, user chose the calendar popover.)
@@ -19,7 +19,7 @@ use crate::components::primitives::INPUT_CLASS;
 use crate::user_date::UserDate;
 
 /// A `YYYY-MM-DD` string is acceptable if it's empty (a cleared/optional field)
-/// or it parses as a **real** calendar date — so impossible dates (`2026-13-40`,
+/// or it parses as a real calendar date — so impossible dates (`2026-13-40`,
 /// `2026-02-30`) and malformed input are rejected, not just wrong-length ones.
 /// Pure + unit-testable.
 pub fn is_valid_date_str(s: &str) -> bool {

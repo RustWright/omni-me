@@ -2,7 +2,7 @@
 //!
 //! Two situations need a `dyn LlmClient` that cannot work: no `[llm]` section at
 //! all, and a section naming a model we refuse to send data to. Both must still
-//! **boot** — a host with no LLM configured is a supported deployment, and the
+//! boot — a host with no LLM configured is a supported deployment, and the
 //! server has no way to ask a human for a key mid-startup — so the failure has to
 //! be deferred to call time rather than raised at construction.
 //!

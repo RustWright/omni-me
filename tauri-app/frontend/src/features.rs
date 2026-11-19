@@ -1,6 +1,6 @@
 //! The feature set this launch is running with, as app-wide context.
 //!
-//! Read **once**, at boot, and never refreshed — deliberately. A feature's
+//! Read once, at boot, and never refreshed — deliberately. A feature's
 //! projections and schedulers were decided when the backend started, so a live
 //! value would produce a tab whose data nothing is maintaining. Core says the
 //! same thing from the other side: `ConfigKey::applies_immediately` is `false`

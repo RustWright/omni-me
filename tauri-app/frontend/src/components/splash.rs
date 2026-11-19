@@ -7,12 +7,12 @@ use dioxus::prelude::*;
 /// CodeMirror editor and *then* corrected to the tab the user actually closed
 /// on, so the wait was paid twice and its most visible half looked broken.
 ///
-/// **The mark is inlined rather than loaded from `tauri-app/branding/`** — it is
+/// The mark is inlined rather than loaded from `tauri-app/branding/` — it is
 /// four elements, and a splash that has to fetch its own artwork can't paint on
 /// the frame it's needed. Keep it in sync with `branding/omni-me-fg.svg`; that
 /// file remains the canonical source for every generated icon.
 ///
-/// **Two overlaid `<svg>`s, not one with an animated `<g>`.** Rotating an
+/// Two overlaid `<svg>`s, not one with an animated `<g>`. Rotating an
 /// element *inside* an SVG needs `transform-box`/`transform-origin` handling
 /// that differs across engines, and this app ships on webkit2gtk (desktop) and
 /// Android Chromium — where such differences have burned us before (see the

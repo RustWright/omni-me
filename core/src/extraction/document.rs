@@ -6,7 +6,7 @@
 //! arithmetic. This one asks *"what is this document"* — a lease, a notice of
 //! assessment, a warranty — and answers with fields nothing can check.
 //!
-//! ⛔ **No confidence score, deliberately.** `ExtractionResult` carries one
+//! No confidence score, deliberately. `ExtractionResult` carries one
 //! because `verify` has real arithmetic to measure it against. Here there is
 //! none: there is no sum to reconcile in *"this is a 2023 notice of
 //! assessment"*, so a number beside the answer would imply a calibration
@@ -42,7 +42,7 @@ pub struct DocumentSummary {
     pub title: String,
     /// ISO-8601, and `None` when the document states no date of its own.
     ///
-    /// ⚠️ Nullable on purpose. Asked for a date it cannot find, a model will
+    /// Nullable on purpose. Asked for a date it cannot find, a model will
     /// supply today's — which then sorts a 2015 lease into this month.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub document_date: Option<String>,
@@ -70,7 +70,7 @@ pub struct DocumentSummary {
 /// question at all. Folding the two together would make every finance extractor
 /// declare a capability it does not have.
 ///
-/// ⛔ `NullExtractor` deliberately does **not** implement this, and the asymmetry
+/// `NullExtractor` deliberately does not implement this, and the asymmetry
 /// with [`super::DocumentExtractor`] is the point. A null draft is a usable "no
 /// extraction available, enter it yourself"; a null *summary* would be a
 /// document filed with an empty kind and an empty title, which reads as a
@@ -170,11 +170,11 @@ pub fn document_schema() -> serde_json::Value {
                 "enum": crate::retention_class::keys()
             }
         },
-        // ⛔ `fields` is required so the key cannot simply be omitted — six of
+        // `fields` is required so the key cannot simply be omitted — six of
         // seven models returned nothing there, and a document catalogued without
         // its account or policy number is one nobody can find again.
         //
-        // ⛔ And deliberately NO `minItems`. A floor would make a document that
+        // And deliberately NO `minItems`. A floor would make a document that
         // truly states no identifiers unanswerable except by inventing one, which
         // the prompt forbids and an abstention probe exists to measure.
         //
@@ -211,7 +211,7 @@ pub fn parse_summary(
 /// The `model:<id>` form of [`DocumentField::source`].
 ///
 /// The endpoint's model id already carries its version (`qwen/qwen3.6-35b-a3b`),
-/// so it is used whole. ⛔ Do not synthesise an `@version` suffix when the
+/// so it is used whole. Do not synthesise an `@version` suffix when the
 /// configured id lacks one — a made-up version is worse than an absent one,
 /// because it reads as a record of which build produced the value.
 pub fn model_source(model: &str) -> String {
@@ -220,7 +220,7 @@ pub fn model_source(model: &str) -> String {
 
 /// Turn a reading into the event that folds it onto the document's row.
 ///
-/// ⛔ Every field lands `verified: false` and there is no parameter to change
+/// Every field lands `verified: false` and there is no parameter to change
 /// that. The flag means something checked this value against a figure the
 /// document states about itself; nothing on this path does, and the one way this
 /// rule gets broken is by a caller that "knows" its model is reliable.
@@ -258,7 +258,7 @@ pub fn to_fields_payload(
             }
         }
     }
-    // ⛔ Only when something survived. An empty value is how a *person* says they
+    // Only when something survived. An empty value is how a *person* says they
     // took every tag off, and the projection keeps that distinct from never having
     // been tagged — so a model emitting one would claim an act nobody performed.
     if !tags.is_empty() {
@@ -278,7 +278,7 @@ pub fn to_fields_payload(
         .unwrap_or("other");
     fields.push(field(DOCUMENT_RETENTION_KEY, class));
     for extra in &summary.fields {
-        // ⛔ A model must not be able to overwrite a hoisted key through the open
+        // A model must not be able to overwrite a hoisted key through the open
         // `fields` list. They have their own slots above; a duplicate key here
         // would fold against its own sibling and which one won would depend on
         // vector order, not on provenance.
@@ -541,7 +541,7 @@ mod tests {
 
     #[test]
     fn a_reading_with_no_usable_tags_writes_no_tag_field_at_all() {
-        // ⛔ Not an empty value. An empty tag set is how a *person* records having
+        // Not an empty value. An empty tag set is how a *person* records having
         // taken every tag off, and the projection keeps that distinct from never
         // having been tagged — so a model must not be able to say it.
         for raw in [serde_json::json!([]), serde_json::json!(["a,b"])] {
@@ -562,9 +562,9 @@ mod tests {
 
     #[test]
     fn the_schema_requires_fields_and_leaves_tags_optional() {
-        // ⛔ Guards a decision, not a shape: six of seven models omitted `fields`
+        // Guards a decision, not a shape: six of seven models omitted `fields`
         // entirely, which catalogues a document nobody can find by its own
-        // numbers. ⚠️ And there is deliberately no `minItems` — a floor would make
+        // numbers. And there is deliberately no `minItems` — a floor would make
         // abstention impossible and invent a value to satisfy it.
         let schema = document_schema();
         let required: Vec<&str> = schema["required"]
@@ -584,7 +584,7 @@ mod tests {
 
     #[test]
     fn an_absent_date_stays_absent() {
-        // ⚠️ Both spellings of "no date", because an endpoint that dislikes null
+        // Both spellings of "no date", because an endpoint that dislikes null
         // answers with an empty string and that would reach the projection as a
         // real `document_date`.
         for raw in [

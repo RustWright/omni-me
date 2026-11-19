@@ -303,7 +303,7 @@ impl SyncClient {
     /// Push local events this device has authored but not yet pushed.
     /// Chunks at 100 events per HTTP request.
     ///
-    /// Keyed on `last_push_received_at` — **this device's** clock — against each
+    /// Keyed on `last_push_received_at` — this device's clock — against each
     /// event's locally-stamped `received_at`. It used to filter the author
     /// timestamp against the *server's* pull cursor, so a device whose clock
     /// trailed the server by more than one pull interval authored events already
@@ -486,7 +486,7 @@ impl SyncClient {
     /// The push path had no poison-pill escape. The server validates the whole
     /// request and returns 400 for the *entire chunk* on one bad payload or one
     /// unknown `event_type`, and `retry_until_success` then resent the identical
-    /// chunk forever at a 60s cap while the cursor never advanced — so **all**
+    /// chunk forever at a 60s cap while the cursor never advanced — so all
     /// outbound sync for that device was permanently wedged, not just the bad
     /// event. Reachable from a legacy-shaped event still above the cursor, or a
     /// client that self-updates ahead of the box. This is precisely the

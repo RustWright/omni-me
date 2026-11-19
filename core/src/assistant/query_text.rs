@@ -3,12 +3,12 @@
 
 /// Words dropped before a question reaches the full-text index.
 ///
-/// ⚠️ **Conservative on purpose, and the asymmetry is the reason.** A stopword
+/// Conservative on purpose, and the asymmetry is the reason. A stopword
 /// missed from this list costs tally precision; a *content* word wrongly added to
 /// it costs recall, silently and forever. So near-misses stay out: `may` and
 /// `march` are months, `can` and `will` are nouns, `mind` and `back` are verbs.
 ///
-/// ⚠️ **This list is not a search-quality knob.** BM25's IDF already scores a
+/// This list is not a search-quality knob. BM25's IDF already scores a
 /// match on `the` near zero, so leaving one in barely moves the ranking. What it
 /// moves is `TypeResults::total_matches` — under OR, one function word matches
 /// nearly every record, and the count the model reads as "that is all of them"
@@ -31,7 +31,7 @@ const STOPWORDS: &[&str] = &[
 
 /// Strip function words from `query`, keeping the rest in order.
 ///
-/// ⚠️ **A query of nothing but stopwords is returned unchanged.** "who am i"
+/// A query of nothing but stopwords is returned unchanged. "who am i"
 /// could legitimately answer to a note titled *Who Am I*, and the alternative is
 /// an empty `$q`, which under OR matches nothing and is indistinguishable from an
 /// honest miss. The rule is what makes this function unable to produce a query

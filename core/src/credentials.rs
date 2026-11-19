@@ -9,7 +9,7 @@
 //!
 //! The public engine knows only two *generic* credential kinds: IMAP mailbox
 //! pollers and the `[llm]` endpoint. Bank-specific credentials live in the
-//! private overlay, which deserializes its own struct from the **same**
+//! private overlay, which deserializes its own struct from the same
 //! `credentials.toml` — serde ignores unknown sections in both directions
 //! (neither struct uses `deny_unknown_fields`), so the public and private
 //! views of the file coexist without either knowing the other's sections.
@@ -60,7 +60,7 @@ pub struct Credentials {
     /// supported shape; absent or incomplete yields a `NullLlmClient` that
     /// reports the gap at call time rather than failing boot.
     ///
-    /// ⚠️ A `[gemini]` section may still be present in an existing file. It is
+    /// A `[gemini]` section may still be present in an existing file. It is
     /// ignored: serde has no `deny_unknown_fields` here, and the closed-model
     /// path was removed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -98,7 +98,7 @@ pub struct PdfPasswords(Vec<(String, String)>);
 impl PdfPasswords {
     /// Collect every `pdf_password*` secret, ordered by key name.
     ///
-    /// ⚠️ Ordered by **name**, not by position in the file: `secrets` is a
+    /// Ordered by name, not by position in the file: `secrets` is a
     /// `HashMap`, so file order is not recoverable. A `pdf_password_1_*` /
     /// `pdf_password_2_*` naming is therefore how the order is controlled, and the
     /// order matters only for which candidate is tried first.
@@ -132,7 +132,7 @@ impl PdfPasswords {
     }
 }
 
-/// ⛔ Never derive `Debug` here. The whole type is secret values; only the names
+/// Never derive `Debug` here. The whole type is secret values; only the names
 /// they are filed under may be printed.
 impl std::fmt::Debug for PdfPasswords {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -175,7 +175,7 @@ pub struct LlmProviderConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
     /// Model id (e.g. `deepseek/deepseek-v4-flash`, or a bare `llama3.1` on a
-    /// local server). ⚠️ Namespaced ids are checked against an open-weights
+    /// local server). Namespaced ids are checked against an open-weights
     /// allowlist — see `llm::provider`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
@@ -224,13 +224,13 @@ pub struct LlmProviderConfig {
 
     // --- Per-role overrides (`docs/src/assistant.md` § One model per job) ---
     //
-    // ⚠️ The roles are NOT interchangeable and never were: A is chosen on
+    // The roles are NOT interchangeable and never were: A is chosen on
     // latency, B on quality, C on reading images, D on cost-per-call and
     // knowing when to abstain. One endpoint cannot be right for all four, and
     // A vs C already proves it — A's leading candidate (`gpt-oss-120b`) is
     // text-only while C must read receipts.
     //
-    // ⛔ Role E (local: embeddings, reranking, speech) is deliberately absent.
+    // Role E (local: embeddings, reranking, speech) is deliberately absent.
     // It is `fastembed` running on the machine, not an HTTP endpoint, and
     // forcing it into this table would describe a connection it does not make.
     /// Role A — the assistant loop and chat. Chosen on latency.
@@ -241,7 +241,7 @@ pub struct LlmProviderConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch: Option<LlmRoleOverride>,
     /// Role C1 — the quarantined extractor: receipts, statements, photographed
-    /// documents. ⚠️ Reads images, and **never holds tools**.
+    /// documents. Reads images, and never holds tools.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extractor: Option<LlmRoleOverride>,
     /// Role C2 — the document reader: what a document *is*, for cataloguing.
@@ -284,7 +284,7 @@ pub enum LlmRole {
     Triage,
 }
 
-/// A per-role override of `[llm]`. **Every field is optional**, and that is the
+/// A per-role override of `[llm]`. Every field is optional, and that is the
 /// whole design: a role names only what differs, and inherits the rest.
 ///
 /// ```toml
@@ -299,7 +299,7 @@ pub enum LlmRole {
 /// vision = true
 /// ```
 ///
-/// ⚠️ `deny_unknown_fields` is load-bearing here. A misspelt key inside a role
+/// `deny_unknown_fields` is load-bearing here. A misspelt key inside a role
 /// table would otherwise parse cleanly and do nothing — the silent-config
 /// failure this project has been bitten by repeatedly. A typo in the role
 /// *name* (`[llm.extracter]`) is caught separately, by [`check_role_names`].
@@ -340,7 +340,7 @@ impl LlmProviderConfig {
     /// Resolve the endpoint config for one role: the override's set fields laid
     /// over `[llm]`, everything else inherited.
     ///
-    /// The returned config carries **no** role tables of its own, so a resolved
+    /// The returned config carries no role tables of its own, so a resolved
     /// config cannot be resolved again — the recursion a caller might otherwise
     /// write by accident is not representable.
     pub fn for_role(&self, role: LlmRole) -> LlmProviderConfig {
@@ -416,7 +416,7 @@ const ROLE_KEYS: [&str; 7] = [
 
 /// Reject an unknown sub-table under `[llm]`.
 ///
-/// ⚠️ Serde cannot do this for us. `LlmProviderConfig` must stay permissive at
+/// Serde cannot do this for us. `LlmProviderConfig` must stay permissive at
 /// the top level — a `[gemini]`-era file still parses, by design — so
 /// `[llm.extracter]` would deserialize to nothing and the misconfigured role
 /// would silently fall back to `[llm]`, quietly sending receipts to a text-only
@@ -534,7 +534,7 @@ impl std::fmt::Debug for LlmProviderConfig {
 }
 
 /// Same contract as [`LlmProviderConfig`]'s: shape visible, secret redacted.
-/// ⛔ Never derive `Debug` here — a role override carries its own `api_key`,
+/// Never derive `Debug` here — a role override carries its own `api_key`,
 /// and a key hidden on `[llm]` but printed from `[llm.extractor]` is the same
 /// leak through a new door.
 impl std::fmt::Debug for LlmRoleOverride {
@@ -603,7 +603,7 @@ pub fn save(path: &Path, creds: &Credentials) -> Result<(), CredentialError> {
     Ok(())
 }
 
-/// Write `bytes` to `path` such that the file is **never** readable by other
+/// Write `bytes` to `path` such that the file is never readable by other
 /// users, not even briefly.
 ///
 /// The distinction matters: `std::fs::write` creates with `0666 & !umask`
@@ -638,7 +638,7 @@ pub fn write_secret_file(path: &Path, bytes: &[u8]) -> Result<(), CredentialErro
 mod tests {
     use super::*;
 
-    /// The promise the typed-role design was chosen for. ⚠️ Serde alone does
+    /// The promise the typed-role design was chosen for. Serde alone does
     /// NOT deliver it — `LlmProviderConfig` stays permissive at the top level so
     /// a `[gemini]`-era file still parses, which means `[llm.extracter]` would
     /// deserialize to nothing and the role would silently fall back to `[llm]`.
@@ -703,7 +703,7 @@ mod tests {
         assert_eq!(found.name_of(2), None);
     }
 
-    /// ⛔ The whole type is secret values. A `{:?}` in a log line must print the
+    /// The whole type is secret values. A `{:?}` in a log line must print the
     /// names they are filed under and nothing else.
     #[test]
     fn debugging_pdf_passwords_never_prints_a_value() {
@@ -740,7 +740,7 @@ mod tests {
 
     /// The three role-C seats resolve to three different models.
     ///
-    /// ⚠️ This is the defect that made the tables necessary, not a hypothetical:
+    /// This is the defect that made the tables necessary, not a hypothetical:
     /// `build_extractor`, `build_reader` and `build_transcriber` all resolved
     /// `LlmRole::Extractor` and passed their name only to a log line, so one
     /// table served three seats. The 2026-09-16 slate then picked a different
@@ -805,7 +805,7 @@ mod tests {
 
     /// An unset C seat falls back to `[llm]`, NOT to `[llm.extractor]`.
     ///
-    /// ⛔ One level of fallback, matching the four roles that came before. A
+    /// One level of fallback, matching the four roles that came before. A
     /// reader that quietly inherited the extractor's model would reintroduce
     /// exactly the coupling these tables removed, and it would be invisible.
     #[test]

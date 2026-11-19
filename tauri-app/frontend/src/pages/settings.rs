@@ -651,7 +651,7 @@ fn ConfigRow(
                                                 .unwrap_or(range.0)
                                         }),
                                     range,
-                                    // ⚠️ A stepper cannot show "no value of its own" —
+                                    // A stepper cannot show "no value of its own" —
                                     // it always has a number under the cursor. Said in
                                     // words instead, or following the shared value
                                     // would look identical to overriding it with the
@@ -706,7 +706,7 @@ fn ConfigRow(
 
 /// A bounded number control for an `Int` config key.
 ///
-/// ⚠️ Emits the same `String` the segmented control does, so
+/// Emits the same `String` the segmented control does, so
 /// [`segment_to_value`] and the row's `on_change` are untouched — a second
 /// encoding of a config value is a second place for it to be wrong.
 ///
@@ -1234,7 +1234,7 @@ pub(super) fn health_badge(wire_health: &str) -> (&'static str, &'static str) {
 
 /// Render the one-line subtitle: outcome digest + relative tick time.
 ///
-/// A successful tick now reports its **disposition**, not just an append count.
+/// A successful tick now reports its disposition, not just an append count.
 /// The previous version read `events_appended` and printed "no new events" on
 /// zero — which is the same line a source shows while discarding every row it
 /// fetched. Rows the user must act on are called out explicitly, and an absent
@@ -1714,7 +1714,7 @@ fn AccountOverrideRow(
 
 /// Read-only report of the server's LLM endpoint.
 ///
-/// ⚠️ **Deliberately not editable.** This was a form that wrote `[llm]` —
+/// Deliberately not editable. This was a form that wrote `[llm]` —
 /// including an API key — to the server's `credentials.toml`. Three things were
 /// wrong with that: it is deployment configuration rather than a preference, it
 /// was restart-to-apply so it never behaved like a setting, and model selection

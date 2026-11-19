@@ -1,18 +1,18 @@
 //! What is waiting on the user, and which screen it is waiting on.
 //!
-//! One summary with two consumers: the **nav badges**, so a queue is visible from
-//! wherever the user happens to be, and the **assistant's reminder row**, so a
-//! stretch spent entirely in the assistant window still surfaces them. ⛔ Both
+//! One summary with two consumers: the nav badges, so a queue is visible from
+//! wherever the user happens to be, and the assistant's reminder row, so a
+//! stretch spent entirely in the assistant window still surfaces them. Both
 //! render *these* numbers. A second count computed in the frontend is a second
 //! thing that can be wrong, and the one that disagrees is the one nobody notices.
 //!
-//! ⚠️ **This module counts; it never decides where a thing is reviewed.** That is
+//! This module counts; it never decides where a thing is reviewed. That is
 //! [`inbox::DOMAIN_REVIEWED`]'s job, read here through
 //! [`inbox::is_domain_reviewed`]. A second copy of that routing would be free to
 //! drift, and what it produces is a badge pointing at a screen that does not list
 //! the item — the user taps it, sees nothing, and learns to ignore the badge.
 //!
-//! ⛔ **No deep-link protocol, deliberately.** A [`Feature`] *is* the destination:
+//! No deep-link protocol, deliberately. A [`Feature`] *is* the destination:
 //! the frontend's `Tab::feature()` already maps every tab to the feature that owns
 //! it, so naming the feature names the screen. A link type invented here would be
 //! a second routing table serving one caller.
@@ -40,7 +40,7 @@ pub enum ReviewedAt {
     /// The feature's own screen — finance proposals on Finances, unverified
     /// document fields on Archive.
     Feature(Feature),
-    /// The assistant's proposal inbox, which is where anything **no** domain
+    /// The assistant's proposal inbox, which is where anything no domain
     /// screen claims is decided.
     AssistantInbox,
 }
@@ -48,12 +48,12 @@ pub enum ReviewedAt {
 impl ReviewedAt {
     /// The name this travels under.
     ///
-    /// ⚠️ **A feature crosses as its config key** (`feature.documents`), which is
+    /// A feature crosses as its config key (`feature.documents`), which is
     /// the string both sides already agree on — `ConfigKey`'s `Display` here and
-    /// `types::Feature::key()` in the frontend. ⛔ Not the Rust variant name: that
+    /// `types::Feature::key()` in the frontend. Not the Rust variant name: that
     /// would be a *second* wire spelling for a type that already has one, and the
     /// frontend mirror's own test comment records that a feature-name mismatch
-    /// fails **silently**, because an unrecognised feature falls back to *on*.
+    /// fails silently, because an unrecognised feature falls back to *on*.
     pub fn wire(self) -> String {
         match self {
             ReviewedAt::Feature(feature) => feature.key().to_string(),
@@ -70,7 +70,7 @@ impl Serialize for ReviewedAt {
 
 /// One review surface and how much is waiting on it.
 ///
-/// ⚠️ **Surfaces, not queues.** Finance proposals and auto-imported batches are
+/// Surfaces, not queues. Finance proposals and auto-imported batches are
 /// two different queues reviewed on one screen, and they arrive here as a single
 /// entry — two badges on one tab would be a UI bug expressed in the data.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -82,7 +82,7 @@ pub struct PendingApprovals {
 /// Everything waiting on the user right now, by surface. Surfaces with nothing
 /// waiting are absent rather than zero, so a caller renders what it is given.
 ///
-/// ⚠️ **Takes the boot feature snapshot, NOT a live `ResolvedConfig`** — the same
+/// Takes the boot feature snapshot, NOT a live `ResolvedConfig` — the same
 /// set `EventWriter::features()` hands the command guards. Tabs are decided at
 /// startup, so a badge computed from the live config would disagree with what is
 /// on screen for the whole window between a toggle and the next relaunch: a count
@@ -90,7 +90,7 @@ pub struct PendingApprovals {
 /// snapshot makes that disagreement impossible rather than merely unlikely. Same
 /// reasoning as `ConfigKey::applies_immediately` being `false` for every feature.
 ///
-/// ⚠️ **A disabled feature contributes nothing**, because its screen is not
+/// A disabled feature contributes nothing, because its screen is not
 /// rendered and a badge for a tab that does not exist is unreachable. The
 /// assistant inbox follows the same rule through [`Feature::Llm`], which owns the
 /// assistant tab.
@@ -105,7 +105,7 @@ pub async fn summary(
         add(&mut out, ReviewedAt::AssistantInbox, n);
     }
 
-    // Proposals a domain screen claims. ⛔ Read from `DOMAIN_REVIEWED` rather
+    // Proposals a domain screen claims. Read from `DOMAIN_REVIEWED` rather
     // than listing features here, or adding one would mean editing two places and
     // the second would be found by a user, not a test.
     for &feature in inbox::DOMAIN_REVIEWED {
@@ -116,7 +116,7 @@ pub async fn summary(
         add(&mut out, ReviewedAt::Feature(feature), n);
     }
 
-    // Auto-imported batches. Gated on **Finances**, not `AutoImport`: the gate
+    // Auto-imported batches. Gated on Finances, not `AutoImport`: the gate
     // asks "is the screen that reviews this rendered", and the reviewing screen
     // is the finance one whatever produced the rows.
     if enabled.contains(&Feature::Finances) {
@@ -154,7 +154,7 @@ mod tests {
         NotesProjection, ProjectionRunner, RoutinesProjection, SurrealEventStore,
     };
 
-    /// Returns the same **boot snapshot** the real caller passes — built here
+    /// Returns the same boot snapshot the real caller passes — built here
     /// from `EventWriter`, so the tests exercise the set production uses rather
     /// than one assembled to suit them.
     async fn harness(features_off: &[Feature]) -> (Database, BTreeSet<Feature>, EventWriter) {
@@ -257,7 +257,7 @@ mod tests {
         );
     }
 
-    /// ⛔ A badge for a screen that is not rendered is unreachable, and a count
+    /// A badge for a screen that is not rendered is unreachable, and a count
     /// the user cannot act on trains them to ignore every other badge.
     #[tokio::test]
     async fn a_disabled_feature_contributes_nothing() {
@@ -286,7 +286,7 @@ mod tests {
         assert_eq!(count_at(&out, ReviewedAt::AssistantInbox), 1);
     }
 
-    /// ⛔ Every feature this module can name must have a screen that lists the
+    /// Every feature this module can name must have a screen that lists the
     /// thing being counted.
     ///
     /// Spelled out rather than derived, for the reason

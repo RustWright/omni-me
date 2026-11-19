@@ -130,14 +130,14 @@ mod tests {
     /// Every command that reaches the box on a feature's behalf must refuse when
     /// that feature is off.
     ///
-    /// The **write** side needs no scan: `authoring_features` is an exhaustive
+    /// The write side needs no scan: `authoring_features` is an exhaustive
     /// match, and the guard sits inside `EventWriter`, which
     /// `no_command_appends_events_directly` already forces every write through.
     /// Outbound HTTP has no such chokepoint — `box_request` is generic — so a
     /// command can spend an LLM call or hit a bank source with its feature off
     /// and nothing downstream would notice.
     ///
-    /// **Blind spot, deliberately open.** This checks that a module reaching the
+    /// Blind spot, deliberately open. This checks that a module reaching the
     /// box mentions a guard *somewhere*, not that every function in it does. A
     /// finer check would need to parse Rust. Two modules are exempt because they
     /// belong to no feature: `sync.rs` (sync must work with everything off, or a
@@ -194,8 +194,8 @@ mod tests {
     /// Nothing in this crate may append an event outside the writer.
     ///
     /// Appending an event and nudging the push debouncer have to happen
-    /// together: `pusher::run_loop` blocks on `trigger.notified()` with **no
-    /// interval fallback**, so an append that skips the nudge doesn't sync
+    /// together: `pusher::run_loop` blocks on `trigger.notified()` with no
+    /// interval fallback, so an append that skips the nudge doesn't sync
     /// slowly, it doesn't sync at all — until an unrelated edit, a manual Sync,
     /// or the retry engine happens to fire.
     ///
@@ -203,7 +203,7 @@ mod tests {
     /// forgotten it. `EventWriter` pairs the operations; this test is what stops
     /// a seventh.
     ///
-    /// ⚠️ **The needle is `store.append`, not `state.event_store.append`.** The
+    /// The needle is `store.append`, not `state.event_store.append`. The
     /// narrower form missed every function that received the store as a
     /// parameter instead of reading it off `AppState`, and the old note here
     /// claimed there was exactly one. There were four: both schedulers,

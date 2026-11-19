@@ -81,7 +81,7 @@ struct MessageRow {
 
 /// Every message on one thread, oldest first.
 async fn thread_messages(db: &Database, thread_id: &str) -> Result<Vec<MessageRow>, EventError> {
-    // ⚠️ `created_at` is selected as well as ordered on. SurrealDB v3 rejects
+    // `created_at` is selected as well as ordered on. SurrealDB v3 rejects
     // `ORDER BY` over a field the projection does not return, and the error names
     // a "missing order idiom", which does not read as the cause.
     let mut resp = db
@@ -126,7 +126,7 @@ async fn thread_messages(db: &Database, thread_id: &str) -> Result<Vec<MessageRo
 
 /// Questions still waiting on an answer, oldest first.
 ///
-/// ⚠️ **Any answer closes a question, including a failed one.** Treating a
+/// Any answer closes a question, including a failed one. Treating a
 /// failure as still-pending would make the loop retry it on the next sweep, which
 /// against a broken endpoint is a spend loop with no ceiling. A person who wants
 /// another attempt asks again, and that is a new question with its own event.
@@ -221,7 +221,7 @@ struct ThreadState {
 /// would be a second definition to keep in step with the first. They serialize
 /// through [`db_value_as_json`]; `DbValue`'s own serde form is enum-tagged.
 ///
-/// ⚠️ **`records_read` carries no title** — see
+/// `records_read` carries no title — see
 /// [`crate::assistant::answer::records_read`] for why, and resolve the display
 /// name against the record tables at render time.
 #[derive(Debug, Clone, Serialize, SurrealValue)]
@@ -257,7 +257,7 @@ fn db_value_as_json<S: serde::Serializer>(v: &Option<DbValue>, s: S) -> Result<S
 
 /// One thread, plus whether it is still waiting on an answer.
 ///
-/// **The pending flag is computed here, not in the client.** "Unanswered" is the
+/// The pending flag is computed here, not in the client. "Unanswered" is the
 /// same judgement the responder's sweep makes, and two implementations of it
 /// would disagree the first time a `stopped` variant is added — the client would
 /// spin on a question the agent considers closed.
@@ -288,7 +288,7 @@ pub async fn list_threads(db: &Database) -> Result<Vec<ThreadSummary>, EventErro
 }
 
 async fn all_threads(db: &Database) -> Result<Vec<ThreadSummary>, EventError> {
-    // ⚠️ `last_message_at` is selected as well as ordered on — SurrealDB v3
+    // `last_message_at` is selected as well as ordered on — SurrealDB v3
     // rejects `ORDER BY` over a field the projection does not return, and names
     // it a "missing order idiom", which does not read as the cause. Ordering on
     // the `<string>` alias is chronological because SurrealDB renders datetimes
@@ -748,7 +748,7 @@ mod tests {
         );
     }
 
-    /// ⚠️ The whole round trip for `scheduled`: event → projection → read model.
+    /// The whole round trip for `scheduled`: event → projection → read model.
     /// Every hop is somewhere the field can be silently dropped, and if it is,
     /// the client's "asked on your behalf" marker simply never appears — a
     /// failure that looks like nothing at all.

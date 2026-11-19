@@ -913,7 +913,7 @@ mod tests {
         assert_eq!(events_for(None, "0.00").await, 0);
     }
 
-    /// ⚠️ The asymmetry that decides this: a receipt whose amount failed to
+    /// The asymmetry that decides this: a receipt whose amount failed to
     /// extract is indistinguishable from a survey at this point, so suppressing
     /// it would lose a real purchase with nothing on screen to say so. One junk
     /// draft in a review queue is the cheaper mistake.

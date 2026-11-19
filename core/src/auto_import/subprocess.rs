@@ -139,7 +139,7 @@ pub struct HelperResponse {
     /// Opaque JSON the review screen can render; engine stores but never reads.
     #[serde(default)]
     pub source_metadata: Option<serde_json::Value>,
-    /// The helper's row accounting. **Required when `status == ok`** — see
+    /// The helper's row accounting. Required when `status == ok` — see
     /// [`HelperDisposition`] for why it is typed rather than left in
     /// `source_metadata`.
     ///
@@ -223,7 +223,7 @@ pub struct HelperDisposition {
     /// Rows below the helper's `import_since` floor.
     #[serde(default)]
     pub out_of_window: usize,
-    /// Upstream keys with no account mapping — **one entry per dropped row**,
+    /// Upstream keys with no account mapping — one entry per dropped row,
     /// repeats included. The engine counts these against its row identity, so
     /// collapsing to a distinct set here would report 6 unmapped rows for 295
     /// dropped ones and break the arithmetic. Consumers that want the distinct

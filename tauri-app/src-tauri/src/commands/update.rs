@@ -40,7 +40,7 @@ pub struct UpdateCheck {
 
 /// True when `latest` is a strictly higher semver than `current`.
 ///
-/// **Fails closed.** This used to fall back to `latest != current` when either
+/// Fails closed. This used to fall back to `latest != current` when either
 /// string failed to parse, on the reasoning that offering an update beats
 /// silently skipping one. That reasoning is inverted here: "different" includes
 /// "older", so a manifest naming an unparseable version turned the updater into
@@ -152,7 +152,7 @@ pub async fn download_android_update(
 /// object would only appear after a page reload in our SPA. No-op on desktop
 /// (nothing polls the file there).
 ///
-/// **The `apk_path` argument is ignored**, and kept only so the existing
+/// The `apk_path` argument is ignored, and kept only so the existing
 /// frontend call compiles. It used to be written through verbatim, which made
 /// this command a bridge for installing *any* APK the webview could name —
 /// including one another app had dropped on shared external storage, because

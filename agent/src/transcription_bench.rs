@@ -49,7 +49,7 @@ struct Case {
 
 /// Every PDF under `corpus`, depth-bounded, in a stable order.
 ///
-/// ⚠️ Sorted, and not cosmetically: directory order is filesystem order, so two
+/// Sorted, and not cosmetically: directory order is filesystem order, so two
 /// runs would otherwise sample different documents and their numbers would not
 /// be comparable. The account directories are discovered rather than listed,
 /// because they are named after the institutions that issued them and this file
@@ -77,10 +77,10 @@ fn collect_pdfs(dir: &Path, depth: usize, into: &mut Vec<PathBuf>) {
 
 /// Keep only the PDFs that carry a real text layer.
 ///
-/// ⛔ This filter *is* the oracle. A scanned PDF has no text layer, so there
+/// This filter *is* the oracle. A scanned PDF has no text layer, so there
 /// would be nothing to score against — and scoring a transcription against an
 /// empty string would report every model as perfectly fabricating.
-/// ⚠️ `passwords` is what lets an encrypted statement be a case at all. Two issuers
+/// `passwords` is what lets an encrypted statement be a case at all. Two issuers
 /// encrypt 100% of theirs, so without it this arm silently measured only the
 /// unencrypted 82% of the corpus and counted the rest as scans.
 async fn born_digital(
@@ -281,7 +281,7 @@ fn tag_for(path: &Path) -> String {
 /// identical by construction, and rendering a multi-page statement is the
 /// expensive half on a machine this size.
 ///
-/// ⛔ Rasterized rather than handed over as a PDF, and that is the whole trick.
+/// Rasterized rather than handed over as a PDF, and that is the whole trick.
 /// `payload_for` sends a PDF's text layer when it has one, so passing the file
 /// would measure poppler reading itself. Rendering to images forces the vision
 /// path onto a document whose answer is already known.

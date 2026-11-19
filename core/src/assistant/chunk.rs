@@ -3,7 +3,7 @@
 
 /// Longest chunk handed to the embedder, in bytes.
 ///
-/// ⚠️ **A correctness bound, not a tuning knob.** fastembed truncates at the model's
+/// A correctness bound, not a tuning knob. fastembed truncates at the model's
 /// `max_length` (512 tokens for the BGE small family) *silently* — an over-long chunk
 /// is not an error, its tail simply never reaches the index and is unfindable, with no
 /// signal that anything was dropped. English runs about 4 bytes per token, but dates,
@@ -62,7 +62,7 @@ pub fn chunk(text: &str) -> Vec<String> {
 
 /// Split one over-long paragraph on whitespace, with overlap.
 ///
-/// ⚠️ Byte offsets are walked to a `char_indices` boundary before slicing: a naive
+/// Byte offsets are walked to a `char_indices` boundary before slicing: a naive
 /// `&s[a..b]` panics the moment a chunk edge lands inside a multi-byte character, and
 /// one accented word or emoji in a journal entry is enough to hit it.
 fn split_hard(para: &str) -> Vec<String> {

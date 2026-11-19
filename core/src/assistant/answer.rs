@@ -74,7 +74,7 @@ pub fn records_read(outcome: &Outcome) -> Vec<RecordRef> {
 /// in prose. This is also what keeps the verb layer writer-free — nothing is
 /// recorded until the loop has ended and the agent walks the trace.
 ///
-/// ⚠️ **Re-validated here, not trusted from the trace.** The verb already
+/// Re-validated here, not trusted from the trace. The verb already
 /// rejected bad arguments on the turn they were sent, but the trace holds what
 /// the model asked for, not what the verb returned — a failed `propose` is in
 /// there looking exactly like a successful one. Skipping the re-check would put
@@ -109,7 +109,7 @@ pub fn proposals(config: &ResolvedConfig, outcome: &Outcome) -> Vec<ProposedActi
             continue;
         };
 
-        // ⚠️ Evidence is attached **here**, from the run, and never taken from the
+        // Evidence is attached here, from the run, and never taken from the
         // model. Letting it name its own sources reopens the hole `records_read`
         // closes: a citation is worth something only if the record was
         // demonstrably in hand. An action that wants evidence and got none still
@@ -417,7 +417,7 @@ mod tests {
         assert!(proposals(&config(), &o).is_empty());
     }
 
-    /// ⚠️ The trace holds what the model *asked for*, not what the verb returned —
+    /// The trace holds what the model *asked for*, not what the verb returned —
     /// a rejected `propose` sits in there looking exactly like an accepted one. A
     /// proposal the user cannot act on must never reach their inbox.
     #[test]
@@ -461,7 +461,7 @@ mod tests {
         );
     }
 
-    /// ⚠️ **The whole guarantee behind `EvidenceFromTrace` is this overwrite**,
+    /// The whole guarantee behind `EvidenceFromTrace` is this overwrite,
     /// and nothing else enforced it. `describe_type` shows the parameter and
     /// `validate_args` accepts a well-formed one — it has to, because a stored
     /// proposal re-checked at approval legitimately carries evidence. So the
@@ -526,7 +526,7 @@ mod tests {
         );
     }
 
-    /// ⛔ The journal invariant, at the derivation step. Even if the verb layer
+    /// The journal invariant, at the derivation step. Even if the verb layer
     /// were somehow bypassed, a journal proposal cannot become an event here.
     #[test]
     fn a_journal_proposal_never_survives_extraction() {

@@ -180,7 +180,7 @@ pub struct PersistedWorkspace {
 
 /// Does this session hold anything a reader would act on?
 ///
-/// **The one predicate**, shared by the two hydrate paths (`journal.rs`,
+/// The one predicate, shared by the two hydrate paths (`journal.rs`,
 /// `notes.rs`) and by [`ContinuityStore::put`]'s eviction. Deliberately one
 /// function rather than three copies of `content != last_saved_content`: the
 /// readers discard clean sessions and `put` therefore declines to store them,
@@ -218,7 +218,7 @@ pub struct ContinuityStore {
     /// Ephemeral read-cache for finances surfaces (Stage C3). Keyed by a caller
     /// string (e.g. `"ov:dash"`, `"nw:6m"`); holds the last-fetched payload as
     /// JSON so a revisit renders instantly (stale-while-revalidate) instead of
-    /// flashing a loader while it re-queries. Deliberately **not** persisted —
+    /// flashing a loader while it re-queries. Deliberately not persisted —
     /// it's always re-derivable from the backend, so it stays out of
     /// `PersistedWorkspace` to keep the on-disk workspace lean.
     reads: Signal<HashMap<String, serde_json::Value>>,
@@ -262,20 +262,20 @@ impl ContinuityStore {
         self.sessions.read().get(key).cloned()
     }
 
-    /// Insert or replace the session for `key` — **unless it is clean**, in
+    /// Insert or replace the session for `key` — unless it is clean, in
     /// which case any existing session for that key is dropped instead.
     ///
     /// `&self` (not `&mut self`) because `Signal` is a `Copy` interior-mutable
     /// handle — call sites needn't hold a mutable binding.
     ///
-    /// **Why clean sessions are dropped rather than stored.** Both readers —
+    /// Why clean sessions are dropped rather than stored. Both readers —
     /// `journal.rs` and `notes.rs`, the only two in the app — hydrate with
     /// `store.get(&key).filter(|s| s.content != s.last_saved_content)`. A clean
     /// session is therefore *already* discarded at every read, deliberately: it
     /// must yield to the fresh backend copy or it permanently shadows edits that
     /// synced in from another device. Storing one buys nothing and costs a great
     /// deal, because a session is inserted the first time a day or note is
-    /// **opened** — read-only, no edits — and `remove` was wired for exactly one
+    /// opened — read-only, no edits — and `remove` was wired for exactly one
     /// transient key (`NewNote`). In a daily journalling app that is one
     /// full-text entry per day accumulating for the life of the install, each
     /// one re-serialised into the persisted workspace blob and re-parsed at
@@ -386,7 +386,7 @@ impl ContinuityStore {
 
     /// Snapshot all three maps for on-disk persistence (1.8a).
     ///
-    /// **`peek`, not `read`** — this deliberately does *not* subscribe. It used
+    /// `peek`, not `read` — this deliberately does *not* subscribe. It used
     /// to, which was how the persist effect knew to re-run; the effect now
     /// subscribes to the cheap `revision` counter instead and calls this only
     /// after its debounce has elapsed. Subscribing here would drag the deep
@@ -513,7 +513,7 @@ pub fn use_continuity_provider() -> ContinuityStore {
         // fresh/empty DB the backend `setup` runs a slow `init_all()` *before* it
         // `manage`s AppState. A very early `get_workspace` invoke can hit unmanaged
         // state and return Err — but on genuine first-open (Android) it can also be
-        // **dropped** by the not-yet-ready IPC so its promise NEVER settles. The
+        // dropped by the not-yet-ready IPC so its promise NEVER settles. The
         // previous retry-on-Err loop awaited the invoke directly, so a dropped
         // invoke parked here forever: `loaded` never flipped and every
         // `loaded_peek` waiter (journal fetch, `main.rs` tab-restore) hung on

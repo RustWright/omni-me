@@ -3,15 +3,15 @@
 //! Two properties of this layer were reviewed and deliberately kept, so that
 //! they are not repeatedly rediscovered as problems:
 //!
-//! **The one-line commands are not redundant wrappers.** Around a dozen
+//! The one-line commands are not redundant wrappers. Around a dozen
 //! commands do nothing but call a `core::db::queries` function and map its
 //! error to `String`. That is the minimum a `#[tauri::command]` can be: the
 //! attribute is what registers the function in `generate_handler!` and makes it
 //! reachable from the frontend, so the wrapper IS the feature. Deleting one
 //! deletes the frontend's access to that query; "inlining" it is not possible.
 //!
-//! **`Result<T, String>` everywhere is the boundary's error type, not
-//! laziness.** Errors cross into JavaScript, where a rich Rust error enum has
+//! `Result<T, String>` everywhere is the boundary's error type, not
+//! laziness. Errors cross into JavaScript, where a rich Rust error enum has
 //! no representation — it would be serialised to a string on the way out
 //! regardless. Typed errors stay meaningful in `core`, which is where anything
 //! branches on them; by the time a value reaches this layer it is on its way to

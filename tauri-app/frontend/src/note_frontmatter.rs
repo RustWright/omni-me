@@ -1,14 +1,14 @@
 //! Client-side split/serialize of a journal note's frontmatter into typed
 //! properties + body — the data model behind the journal properties panel.
 //!
-//! The frontend crate has **no `core` dependency and no YAML library**, so this
+//! The frontend crate has no `core` dependency and no YAML library, so this
 //! is a small, forgiving, hand-rolled parser/serializer. It types two universal
 //! keys (`date`, `tags`) plus whichever keys the record type declares — passed
 //! in, never compiled in; everything else in the frontmatter is preserved
 //! verbatim as `legacy_raw` (the panel's raw escape hatch) so imported Obsidian
 //! notes round-trip.
 //!
-//! **Serialization is safe by construction:** its output is a strict subset of
+//! Serialization is safe by construction: its output is a strict subset of
 //! what `core::import::parse_markdown` and
 //! `core::events::notes_projection::is_complete` accept —
 //!   * `tags` are always inline (`[a, b]`), never a YAML block list, so
@@ -20,7 +20,7 @@
 //!     block-list property can never stop the `is_complete` scan before the
 //!     declared keys are seen.
 //!
-//! ⚠️ Those three now have to hold for **user-declared** keys, not just for three
+//! Those three now have to hold for user-declared keys, not just for three
 //! known ones. What keeps them holding is that `core::record_type::RecordType::validate`
 //! rejects a key that could break the scan (spaces, colons, newlines, a leading
 //! `-` or `#`, or one of the reserved names) before the declaration is ever
@@ -37,7 +37,7 @@ pub struct JournalProps {
     pub date: String,
     /// `tags` list. Serialized inline so `is_complete` never terminates early.
     pub tags: Vec<String>,
-    /// The declared properties as `(key, value)`, **in declaration order**.
+    /// The declared properties as `(key, value)`, in declaration order.
     /// Seeded from the declaration by [`split_journal`], so a key the record
     /// type names but the file omits still gets a row — that is what makes the
     /// panel draw an empty box for a property you just added, rather than
@@ -134,8 +134,8 @@ pub fn split_note(raw: &str) -> (NoteProps, String) {
     (props, body.to_string())
 }
 
-/// Recombine note properties + body. **Unlike the journal serializer this emits
-/// a frontmatter block only when there is something to put in it** (tags or
+/// Recombine note properties + body. Unlike the journal serializer this emits
+/// a frontmatter block only when there is something to put in it (tags or
 /// legacy props) — a plain note (no tags, no legacy) round-trips to just its
 /// body, so editing a fence-less note never injects a spurious `---` block.
 pub fn serialize_note(props: &NoteProps, body: &str) -> String {

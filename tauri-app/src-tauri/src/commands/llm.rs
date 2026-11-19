@@ -1,4 +1,4 @@
-//! LLM endpoint config command — a thin **read-only** HTTP proxy to
+//! LLM endpoint config command — a thin read-only HTTP proxy to
 //! `/llm/config` on the sync server. The LLM runs server-side (per
 //! [[feedback-llm-server-side]]), so the client only reports what is wired. The
 //! api_key is held server-side and never round-trips through the client:
@@ -27,7 +27,7 @@ pub struct LlmConfigView {
     pub has_key: bool,
     /// Whether the endpoint is also opted in to reading documents.
     ///
-    /// ⚠️ This was **missing** from this struct, so it never round-tripped: the
+    /// This was missing from this struct, so it never round-tripped: the
     /// server reported it, this view silently dropped it, and the client always
     /// saw `false`. The old settings checkbox therefore rendered unchecked no
     /// matter how the server was configured.

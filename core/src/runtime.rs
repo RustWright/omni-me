@@ -4,9 +4,9 @@
 //! — has to answer the same two questions at startup, and one of the answers is
 //! a safety property rather than a preference.
 //!
-//! **The non-production posture.** Overriding the data root marks the run as
-//! non-production, and a non-production run **never reads the persisted server
-//! URL**. That asymmetry is the whole point, and it is not merely a precedence
+//! The non-production posture. Overriding the data root marks the run as
+//! non-production, and a non-production run never reads the persisted server
+//! URL. That asymmetry is the whole point, and it is not merely a precedence
 //! rule: a dev data root is very often a *copy* of the live one, so it carries
 //! the live `server_url` file, and honouring it would aim a test build straight
 //! at the box. Once the box holds real data that cannot be wiped before release,
@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 
 /// Resolve the data root, honouring `env_var`.
 ///
-/// Returns the path **and** whether it came from the override, because that flag
+/// Returns the path and whether it came from the override, because that flag
 /// is what drives the non-production posture. Callers must not re-derive it by
 /// comparing paths — a dev root that happens to equal the default would then be
 /// silently treated as production.
@@ -41,13 +41,13 @@ pub fn choose_app_data(default_dir: PathBuf, env_dir: Option<&str>) -> (PathBuf,
 /// host-specific constant: the client bakes its build default from CI, the agent
 /// supplies its own, and both need the same precedence rules applied to them.
 pub struct ServerUrlPolicy<'a> {
-    /// Env var that overrides everything. Deliberately **not** written back to
+    /// Env var that overrides everything. Deliberately not written back to
     /// the persisted file, so unsetting it restores the saved value instead of
     /// having silently rewritten it.
     pub env_var: &'a str,
     /// Filename under the data root holding the persisted URL.
     pub url_file: &'a str,
-    /// Compiled-in fallback. ⚠️ The private overlay's CI bakes this to the box
+    /// Compiled-in fallback. The private overlay's CI bakes this to the box
     /// address, which is exactly why it must never be the non-production
     /// fallback.
     pub build_default: &'a str,
@@ -334,7 +334,7 @@ mod tests {
 
     // --- the safety property ---------------------------------------------
 
-    /// **The test this whole mechanism exists for.** A dev data root is usually
+    /// The test this whole mechanism exists for. A dev data root is usually
     /// a *copy* of the live one, so it carries the live `server_url` file. That
     /// file must not be able to point a test build at the real box — the user
     /// is using the app live, and a test write would land indistinguishable
@@ -492,7 +492,7 @@ mod tests {
         );
     }
 
-    /// **The test this whole mechanism exists for.** The dev server is seeded
+    /// The test this whole mechanism exists for. The dev server is seeded
     /// from a clone of the live database, so the clone arrives stamped
     /// `production` while the dev config says `dev`. Booting anyway would let a
     /// dev device sync real writes into production while the operator believes

@@ -36,7 +36,7 @@ pub enum Identity {
 /// How a property is entered and rendered.
 ///
 /// Only `Text` exists today, and it ships as a field rather than being implied
-/// **because the event log is permanent**: a payload field added later is absent
+/// because the event log is permanent: a payload field added later is absent
 /// from every historical event, whereas a new *value* for a field that already
 /// exists costs nothing. Adding `Number`/`Checkbox`/`List` later is a value change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -162,7 +162,7 @@ impl RecordType {
     /// The three-prompt reflective journal, byte-compatible with what shipped
     /// before record types existed.
     ///
-    /// This is a **preset, not the app's opinion** about how anyone should journal;
+    /// This is a preset, not the app's opinion about how anyone should journal;
     /// it exists as a worked example and as the shape an upgrading install keeps so
     /// its existing entries go on validating identically.
     pub fn journal_reflective() -> Self {

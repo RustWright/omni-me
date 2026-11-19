@@ -5,12 +5,12 @@
 //! previews before it acts, it counts what it did in a form that cannot flatter
 //! itself, and it refuses to delete bytes anything else still references.
 //!
-//! ⛔ **This never decides *what* to purge.** A person does, per group, having
+//! This never decides *what* to purge. A person does, per group, having
 //! seen every item in it. The model may flag junk; flagging is a proposal, and
 //! deletion is never grantable to autonomy. Why, and the alternatives that were
 //! refused: `docs/src/archive.md`.
 //!
-//! ⚠️ **A purge does not empty the event log.** The archive event stays, text and
+//! A purge does not empty the event log. The archive event stays, text and
 //! all — the log is append-only and a rebuild replays it. What a purge reclaims
 //! is the *blob*, which is where the bytes actually are, and what it removes from
 //! every read surface is the projection row's content. Those are different
@@ -25,7 +25,7 @@ use crate::events::{DocumentPurgedPayload, EventError, EventWriter, NewEvent, Wr
 
 /// Items listed in one preview before the list is truncated.
 ///
-/// ⚠️ The **count is always exact**; only the list is cut. Pointing a purge at a
+/// The count is always exact; only the list is cut. Pointing a purge at a
 /// thousand-message newsletter backlog must not build a thousand-row
 /// confirmation nobody reads, and must not understate what is about to go.
 /// `preview_obsidian_export` sized its own cap for the same reason.
@@ -46,7 +46,7 @@ pub enum PurgeError {
 pub struct PurgeItem {
     pub document_id: String,
     /// What a person recognises it by — the title if anything read it, else the
-    /// filename. ⛔ Never empty: an unlabelled row is one nobody can decide about.
+    /// filename. Never empty: an unlabelled row is one nobody can decide about.
     pub label: String,
     pub archived_at: Option<String>,
     /// The day its retention timer counts from (`YYYY-MM-DD`). Shown instead of the
@@ -58,7 +58,7 @@ pub struct PurgeItem {
     /// Whether these bytes stay regardless, because something else references
     /// them.
     ///
-    /// ⚠️ Shown per item rather than only in the totals: "purging this reclaims
+    /// Shown per item rather than only in the totals: "purging this reclaims
     /// nothing" is a reason a person might spare it, and they can only act on it
     /// if they can see which one it applies to.
     pub bytes_shared: bool,
@@ -78,7 +78,7 @@ pub struct PurgePreview {
     /// Bytes that would not, because another document or a transaction
     /// attachment still references the same blob.
     ///
-    /// ⚠️ Reported separately rather than netted off. "Frees 31 MB" and "frees
+    /// Reported separately rather than netted off. "Frees 31 MB" and "frees
     /// 0.3 MB of the 31 MB you selected" are different answers, and only the
     /// second is true when a corpus shares bytes.
     pub bytes_shared: u64,
@@ -86,7 +86,7 @@ pub struct PurgePreview {
 
 /// What a purge actually did.
 ///
-/// ⚠️ `selected == purged + skipped + failed`, asserted by
+/// `selected == purged + skipped + failed`, asserted by
 /// [`Self::check_accounting`] rather than assumed. A bare count of successes is
 /// unfalsifiable, and for an irreversible operation an unnoticed
 /// gap between "selected" and "done" is the worst possible thing to discover
@@ -106,7 +106,7 @@ pub struct PurgeReport {
 }
 
 impl PurgeReport {
-    /// ⛔ Call before returning one. A purge that cannot account for every
+    /// Call before returning one. A purge that cannot account for every
     /// document it selected has lost track of an irreversible operation.
     pub fn check_accounting(&self) -> Result<(), String> {
         let sum = self.purged + self.skipped + self.failed;
@@ -122,13 +122,13 @@ impl PurgeReport {
 
 /// What a purge of everything tagged `tag` would remove.
 ///
-/// ⛔ Writes nothing and deletes nothing. The same selection the apply half uses,
+/// Writes nothing and deletes nothing. The same selection the apply half uses,
 /// so the preview cannot drift from what actually happens — the rule
 /// `preview_obsidian_export` states outright.
 ///
 /// `archived_before` narrows the group to documents older than an RFC3339 instant,
-/// which is how a **retention** group is previewed: its members are "tagged X and
-/// past X's rule", not the whole tag. ⛔ It narrows the one selection rather than
+/// which is how a retention group is previewed: its members are "tagged X and
+/// past X's rule", not the whole tag. It narrows the one selection rather than
 /// adding a second query, because the preview and the confirm have to be looking at
 /// the same set.
 ///
@@ -182,7 +182,7 @@ async fn summarise(
     // report then contradicted the preview the person decided on.
     let mut counted: std::collections::HashSet<&str> = std::collections::HashSet::new();
 
-    // ⚠️ Counted over the whole set, not just the listed page. A total derived
+    // Counted over the whole set, not just the listed page. A total derived
     // from the truncated list would shrink as the selection grew, which is
     // exactly backwards.
     let hashes: Vec<String> = rows.iter().filter_map(|r| r.sha256.clone()).collect();
@@ -226,7 +226,7 @@ async fn summarise(
 
 /// Whether a row's bytes would survive this purge regardless.
 ///
-/// ⚠️ References *inside the selection* do not count as sharing — they are about
+/// References *inside the selection* do not count as sharing — they are about
 /// to go too. Counting them would report every duplicate in a batch as shared and
 /// make a purge look like it reclaims nothing.
 fn is_shared(
@@ -248,7 +248,7 @@ fn is_shared(
 
 /// Title if anything has read the document, else its filename.
 ///
-/// ⛔ Never the bare id. A row a person cannot identify is one they cannot
+/// Never the bare id. A row a person cannot identify is one they cannot
 /// decide about, and this list is the whole of their evidence.
 fn label_for(row: &DocumentRow) -> String {
     match (&row.title, &row.filename) {
@@ -260,11 +260,11 @@ fn label_for(row: &DocumentRow) -> String {
 
 /// Purge exactly these documents, and reclaim any bytes nothing else needs.
 ///
-/// ⛔ **The caller has already shown this exact list to the user.** Nothing here
+/// The caller has already shown this exact list to the user. Nothing here
 /// re-derives a selection; an id that reaches this function is one a person
 /// confirmed. That is what keeps deletion out of autonomy's reach.
 ///
-/// The order is load-bearing. Every tombstone is written **first**, then blobs
+/// The order is load-bearing. Every tombstone is written first, then blobs
 /// are considered — because [`queries::blob_reference_counts`] excludes purged
 /// documents, so a blob becomes reclaimable only once every document naming it
 /// has been tombstoned. Deleting as we went would refuse to free anything a batch
@@ -355,7 +355,7 @@ pub async fn apply(
 
 /// A blob's size on disk, or 0 when it is not here.
 ///
-/// ⚠️ Measured rather than taken from `documents.size`: the row records the size
+/// Measured rather than taken from `documents.size`: the row records the size
 /// of the *document* as ingest saw it, and what a purge actually frees is the
 /// file. On a host that never held the bytes the honest answer is zero.
 async fn blob_size(dir: &Path, sha: &str) -> u64 {
@@ -455,7 +455,7 @@ mod tests {
         assert_eq!(p.items[0].document_id, id);
         assert!(!p.items[0].bytes_shared);
 
-        // ⛔ Still there, still unpurged, bytes intact.
+        // Still there, still unpurged, bytes intact.
         let row = queries::get_document(&h.db, &id).await.unwrap().unwrap();
         assert_ne!(row.purged, Some(true));
         let sha = row.sha256.unwrap();
@@ -592,7 +592,7 @@ mod tests {
         );
     }
 
-    /// ⚠️ Bytes shared only *within* the batch are reclaimable — both referrers
+    /// Bytes shared only *within* the batch are reclaimable — both referrers
     /// are going. Treating them as shared would make a purge of duplicates report
     /// that it freed nothing.
     #[tokio::test]
@@ -652,7 +652,7 @@ mod tests {
         assert_eq!((report.selected, report.failed), (1, 1));
     }
 
-    /// ⛔ The accounting check has to be able to fail, or it is decoration.
+    /// The accounting check has to be able to fail, or it is decoration.
     #[test]
     fn accounting_rejects_a_report_that_lost_a_document() {
         let bad = PurgeReport {

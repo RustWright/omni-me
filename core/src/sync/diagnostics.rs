@@ -3,8 +3,8 @@
 //! The sync push is device-id filtered: `push_only` sends only events whose
 //! `device_id` matches the client's bound id (correct anti-re-push-storm
 //! behaviour — you don't re-push what you pulled from a peer). The invariant that
-//! keeps local data syncable is therefore: **every event this installation
-//! *authors* must carry the bound `device_id`.** If a broken authoring path
+//! keeps local data syncable is therefore: every event this installation
+//! *authors* must carry the bound `device_id`. If a broken authoring path
 //! stamps some other id, those events sit in `local.db` forever — never pushed,
 //! never on the server (the headless-import stranding bug that made the whole
 //! imported ledger invisible on mobile).
@@ -44,8 +44,8 @@ impl DeviceIdAudit {
         self.own_count + self.foreign.iter().map(|(_, n)| n).sum::<usize>()
     }
 
-    /// The orphan signature: the log is non-empty, this device authored **nothing**
-    /// under its bound id, and it has **never** pulled — so everything present was
+    /// The orphan signature: the log is non-empty, this device authored nothing
+    /// under its bound id, and it has never pulled — so everything present was
     /// authored locally under a foreign id and can never be pushed.
     ///
     /// This is false-positive-free against the states that *look* similar:

@@ -8,12 +8,12 @@
 //! shared per-hint prompts + response schema + parse from the `extraction`
 //! module, so every extractor produces an identical `ExtractionResult`.
 //!
-//! It rides the same `[llm]` config (base_url / model / key) but is **opt-in**
+//! It rides the same `[llm]` config (base_url / model / key) but is opt-in
 //! via `[llm] vision = true` (see `server::build_extractor`): vision support
 //! varies across OpenAI-compatible endpoints, so we never silently send images
 //! to one that can't handle them.
 //!
-//! ⚠️ No model reads PDF — a generated one is converted to text and a scanned
+//! No model reads PDF — a generated one is converted to text and a scanned
 //! one is rasterized, both before the call. Why, and why in that order, is in
 //! `docs/src/extraction.md`.
 
@@ -38,12 +38,12 @@ use crate::llm::Sampling;
 
 /// How many times a 429 is retried before the document is given up on.
 ///
-/// ⚠️ Shared with the chat client rather than reasoned out again, because the
+/// Shared with the chat client rather than reasoned out again, because the
 /// argument is the same one: a 429 is usually not about our request rate. Pinning
 /// a gateway to one upstream — which any measurement must do — means that
 /// provider's shared-pool congestion comes back to us instead of being rerouted.
 ///
-/// ⛔ The stake here is higher than in chat. A refused question can be asked
+/// The stake here is higher than in chat. A refused question can be asked
 /// again; a refused document is dropped by the enrichment pass and retried only
 /// on a later tick, and before this existed a single "model busy" lost it outright.
 const MAX_RATE_LIMIT_RETRIES: u32 = 3;
@@ -82,7 +82,7 @@ pub struct OpenAiCompatExtractor {
     /// unattributable. But `require_parameters` is the load-bearing one:
     /// OpenRouter then refuses to route to an endpoint that lacks a parameter
     /// we sent, so a provider that would treat `response_format` as a *hint*
-    /// becomes a routing error. ⚠️ That is the gateway-level guard against the
+    /// becomes a routing error. That is the gateway-level guard against the
     /// exact failure that put "HAND WASH" in `commodity` — a 200 response whose
     /// schema was quietly ignored.
     ///
@@ -196,7 +196,7 @@ impl OpenAiCompatExtractor {
 
     /// Fold [`Self::extra_body`] into a request body, top-level keys only.
     ///
-    /// ⛔ Top-level only, deliberately — a deep merge would let a caller reach
+    /// Top-level only, deliberately — a deep merge would let a caller reach
     /// into `messages` or overwrite `response_format`, and the whole point of
     /// the field is to add routing and privacy terms beside the request, never
     /// to rewrite what is being asked.
@@ -483,7 +483,7 @@ impl OpenAiCompatExtractor {
         // method sees only shapes the endpoint accepts.
         let payload = Self::payload_for(parts, &self.pdf_passwords.values()).await?;
 
-        // ⚠️ `json_schema`, NOT `json_object`, and the difference is measured.
+        // `json_schema`, NOT `json_object`, and the difference is measured.
         //
         // Under `json_object` the endpoint guarantees only *some* valid JSON and
         // the shape is prose the model may drift from. On 2026-09-11 it did:
@@ -530,7 +530,7 @@ impl OpenAiCompatExtractor {
         self.sampling.apply_to(&mut body);
         let prepared = self.apply_extra(body);
         let mut attempt = 0u32;
-        // ⚠️ Reset per attempt, never started before the loop. `elapsed_ms` is what
+        // Reset per attempt, never started before the loop. `elapsed_ms` is what
         // the `max_tokens` ceilings and the seat latencies are sized from, and a
         // clock spanning the retries would bill a provider's backoff to the model —
         // the exact miscount the retry was added to stop. Each wait is logged on its
@@ -550,7 +550,7 @@ impl OpenAiCompatExtractor {
             // `without_url` scrubs any key in the URL from error strings (mirrors the
             // text client) — a leaked key in a log line is the failure mode guarded.
             let response = req.send().await.map_err(|e| {
-                // ⚠️ A timeout must say so. reqwest renders it as "error sending
+                // A timeout must say so. reqwest renders it as "error sending
                 // request", which reads like a network fault and sent one real
                 // investigation down the wrong path — the request had in fact been
                 // answered slowly, just past the budget.
@@ -567,7 +567,7 @@ impl OpenAiCompatExtractor {
 
             let status = response.status();
 
-            // ⚠️ Retried **before** the body is read, because a 429 body carries no
+            // Retried before the body is read, because a 429 body carries no
             // answer — and because this is the one status where giving up costs a
             // document. A 429 is usually not about our request rate at all: pinning
             // an upstream (which any measurement must do) means that provider's
@@ -663,7 +663,7 @@ mod tests {
         json!({ "choices": [{ "message": { "role": "assistant", "content": content } }] })
     }
 
-    /// A real 8×8 PNG. ⚠️ Must stay decodable: `media::prepare_image` now
+    /// A real 8×8 PNG. Must stay decodable: `media::prepare_image` now
     /// parses the bytes to decide whether to downscale, so the placeholder
     /// these tests used to carry would fail before reaching the mock.
     fn one_png() -> Vec<u8> {
@@ -674,7 +674,7 @@ mod tests {
         out
     }
 
-    /// ⛔ The defect this closed: one "model busy" lost the document outright.
+    /// The defect this closed: one "model busy" lost the document outright.
     ///
     /// A pinned upstream's shared pool can be briefly overloaded, and the 429 that
     /// produces literally says to retry shortly. The chat client has survived this
@@ -714,7 +714,7 @@ mod tests {
 
     /// Bounded, and it says which kind of failure it was.
     ///
-    /// ⚠️ The message distinguishes a 429 that outlasted the retries from one
+    /// The message distinguishes a 429 that outlasted the retries from one
     /// refused on the first attempt — without it, a provider that is simply down
     /// and one that is briefly congested produce the same line in the log.
     #[tokio::test]
@@ -744,7 +744,7 @@ mod tests {
 
     /// A `Retry-After` is honoured, and capped.
     ///
-    /// ⛔ The cap is the point: a backfill runs unattended, so a mistaken header
+    /// The cap is the point: a backfill runs unattended, so a mistaken header
     /// of 3600 would park it for an hour with nothing reporting why.
     #[tokio::test]
     async fn a_hostile_retry_after_cannot_park_the_run() {

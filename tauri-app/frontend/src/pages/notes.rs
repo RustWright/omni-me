@@ -429,7 +429,7 @@ fn NoteCard(note: GenericNoteItem, on_click: EventHandler<String>) -> Element {
 }
 
 /// Split a raw note into typed properties + body and seed the editor from the
-/// body. Called on every hydrate path — but **never** writes `content`, which
+/// body. Called on every hydrate path — but never writes `content`, which
 /// stays the full-text source of truth (so an untouched note can't phantom-save).
 fn apply_raw_note(
     mut props: Signal<NoteProps>,
@@ -542,7 +542,7 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
                     // asymmetric half of an already-solved problem.
                     //
                     // It used to set `hydrated` unconditionally, so a transient
-                    // fetch failure left a **blank but editable** editor holding
+                    // fetch failure left a blank but editable editor holding
                     // a live `local_note_id`: `content`, `body` and
                     // `last_saved_content` all `""`. The first keystroke then
                     // satisfied the autosave effect (`"x" != ""`, id present) and

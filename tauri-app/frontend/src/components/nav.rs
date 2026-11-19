@@ -92,7 +92,7 @@ pub fn NavDrawer(
     on_close: EventHandler<()>,
     on_feedback: EventHandler<()>,
 ) -> Element {
-    // ⚠️ Read once here, never inside the tab loop: this is a hook, and a hook
+    // Read once here, never inside the tab loop: this is a hook, and a hook
     // in a loop changes call order between renders.
     let approvals = use_pending_approvals();
     let row_class = move |tab: Tab| -> String {
@@ -141,7 +141,7 @@ pub fn NavDrawer(
                         button {
                             key: "{label}",
                             class: "{row_class(tab)}",
-                            // ⛔ The nav's only stable handle. The automated
+                            // The nav's only stable handle. The automated
                             // viewport sweep drives every tab through here, and
                             // matching on the visible label instead would make a
                             // copy edit look like a nav regression.
@@ -176,11 +176,11 @@ pub fn NavDrawer(
 
 /// How much is waiting on a tab, drawn on its nav row.
 ///
-/// ⛔ **Renders nothing at zero**, rather than a `0` pill. A badge is a call to
+/// Renders nothing at zero, rather than a `0` pill. A badge is a call to
 /// act; one that is permanently present stops being read, and that costs the
 /// badges that *do* mean something.
 ///
-/// ⚠️ The number is capped in the display only. Three digits break the row's
+/// The number is capped in the display only. Three digits break the row's
 /// layout, and past a point the exact count stops changing what the user does —
 /// but the underlying total stays honest for anything that reads it.
 #[component]
@@ -205,7 +205,7 @@ fn NavBadge(count: usize) -> Element {
 
 /// "Report a problem", pinned to the foot of either nav.
 ///
-/// **Deliberately not a sixth entry in `ALL_TABS`.** It does not navigate — it
+/// Deliberately not a sixth entry in `ALL_TABS`. It does not navigate — it
 /// opens a modal over wherever the user already is, which is the whole point,
 /// since the report's value is the screen underneath. Putting it in the tab loop
 /// would give it the active-state styling and teach the eye to read it as a
@@ -242,7 +242,7 @@ pub fn SideNav(
     on_switch: EventHandler<Tab>,
     on_feedback: EventHandler<()>,
 ) -> Element {
-    // ⚠️ Read once here, never inside the tab loop: this is a hook, and a hook
+    // Read once here, never inside the tab loop: this is a hook, and a hook
     // in a loop changes call order between renders.
     let approvals = use_pending_approvals();
     let row_class = move |tab: Tab| -> String {

@@ -7,7 +7,7 @@
 //!
 //! ## Why approval is one batch
 //!
-//! [`decide`] appends the action's events **and** the decision marker through a
+//! [`decide`] appends the action's events and the decision marker through a
 //! single [`EventWriter::append_batch`]. `commit_batch` in the auto-import path
 //! established this and the reason is not tidiness: split into two appends, a
 //! crash between them leaves the effect applied and the proposal still pending,
@@ -34,7 +34,7 @@ pub struct Proposal {
     pub action: String,
     pub args: serde_json::Value,
     pub rationale: String,
-    /// What the action declared **when it was proposed**, not what this build
+    /// What the action declared when it was proposed, not what this build
     /// says now. See `AssistantProposalMadePayload::reversible`.
     pub reversible: bool,
     pub created_at: String,
@@ -68,7 +68,7 @@ pub enum DecideError {
     /// The record the proposal changes no longer supports the change it describes
     /// — the anchored text of a `note.revise` is gone, or appears more than once.
     ///
-    /// ⚠️ Its own variant rather than a [`DecideError::Invalid`], because the two
+    /// Its own variant rather than a [`DecideError::Invalid`], because the two
     /// mean opposite things to the person reading the card: `Invalid` says the
     /// proposal was never coherent, this says the proposal was fine and *the
     /// record moved*. The proposal stays pending either way, which is deliberate —
@@ -76,7 +76,7 @@ pub enum DecideError {
     /// written in the meantime.
     #[error("{0}")]
     RecordMoved(String),
-    /// Reading the record to resolve against failed. ⚠️ Distinct from
+    /// Reading the record to resolve against failed. Distinct from
     /// [`DecideError::RecordMoved`] on purpose: that one says the proposal is
     /// stale and the user should look again, this one says the read did not
     /// happen and retrying is the right response. Collapsing them would tell
@@ -91,13 +91,13 @@ pub enum DecideError {
 
 /// Features whose proposals are reviewed on their own screen.
 ///
-/// ⛔ **Approval lives where the data lives** — a proposal to categorise a
+/// Approval lives where the data lives — a proposal to categorise a
 /// transaction is decided in Finances, beside the ledger it changes, not in a
 /// list of assistant business. The user settled this on 2026-09-13, and it is a
 /// product rule rather than a routing convenience: deciding a change to money
 /// while looking at the money is what makes the decision informed.
 ///
-/// ⚠️ **A list, so that "no domain screen" is the default and stays visible.**
+/// A list, so that "no domain screen" is the default and stays visible.
 /// Notes, beliefs and routines are reviewed in the assistant inbox today; that is
 /// not a claim they should be, only that nothing else has been built. Adding a
 /// feature here moves its proposals and requires a screen to move them to —
@@ -112,9 +112,9 @@ pub fn is_domain_reviewed(feature: Feature) -> bool {
 }
 
 /// Everything still waiting on the user in the assistant's own inbox, newest
-/// first — which is everything **except** what a domain screen reviews.
+/// first — which is everything except what a domain screen reviews.
 ///
-/// ⚠️ Filtered in Rust rather than in the query. The domain of a proposal is a
+/// Filtered in Rust rather than in the query. The domain of a proposal is a
 /// property of its *action declaration*, which lives in this build and not in the
 /// row; a SQL `NOT IN (…)` would be a second copy of [`DOMAIN_REVIEWED`] spelled
 /// as action names, free to drift the moment one is renamed.
@@ -126,9 +126,9 @@ pub async fn pending(db: &Database) -> Result<Vec<Proposal>, EventError> {
         .collect())
 }
 
-/// Everything still waiting on the user that **one feature's** screen reviews.
+/// Everything still waiting on the user that one feature's screen reviews.
 ///
-/// ⚠️ Takes the feature rather than reading it off the config, so a screen asks
+/// Takes the feature rather than reading it off the config, so a screen asks
 /// for its own proposals and can never be handed another domain's by a caller
 /// that passed the wrong thing.
 pub async fn pending_for_feature(
@@ -144,7 +144,7 @@ pub async fn pending_for_feature(
 
 /// The feature an action belongs to, or `None` if this build has no such action.
 ///
-/// ⚠️ An unknown action name is deliberately **not** domain-reviewed, so it falls
+/// An unknown action name is deliberately not domain-reviewed, so it falls
 /// to the assistant inbox. A proposal made by a newer build and synced here is
 /// still something the user should see; `decide` will refuse it with
 /// [`DecideError::UnknownAction`], which is a message they can act on. Routing it
@@ -176,7 +176,7 @@ async fn query_proposals_bound(
     filter: &str,
     id: Option<&str>,
 ) -> Result<Vec<Proposal>, EventError> {
-    // ⚠️ `created_at` is selected as well as ordered on — SurrealDB v3 rejects an
+    // `created_at` is selected as well as ordered on — SurrealDB v3 rejects an
     // `ORDER BY` over a field the projection does not return, and names it a
     // "missing order idiom", which does not read as the cause.
     let sql = format!(
@@ -236,11 +236,11 @@ async fn query_proposals_bound(
 
 /// Approve or reject one proposal.
 ///
-/// On approval the action's events and the decision marker go out in **one**
+/// On approval the action's events and the decision marker go out in one
 /// batch; see this module's header for why that is not negotiable. On rejection
 /// there is nothing to apply, so the batch is the marker alone.
 ///
-/// ⚠️ Pendingness is checked, and the check is a narrow guard rather than a
+/// Pendingness is checked, and the check is a narrow guard rather than a
 /// guarantee. Two devices approving the same proposal at the same moment both see
 /// it pending and both apply it — the log is honest about that (two decisions,
 /// two applications, both attributable) and closing it properly needs a
@@ -266,7 +266,7 @@ pub async fn decide(
     if decision == ProposalDecision::Approved {
         let action: &ActionType = actions::lookup(config, &proposal.action)
             .ok_or_else(|| DecideError::UnknownAction(proposal.action.clone()))?;
-        // Resolved against the record as it stands **now**, before anything is
+        // Resolved against the record as it stands now, before anything is
         // built. See [`resolve_args`].
         let args = resolve_args(db, action, &proposal.args).await?;
         // Re-validated against the live declaration, deliberately. A proposal may
@@ -277,7 +277,7 @@ pub async fn decide(
             .map_err(DecideError::Invalid)?;
     }
 
-    // ⚠️ Ids are minted **here**, not left to the store. The marker has to name
+    // Ids are minted here, not left to the store. The marker has to name
     // the events the approval authored, and those events have to go out in the
     // same batch as the marker — so the id cannot be something the append tells
     // us afterwards. `EventStore::append` honours a supplied id and only invents
@@ -319,17 +319,17 @@ pub async fn decide(
 /// a replacement, and the body they produce depends on what the note says *now*,
 /// not on what it said when the assistant read it.
 ///
-/// ⛔ **This is the only place the anchor is resolved, and it is deliberately not
-/// the projection.** Projections consume events in `received_at` order — local
+/// This is the only place the anchor is resolved, and it is deliberately not
+/// the projection. Projections consume events in `received_at` order — local
 /// arrival time — so two devices legitimately fold the same events in different
 /// orders. An anchor evaluated inside a fold can match on one device and miss on
 /// another, leaving the note permanently different between them with nothing to
 /// reconcile it. Resolving once and logging the finished body makes every device
 /// agree, because there is nothing left for them to disagree about.
 ///
-/// ⚠️ A refusal here is the feature working. Zero matches means the note moved
+/// A refusal here is the feature working. Zero matches means the note moved
 /// under the proposal; more than one means there is no single place the edit
-/// belongs. ⛔ Never widen this into a fuzzy or nearest-match fallback.
+/// belongs. Never widen this into a fuzzy or nearest-match fallback.
 ///
 /// Every other action passes through untouched — there is nothing about them that
 /// approval-time knows and propose-time did not.
@@ -364,7 +364,7 @@ async fn resolve_args(
         .map_err(|e| DecideError::RecordMoved(e.message()))?;
 
     let mut out = args.clone();
-    // ⚠️ Inserted over whatever is there, which is what makes the value
+    // Inserted over whatever is there, which is what makes the value
     // un-authorable by the model rather than merely undeclared. See
     // `ParamSource::ResolvedAtApproval`.
     if let Some(obj) = out.as_object_mut() {
@@ -440,10 +440,10 @@ mod tests {
         propose_action(writer, proposal_id, "note.create", args).await
     }
 
-    /// ⛔ Every action must be decidable somewhere, and in one place.
+    /// Every action must be decidable somewhere, and in one place.
     ///
     /// The failure this exists for is not a wrong destination — it is a proposal
-    /// with **no** destination: a feature added to [`DOMAIN_REVIEWED`] before its
+    /// with no destination: a feature added to [`DOMAIN_REVIEWED`] before its
     /// screen exists takes its proposals out of the assistant inbox, and they are
     /// then made, stored, synced, and shown by nothing. Nobody reports that; the
     /// user simply never hears about a change the assistant offered.
@@ -498,7 +498,7 @@ mod tests {
         assert_eq!(finances[0].action, "transaction.categorize");
     }
 
-    /// ⚠️ An action this build does not know still has to reach someone.
+    /// An action this build does not know still has to reach someone.
     #[tokio::test]
     async fn a_proposal_from_a_newer_build_stays_in_the_assistant_inbox() {
         let (db, _config, writer) = harness(&[]).await;
@@ -703,7 +703,7 @@ mod tests {
         assert!(matches!(out, Err(DecideError::NotFound(_))), "{out:?}");
     }
 
-    /// ⚠️ A proposal may be approved long after it was made. Arguments that no
+    /// A proposal may be approved long after it was made. Arguments that no
     /// longer validate are refused with a reason rather than carried out, because
     /// a half-understood write is worse than a refusal the user can read.
     #[tokio::test]
@@ -734,7 +734,7 @@ mod tests {
         );
     }
 
-    /// ⚠️ The reason `AssistantProposalDecided` is ungated. Switching the
+    /// The reason `AssistantProposalDecided` is ungated. Switching the
     /// assistant off must not trap a pending proposal in the inbox forever —
     /// `AutoImportBatchDismissed` does exactly that today, and this is the wart
     /// deliberately not copied.
@@ -846,7 +846,7 @@ mod tests {
         assert_eq!(confidences[0].clone(), Some("medium".into()));
     }
 
-    /// ⚠️ Declining a belief must leave **nothing** behind. A rejected conclusion
+    /// Declining a belief must leave nothing behind. A rejected conclusion
     /// that still lands in the memory would make the gate decorative.
     #[tokio::test]
     async fn declining_a_belief_records_nothing() {
@@ -989,7 +989,7 @@ mod tests {
         assert_eq!(orders, [0, 1, 2], "no two items share a position");
     }
 
-    /// ⚠️ Re-validated at approval, so a frequency that was legal when proposed
+    /// Re-validated at approval, so a frequency that was legal when proposed
     /// but is not now cannot slip through into the projection.
     #[tokio::test]
     async fn a_routine_proposal_with_a_bad_frequency_is_refused_at_approval() {
@@ -1030,7 +1030,7 @@ mod tests {
         assert!(names.is_empty(), "nothing should have been created");
     }
 
-    /// ⚠️ The row id the projection builds is `{item_id}-{date}-done`, so this
+    /// The row id the projection builds is `{item_id}-{date}-done`, so this
     /// asserts the *date reached it intact* rather than merely that a row
     /// exists. A completion landing on the wrong day is indistinguishable from
     /// one the user never made, and it would not be undone by ticking the item
@@ -1083,7 +1083,7 @@ mod tests {
         assert_eq!(skipped, vec![false]);
     }
 
-    /// ⚠️ **The only test that proves a batch is worth anything.** `build_events`
+    /// The only test that proves a batch is worth anything. `build_events`
     /// returning three events is not the claim; three *rows* is. Approval writes
     /// through the same `EventWriter` and the same projection fold a single tick
     /// uses, so the way this breaks is a batch that appends all three events and
@@ -1193,7 +1193,7 @@ mod tests {
         assert_eq!(reasons, vec![Some("Travelling.".to_string())]);
     }
 
-    /// ⚠️ Re-validated at approval, and the future is the one date no record can
+    /// Re-validated at approval, and the future is the one date no record can
     /// evidence. A proposal made yesterday for "tomorrow" must not become a tick
     /// simply because it sat in the inbox.
     #[tokio::test]
@@ -1311,7 +1311,7 @@ mod tests {
         );
     }
 
-    /// ⚠️ The one event it authors is the same one the notes editor authors. That
+    /// The one event it authors is the same one the notes editor authors. That
     /// is the reason this design needs no projection work at all, and a second
     /// event type appearing here would mean the design has drifted.
     #[tokio::test]
@@ -1331,7 +1331,7 @@ mod tests {
         .await
         .expect("approve");
 
-        // ⚠️ `received_at` is selected because it is ordered on: SurrealDB v3
+        // `received_at` is selected because it is ordered on: SurrealDB v3
         // refuses `ORDER BY` over a field the selection does not return. See the
         // same note in `assistant_projection`.
         let mut resp = db
@@ -1354,7 +1354,7 @@ mod tests {
         );
     }
 
-    /// ⛔ The acceptance criterion for the feature, as a test. The user edited that
+    /// The acceptance criterion for the feature, as a test. The user edited that
     /// sentence between the proposal and the approval; the edit must not land
     /// somewhere else, and it must not land approximately.
     #[tokio::test]
@@ -1415,7 +1415,7 @@ mod tests {
         );
     }
 
-    /// Two matches is not a coin toss. ⛔ There is no rule that picks one, and
+    /// Two matches is not a coin toss. There is no rule that picks one, and
     /// inventing one here is what would make this feature dangerous.
     #[tokio::test]
     async fn a_revise_whose_anchor_repeats_refuses_with_the_count() {
@@ -1472,7 +1472,7 @@ mod tests {
         assert!(matches!(err, DecideError::RecordMoved(_)), "{err:?}");
     }
 
-    /// ⛔ Rejecting must not resolve anything. The refusal path runs before the
+    /// Rejecting must not resolve anything. The refusal path runs before the
     /// build, so a stale anchor on a proposal the user wants *gone* would otherwise
     /// make it un-rejectable — the state `rejecting_changes_nothing` guards for
     /// every other action.

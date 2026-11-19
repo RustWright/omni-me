@@ -92,7 +92,7 @@ pub struct JournalImportPreview {
     pub balance_failures: Vec<String>,
     /// Count of transactions whose deterministic `txn_id` already exists in
     /// the projection — surfaced pre-commit so the user knows how many would
-    /// be skipped on re-import. Reflects the **pre-rewrite** ids (since the
+    /// be skipped on re-import. Reflects the pre-rewrite ids (since the
     /// preview doesn't apply the A2 rewriter); see Phase 6.6 note in the
     /// commit path.
     pub already_imported_count: usize,

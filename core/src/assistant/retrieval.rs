@@ -12,7 +12,7 @@ use crate::db::Database;
 
 /// Longest passage returned per hit.
 ///
-/// ⚠️ `search` returns summaries, not bodies. A wide slice is a privacy cost and a
+/// `search` returns summaries, not bodies. A wide slice is a privacy cost and a
 /// recurring one — everything gathered is re-sent on every later turn of the loop.
 const SNIPPET_CHARS: usize = 240;
 
@@ -26,8 +26,8 @@ pub struct SemanticHit {
 
 /// The semantic half of retrieval, as an interface rather than a type.
 ///
-/// ⚠️ A trait, not a concrete `Embedder`, so that **this signature carries no
-/// `#[cfg]`** and compiles identically with or without the `embeddings` feature.
+/// A trait, not a concrete `Embedder`, so that this signature carries no
+/// `#[cfg]` and compiles identically with or without the `embeddings` feature.
 /// `None` is keyword-only. Same shape as [`crate::llm::LlmClient`], for the same
 /// reason.
 #[async_trait::async_trait]
@@ -49,7 +49,7 @@ pub trait SemanticSearch: Send + Sync {
 pub trait Rerank: Send + Sync {
     /// Score each document against `query`, returning `(index, score)` best first.
     ///
-    /// ⚠️ **An empty return means "no opinion", never "no results".** Callers keep
+    /// An empty return means "no opinion", never "no results". Callers keep
     /// the fused order when this is empty — a reranker that failed to load, timed
     /// out, or was handed nothing must degrade the *ordering*, never the answer.
     async fn rank(&self, query: &str, documents: &[String]) -> Vec<(usize, f32)>;
@@ -67,7 +67,7 @@ pub struct Retrievers<'a> {
 
 /// How many candidates a reranker gets to look at.
 ///
-/// ⚠️ Bounded absolutely, not by a multiple alone: every candidate costs one inference
+/// Bounded absolutely, not by a multiple alone: every candidate costs one inference
 /// on a two-core host, so this is a latency budget as much as a quality knob.
 /// `MODEL_BENCH.md` § Retrieval holds the per-model cost it was set against.
 const RERANK_POOL_FACTOR: usize = 3;
@@ -75,16 +75,16 @@ const RERANK_POOL_MAX: usize = 24;
 
 /// Merge keyword and semantic results into the shape the model sees.
 ///
-/// The output is **one ranked list across every type**. ⛔ Never revert to per-type
+/// The output is one ranked list across every type. Never revert to per-type
 /// grouping; why, in `docs/src/retrieval.md`.
 ///
-/// ⚠️ **The retrievers are not equals.** Semantic ranks; keyword only supplies what
+/// The retrievers are not equals. Semantic ranks; keyword only supplies what
 /// semantic missed. Fusing them as peers was built, measured, and retired — it cost
 /// 19 points of top-1. See [`fusion::prefer`].
 ///
 /// `keyword_matches` counts BM25 matches only, and is named for it: there is no
 /// meaningful count on the semantic side, so a combined total would have no referent.
-/// ⚠️ A match is **any** content word of the question — see
+/// A match is any content word of the question — see
 /// [`super::store::TypeResults::total_matches`]. The number says how much was
 /// looked at, never how much was relevant.
 pub async fn merge(
@@ -112,7 +112,7 @@ pub async fn merge(
         .collect();
     let semantic_ranking: Vec<RecordKey> = semantic.iter().map(|h| h.key.clone()).collect();
 
-    // ⚠️ The semantic ranking decides the order and the keyword one only fills the
+    // The semantic ranking decides the order and the keyword one only fills the
     // tail. They are NOT fused as equals — that was measured and it lost. An empty
     // semantic ranking degrades to keyword order for free, which is what a build
     // without the `embeddings` feature gets.
@@ -169,7 +169,7 @@ async fn rerank_pool(
     // than it was given, and a candidate it declined to score must keep a position
     // rather than disappear.
     //
-    // ⚠️ The scores in this vector are on **two different scales** — cross-encoder
+    // The scores in this vector are on two different scales — cross-encoder
     // logits for what was judged, positional weights for what was not. That is safe
     // only because `fusion::cut` never compares them; it takes the order as given.
     // Do not add a sort here.
@@ -200,7 +200,7 @@ async fn rerank_pool(
 
 /// The best text we hold for a candidate, for the reranker to judge.
 ///
-/// ⚠️ The preference order is a quality ordering, not a convenience one. A
+/// The preference order is a quality ordering, not a convenience one. A
 /// cross-encoder reads whatever it is given as the document, so handing it a title
 /// where a whole passage exists throws away most of what it is for.
 fn candidate_text(key: &RecordKey, keyword: &[TypeResults], semantic: &[SemanticHit]) -> String {

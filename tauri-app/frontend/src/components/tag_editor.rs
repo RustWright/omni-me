@@ -7,11 +7,11 @@
 //! Tags are run through [`sanitize_tag`] here by default, so every emitted tag is
 //! safe for the inline `tags: [...]` serialization (never needs quoting).
 //!
-//! ⚠️ **The archive opts out of that sanitizer, and must.** `sanitize_tag` filters
+//! The archive opts out of that sanitizer, and must. `sanitize_tag` filters
 //! to alphanumerics plus `-_/`, which strips the `:` an archive `key:value` tag is
 //! built on — `institution:rbc` would arrive as `institutionrbc`. So the archive
 //! passes `sanitize: false` and the backend's `Tag::normalize` is the only
-//! authority. ⛔ Do not add a second normalizer here to compensate: a tag stored
+//! authority. Do not add a second normalizer here to compensate: a tag stored
 //! in a form the query does not expect is invisible rather than wrong, and two
 //! normalizers is how the two forms come apart. The trim and lowercase it does do
 //! are steps `Tag::normalize` takes too, so they cannot disagree with it.

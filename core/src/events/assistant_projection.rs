@@ -5,7 +5,7 @@
 //! with an embedded message array would have been fewer rows, and would have made
 //! the thread list drag every answer body through to render a preview.
 //!
-//! ⚠️ **`assistant_messages` is deliberately absent from `assistant::catalog`.**
+//! `assistant_messages` is deliberately absent from `assistant::catalog`.
 //! Registering it would make past conversations retrievable, which sounds like
 //! recall and is actually the assistant citing its own earlier guesses as
 //! evidence about the user's life. Derived belief with provenance is Phase E's
@@ -370,7 +370,7 @@ impl AssistantProjection {
                 }
             };
 
-        // ⚠️ The decision columns are **not** written here, and that is the whole
+        // The decision columns are not written here, and that is the whole
         // reason this is an UPSERT that names its columns rather than a CREATE or
         // a whole-row SET. Sync delivers events in arrival order, so the decision
         // can land before the proposal that it decides; resetting `decision` to
@@ -505,7 +505,7 @@ impl AssistantProjection {
         .bind(("records_read", records_read))
         .bind(("scheduled", scheduled))
         .await?
-        // ⚠️ `.check()` is load-bearing, not belt-and-braces. `Surreal::query`
+        // `.check()` is load-bearing, not belt-and-braces. `Surreal::query`
         // resolves to `Ok` for a statement that *failed* — the error rides in the
         // `Response` until something calls `.take()` or `.check()`. Without this
         // the projection reports success, writes nothing, and the missing answer
@@ -529,7 +529,7 @@ impl AssistantProjection {
     /// backward only, for the mirror-image reason: sync delivers a thread's
     /// messages in arrival order, which is not authoring order, so the first
     /// message to *land* is not necessarily the first one asked.
-    /// ⚠️ The comparisons happen **in Rust**, not in the query. `ConfigProjection`
+    /// The comparisons happen in Rust, not in the query. `ConfigProjection`
     /// resolves its own last-write-wins the same way, and the reason to copy it
     /// rather than reach for a conditional `SET` is that this file's queries run
     /// against SurrealDB's embedded engine with no schema check to catch a clause
@@ -719,7 +719,7 @@ mod tests {
         assert_eq!(thread_count(&db, "t1").await, 2);
 
         let mut resp = db
-            // ⚠️ `created_at` is selected as well as ordered on: SurrealDB v3
+            // `created_at` is selected as well as ordered on: SurrealDB v3
             // rejects `ORDER BY` on a field the projection does not return
             // ("Missing order idiom … in statement selection").
             .query(
@@ -870,7 +870,7 @@ mod tests {
         assert_eq!(AnswerStop::parse("quota_exhausted"), None);
     }
 
-    /// ⚠️ An answer that cites a record must materialize like any other.
+    /// An answer that cites a record must materialize like any other.
     ///
     /// The regression this pins is not obvious: `Surreal::query` returns `Ok`
     /// for a statement that *failed*, holding the error in the `Response` until
@@ -1047,8 +1047,8 @@ mod tests {
         assert_eq!(decision_of(&db, "p1").await, Some("approved".into()));
     }
 
-    /// ⚠️ The arrival-order case the schema is built for. The pull filter runs on
-    /// the **author's** clock, so a decision written by a device whose clock
+    /// The arrival-order case the schema is built for. The pull filter runs on
+    /// the author's clock, so a decision written by a device whose clock
     /// trails the agent's can carry the earlier timestamp and be folded first. If
     /// that inbound event cannot land, its proposal stays pending forever.
     #[tokio::test]

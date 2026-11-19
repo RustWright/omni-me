@@ -52,13 +52,13 @@ const DEFAULT_BLOB_DIR: &str = "blobs";
 
 /// Where to listen, from `OMNI_LISTEN_ADDR` or the default.
 ///
-/// ⚠️ **This is what lets a second instance run beside the real one.** `DB_PATH`
+/// This is what lets a second instance run beside the real one. `DB_PATH`
 /// is relative, so the working directory already isolates the database, and
 /// `BLOB_DIR` already isolates the blobs — the port was the last thing hardcoded,
 /// and it is why a dev server could not be stood up next to the live one at all.
 /// Same override precedent as `OMNI_AUTO_IMPORT_INTERVAL_SECS` below.
 ///
-/// ⛔ Unparseable values are **not** silently replaced with the default. A typo in
+/// Unparseable values are not silently replaced with the default. A typo in
 /// a unit file would otherwise start a second server on 3000, where it either
 /// fails to bind or — worse, if the real one is down — answers in its place with
 /// an empty database.
@@ -81,7 +81,7 @@ pub(crate) fn data_root() -> PathBuf {
 
 /// Where blobs live, from `BLOB_DIR` or the default.
 ///
-/// ⚠️ **Public because the overlay needs the same answer.** It builds the IMAP
+/// Public because the overlay needs the same answer. It builds the IMAP
 /// sources (handler composition is per-app policy) and those archive every
 /// message they fetch — resolving the path independently there would let the
 /// two disagree, and a document written to the wrong directory is one the
@@ -175,7 +175,7 @@ pub struct AppState {
     /// The one purge preview a confirm may act on. See
     /// [`routes::PurgeTicket`].
     ///
-    /// ⚠️ In memory, not persisted, and that is correct: a restart should void an
+    /// In memory, not persisted, and that is correct: a restart should void an
     /// unconfirmed preview rather than let one be redeemed against an archive that
     /// has moved on.
     pub purge_ticket: Arc<tokio::sync::Mutex<Option<routes::PurgeTicket>>>,
@@ -646,9 +646,9 @@ mod tests {
     use super::*;
     use omni_me_core::credentials::{Credentials, LlmProviderConfig};
 
-    /// ⛔ The port is the last thing standing between one server and two.
+    /// The port is the last thing standing between one server and two.
     ///
-    /// ⚠️ Serialised by hand rather than run as three tests: `set_var` is process
+    /// Serialised by hand rather than run as three tests: `set_var` is process
     /// global and Rust runs tests in threads, so a parallel neighbour reading this
     /// variable would see whatever the other test happened to set. Splitting it up
     /// would make the failure intermittent, which is worse than the coupling.
@@ -671,7 +671,7 @@ mod tests {
                 "a second instance needs this"
             );
 
-            // ⛔ Passed through, not repaired. A typo must fail to bind loudly
+            // Passed through, not repaired. A typo must fail to bind loudly
             // rather than start a second server on the live port with an empty
             // database.
             std::env::set_var("OMNI_LISTEN_ADDR", "not-an-address");

@@ -30,7 +30,7 @@ const MAX_UIDS_PER_TICK: usize = 200;
 
 /// What one message body fetch asks for.
 ///
-/// ⚠️ **`BODY.PEEK[]`, never `RFC822` or a bare `BODY[]`.** Those two implicitly
+/// `BODY.PEEK[]`, never `RFC822` or a bare `BODY[]`. Those two implicitly
 /// set `\Seen` on the server, so a background poll would mark the user's own mail
 /// read in their email client. PEEK returns the same bytes without touching flags.
 ///
@@ -87,7 +87,7 @@ impl ImapFetcher for AsyncImapFetcher {
     }
 }
 
-/// ⚠️ `ClientConfig::builder()` — the form every rustls example uses — PANICS here,
+/// `ClientConfig::builder()` — the form every rustls example uses — PANICS here,
 /// and only at connect time, so nothing short of a live fetch catches it. This
 /// workspace compiles rustls with *both* providers (`ring` via reqwest, `aws-lc-rs`
 /// via surrealdb's jsonwebtoken), and under two providers rustls refuses to guess:
@@ -112,7 +112,7 @@ fn tls_config() -> Result<ClientConfig, ImportError> {
 ///
 /// The IMAP UID range one tick enumerates.
 ///
-/// ⛔ Absent and zero are opposite instructions, and the difference is the whole
+/// Absent and zero are opposite instructions, and the difference is the whole
 /// reason a rewind stores `Some(0)` rather than deleting the row. `None` means
 /// "never polled", which resolves to `*` — the single highest UID — so a new
 /// account anchors to now instead of back-importing years of mail. `Some(0)`
@@ -133,12 +133,12 @@ fn window_range(cursor: &FetchCursor, upto: u32) -> Option<String> {
 
 /// A UID means nothing without the `UIDVALIDITY` it was issued under, so a change
 /// voids the cursor: left in place, `{last+1}:*` matches nothing and the mailbox
-/// never polls again. ⛔ Only a *known* disagreement counts. An unknown on either
+/// never polls again. Only a *known* disagreement counts. An unknown on either
 /// side — a cursor stored before this was recorded, or a server that answered
 /// without one — is not evidence of renumbering, and treating it as such would
 /// reset every mailbox on the first tick after an upgrade.
 ///
-/// ⛔ The reset deliberately does not backfill. Re-reading the mailbox would
+/// The reset deliberately does not backfill. Re-reading the mailbox would
 /// re-propose every historical receipt, because a proposal with no order reference
 /// keys on `uid` and renumbering gives every message a new one — so the
 /// alternative to losing whatever arrived during the gap is a review queue holding
@@ -252,7 +252,7 @@ async fn fetch(
     // Two round trips: enumerate UIDs first, then fetch at most
     // MAX_UIDS_PER_TICK bodies.
     //
-    // ⚠️ The obvious cap — narrowing the range to `{last+1}:{last+N}` — is WRONG.
+    // The obvious cap — narrowing the range to `{last+1}:{last+N}` — is WRONG.
     // IMAP UIDs are monotonic but not contiguous, so if the next real message sits
     // beyond `last+N` the narrowed fetch returns nothing, `max_uid` never moves, and
     // every later tick re-requests the same empty window forever. Enumerating first
@@ -273,7 +273,7 @@ async fn fetch(
         },
     };
 
-    // ⚠️ Each `uid_fetch` stream borrows the session mutably and must be driven to
+    // Each `uid_fetch` stream borrows the session mutably and must be driven to
     // completion before the next command: a stream dropped early leaves an unread
     // response on the wire and the following command parses against it. That is what
     // the scoping blocks below are for — never flatten them.
@@ -442,7 +442,7 @@ mod tests {
         assert_eq!(search_since(d(2026, 9, 1)), "SINCE 1-Sep-2026");
     }
 
-    /// ⛔ The invariant the cursor-reset route depends on, and it is not obvious:
+    /// The invariant the cursor-reset route depends on, and it is not obvious:
     /// a rewind stores `Some(0)` precisely because deleting the row would mean
     /// `None`, and `None` fetches only the newest message. Storing zero is what
     /// asks for the whole mailbox.
@@ -486,7 +486,7 @@ mod tests {
         assert!(!mailbox_was_renumbered(Some(7), Some(7)));
     }
 
-    /// ⛔ The half that matters on upgrade day. A cursor stored before the
+    /// The half that matters on upgrade day. A cursor stored before the
     /// validity was recorded reads as unknown, and unknown is not a mismatch — the
     /// alternative resets every mailbox on the first tick after deploying this.
     #[test]
@@ -510,7 +510,7 @@ mod tests {
 
     /// Builds the TLS config the real fetcher uses, without opening a socket.
     ///
-    /// ⛔ Do not delete as "trivial". The dual-provider panic this guards against is
+    /// Do not delete as "trivial". The dual-provider panic this guards against is
     /// invisible to every other test in the suite: it lives in `builder_with_provider`,
     /// fires at runtime rather than compile time, and would otherwise first appear on a
     /// production scheduler tick. This is the cheapest place it can surface.
@@ -524,7 +524,7 @@ mod tests {
 
     /// The poll must not mark the user's mail read.
     ///
-    /// ⛔ Do not delete as "trivial". `RFC822` and `BODY[]` implicitly set `\Seen`;
+    /// Do not delete as "trivial". `RFC822` and `BODY[]` implicitly set `\Seen`;
     /// `BODY.PEEK[]` does not. A regression imports mail perfectly and shows up
     /// only as the user's inbox quietly going read behind them, which no other
     /// test in this suite would catch.

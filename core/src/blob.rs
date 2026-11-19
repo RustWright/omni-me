@@ -2,12 +2,12 @@
 //!
 //! What content-addressing does and does not buy here: `docs/src/archive.md`.
 //!
-//! ⚠️ **Identical bytes are one blob, never one document.** A statement that
+//! Identical bytes are one blob, never one document. A statement that
 //! arrives by email and the same statement scanned from paper are one file here
 //! and two archive entries, which is why `DocumentArchivedPayload` keys on its
 //! own `document_id` rather than on this hash.
 //!
-//! ⛔ **Blobs are not synced.** They live on whichever host wrote them; devices
+//! Blobs are not synced. They live on whichever host wrote them; devices
 //! keep a bounded LRU cache and re-fetch on miss. Anything that must be
 //! searchable on a device that never opened the file has to travel in an event
 //! instead — see `DocumentArchivedPayload::text`.
@@ -43,7 +43,7 @@ pub fn hash(bytes: &[u8]) -> String {
 
 /// Reject anything that is not a lowercase 64-char hex string.
 ///
-/// ⚠️ A path guard, not a formatting nicety: the hash is joined onto `dir` to
+/// A path guard, not a formatting nicety: the hash is joined onto `dir` to
 /// build a filename, so a value carrying `/` or `..` would address a file
 /// outside the blob directory entirely.
 pub fn validate_hash(candidate: &str) -> Result<(), BlobError> {
@@ -65,13 +65,13 @@ pub fn path_for(dir: &Path, hash: &str) -> Result<PathBuf, BlobError> {
 
 /// Delete a blob. `Ok(false)` when it was already gone.
 ///
-/// ⛔ **Never call this without first proving nothing else references the hash.**
+/// Never call this without first proving nothing else references the hash.
 /// Blobs are content-addressed and therefore *shared*: a statement that arrived
 /// by email and the same statement scanned from paper are one file here and two
 /// archive entries, and a transaction attachment can point at it as well. See
 /// `queries::blob_reference_counts`, which is the only sanctioned way to decide.
 ///
-/// ⚠️ Absent is success, not an error. Purge is a batch over documents that may
+/// Absent is success, not an error. Purge is a batch over documents that may
 /// share bytes, so the second document to release a hash finds it already gone —
 /// which is the normal path, not a failure to report.
 ///
@@ -108,7 +108,7 @@ async fn remove_if_present(path: &Path) -> Result<bool, BlobError> {
 
 /// Store `bytes` under their own hash, returning it. Idempotent.
 ///
-/// ⚠️ **Write to a temp name, then rename.** A reader can open a blob the moment
+/// Write to a temp name, then rename. A reader can open a blob the moment
 /// its name exists, so writing in place publishes a half-written file under a
 /// name that promises its content. The rename is atomic within the directory, so
 /// a blob is either absent or complete — never truncated but correctly named.
@@ -121,7 +121,7 @@ pub async fn store(dir: &Path, bytes: &[u8]) -> Result<String, BlobError> {
 /// Store `bytes` under a hash the caller already has, verifying they match.
 ///
 /// The upload path's shape: the client names the hash in the URL, so the bytes
-/// have to be checked against it rather than trusted. ⛔ Never skip the check on
+/// have to be checked against it rather than trusted. Never skip the check on
 /// the grounds that the caller just computed it — the whole point of the route
 /// is that the caller is remote.
 pub async fn store_as(dir: &Path, expected: &str, bytes: &[u8]) -> Result<bool, BlobError> {

@@ -6,7 +6,7 @@
 //! — and the disagreement would be silent, since both would happily build *a*
 //! client and only the answers would differ.
 //!
-//! Which model to use for which job is **not** decided here. That is a
+//! Which model to use for which job is not decided here. That is a
 //! benchmarked, per-job choice written into the call site. The jobs are grouped
 //! into five roles, each earning its own model from one discriminator:
 //!
@@ -37,12 +37,12 @@ use crate::extraction::{
 /// Vendors whose models we are willing to send records to, each with every
 /// namespace spelling we have seen it served under.
 ///
-/// An **allowlist, deliberately**: an unrecognised vendor is refused, which is a
+/// An allowlist, deliberately: an unrecognised vendor is refused, which is a
 /// loud one-line fix, where an unrecognised vendor silently *allowed* would be an
 /// invisible privacy breach. Same reasoning as the closed `Feature` enum — the
 /// unknown case must fail toward safety.
 ///
-/// ⚠️ **A namespace is a gateway's spelling, not a fact about the vendor**, which
+/// A namespace is a gateway's spelling, not a fact about the vendor, which
 /// is why this is grouped by vendor rather than being a flat list of prefixes.
 /// Z.ai is `z-ai/` on OpenRouter and `zai-org/` on DeepInfra; DeepSeek is
 /// `deepseek/` and `deepseek-ai/`; ByteDance is `bytedance-seed/` and
@@ -50,11 +50,11 @@ use crate::extraction::{
 /// written against — this one was written against OpenRouter, and every DeepInfra
 /// spelling was refused until 2026-09-09, *including the model the bench script
 /// itself defaults to*. We screen on one gateway and run production on another,
-/// so **adding a vendor means adding every spelling it is served under**, and the
+/// so adding a vendor means adding every spelling it is served under, and the
 /// grouping is what makes that obligation visible. The canonical name on the left
 /// is read by nothing but the tests and a human; that is its job.
 ///
-/// The list is **not exhaustive, and is not meant to be**. A vendor arrives here
+/// The list is not exhaustive, and is not meant to be. A vendor arrives here
 /// when something needs it, and only once its published licence has actually been
 /// checked — an entry is a privacy commitment, not a catalogue import. An absent
 /// vendor costs one verified line and fails loudly; a wrong one costs the
@@ -101,7 +101,7 @@ const MIXED_VENDORS: &[(&[&str], &str)] = &[(&["openai"], "gpt-oss"), (&["google
 ///
 /// ## Why this exists
 ///
-/// The committed provider (DeepInfra) **also proxies closed models** — its
+/// The committed provider (DeepInfra) also proxies closed models — its
 /// `/v1/openai/models` listing opens with `anthropic/claude-opus-4-8` — and its
 /// privacy policy carves exactly those out: it does not train on submissions
 /// *"except when using Google or Anthropic models, where the receiving company's
@@ -155,7 +155,7 @@ fn refusal_reason(model: &str) -> Option<String> {
 /// upstream pinned — rather than which provider the user chose. They also change
 /// between a dev run and production against the same `[llm]` section.
 ///
-/// ⚠️ **`extra_body` is a gateway concept.** Routing preferences
+/// `extra_body` is a gateway concept. Routing preferences
 /// (`provider.only`, `zdr`, `require_parameters`) are OpenRouter's request
 /// vocabulary; a direct provider ignores unknown top-level keys, so setting them
 /// against one is inert rather than an error. Production goes direct to the
@@ -164,7 +164,7 @@ fn refusal_reason(model: &str) -> Option<String> {
 /// The privacy guarantee on the direct path comes from the provider's own policy
 /// plus [`refusal_reason`], not from anything sent per-request.
 ///
-/// ⚠️ Every seat takes one, and that is load-bearing rather than tidy: role C's
+/// Every seat takes one, and that is load-bearing rather than tidy: role C's
 /// builders took no options until 2026-09-27, so a bench that set the pin and the
 /// privacy terms applied them to the chat seats and to no document request.
 #[derive(Debug, Clone, Default)]
@@ -177,7 +177,7 @@ pub struct ClientOptions {
 
 /// Spacing applied to every client this process builds, in milliseconds.
 ///
-/// ⛔ Read from the environment rather than passed in, because the callers that
+/// Read from the environment rather than passed in, because the callers that
 /// need it most cannot pass anything: the server's enrichment passes build role C
 /// through [`build_extractor`], [`build_reader`] and [`build_transcriber`], none of
 /// which take options. Without this, `with_min_interval` existed and nothing in
@@ -185,7 +185,7 @@ pub struct ClientOptions {
 ///
 /// Unset means no spacing, which is the behaviour up to now.
 ///
-/// ⚠️ **Per client, not per process.** Three role-C seats each space their own
+/// Per client, not per process. Three role-C seats each space their own
 /// calls, so this bounds a backfill (one seat at a time) and not a genuinely
 /// concurrent burst; that would need a limiter they share.
 pub const MIN_INTERVAL_ENV: &str = "OMNI_LLM_MIN_INTERVAL_MS";
@@ -199,7 +199,7 @@ pub const MIN_INTERVAL_ENV: &str = "OMNI_LLM_MIN_INTERVAL_MS";
 /// conclusions, so variety buys it nothing and determinism is what would let its
 /// saturated bench separate anything.
 ///
-/// ⛔ Role A is the exception and deliberately so: it is the seat being conversed
+/// Role A is the exception and deliberately so: it is the seat being conversed
 /// with, and temperature 0 there costs phrasing that varies. One line to change
 /// whenever that trade is worth making.
 fn default_sampling(role: LlmRole) -> Sampling {
@@ -274,7 +274,7 @@ fn min_interval_from(raw: Option<String>) -> Option<std::time::Duration> {
 /// section, a half-filled one, or a model [`refusal_reason`] rejects — yields a
 /// [`NullLlmClient`] carrying the reason.
 ///
-/// ⚠️ **Nothing here fails the build.** Boot has to succeed on a host with no LLM
+/// Nothing here fails the build. Boot has to succeed on a host with no LLM
 /// configured, and the server cannot ask a human for a key mid-startup, so every
 /// failure is deferred to call time where it can be reported to someone.
 ///
@@ -353,7 +353,7 @@ pub fn build_llm_client(
 /// `Ok` with an empty draft rather than erroring. A caller that scores results
 /// has to check `name()`, or a misconfiguration reads as the model finding nothing.
 ///
-/// ⛔ `options` is not optional scaffolding. It carries the gateway pin, and
+/// `options` is not optional scaffolding. It carries the gateway pin, and
 /// without it every role-C measurement ever taken was routed to an upstream of
 /// the gateway's choosing — see [`VisionEndpoint::into_client`].
 pub fn build_extractor(creds: &Credentials, options: ClientOptions) -> Arc<dyn DocumentExtractor> {
@@ -405,7 +405,7 @@ struct VisionEndpoint {
 }
 
 impl VisionEndpoint {
-    /// ⚠️ `options` reaching here is the fix for a defect that ran the length of
+    /// `options` reaching here is the fix for a defect that ran the length of
     /// the role-C programme: these three builders took none, so the bench's
     /// `extra_body` — the upstream pin, `require_parameters`, and the `zdr` /
     /// `data_collection: "deny"` terms — was applied to roles A and B and to no
@@ -436,7 +436,7 @@ impl VisionEndpoint {
 /// client refused closed weights from the day role wiring landed, and the
 /// document path did not.
 ///
-/// ⚠️ `role` is load-bearing and was not always a parameter. All three role-C
+/// `role` is load-bearing and was not always a parameter. All three role-C
 /// builders used to resolve `LlmRole::Extractor` and pass `consumer` only to the
 /// log line, so one `[llm.extractor]` table silently served three seats that
 /// measured out to different models.
@@ -589,7 +589,7 @@ mod tests {
         }
     }
 
-    /// The **production** gateway's spellings, which are not the screening
+    /// The production gateway's spellings, which are not the screening
     /// gateway's. Every one of these was refused until 2026-09-09, so a model
     /// could win a bench run on OpenRouter and be rejected by our own guard the
     /// moment the endpoint changed — `z-ai/glm-5.3-flash` above and

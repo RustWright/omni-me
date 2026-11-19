@@ -2,10 +2,10 @@
 //!
 //! The server has no push channel to clients, so a receiving device must poll to
 //! see edits made elsewhere. Nothing did this before — inbound events only landed
-//! when the user pressed **Sync** — the "auto-sync never fires" bug from the
+//! when the user pressed Sync — the "auto-sync never fires" bug from the
 //! receiver's side. This task pulls once shortly after boot (the fresh-device
 //! backfill), then on a fixed interval, and immediately when nudged (e.g. the
-//! network just came back online), applying pulled events **best-effort** through
+//! network just came back online), applying pulled events best-effort through
 //! the projection runner so one bad remote event can't strand the batch (see
 //! `apply_events_resilient`).
 //!
@@ -46,7 +46,7 @@ const APPLY_CHUNK: usize = 500;
 /// Outcome of a pull attempt, broadcast to consumers.
 #[derive(Debug, Clone)]
 pub enum PullEvent {
-    /// A pull fetched `pulled` new events and is **about to project them**.
+    /// A pull fetched `pulled` new events and is about to project them.
     /// Emitted before the (potentially long) apply, so a UI can say so while it
     /// runs — [`Applied`](Self::Applied) is too late for that by construction,
     /// since it reports work already finished.
@@ -55,7 +55,7 @@ pub enum PullEvent {
     /// *is* the app appearing: tens of thousands of events project behind a UI
     /// that would otherwise show an empty screen and a "Synced" chip.
     ///
-    /// Re-emitted after every [`APPLY_CHUNK`] with the count still **remaining**,
+    /// Re-emitted after every [`APPLY_CHUNK`] with the count still remaining,
     /// so `pulled` counts down to 0. A consumer that only wants the announcement
     /// can take the first one; a consumer showing progress gets it for free, and
     /// a restore that has stopped dead shows a number that stops moving instead

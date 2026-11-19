@@ -27,7 +27,7 @@ pub use wipe::{WipeTicket, wipe_routes};
 mod tests {
     /// No handler may fail with a bare `String`.
     ///
-    /// ⚠️ **`String` is an axum `IntoResponse` that answers `200 OK`.** A handler
+    /// `String` is an axum `IntoResponse` that answers `200 OK`. A handler
     /// returning `Err(e.to_string())` therefore reports its own failure as a
     /// success carrying the error text as the body — and a caller checking the
     /// status sees nothing wrong. `GET /feedback` shipped that way and served a
@@ -35,12 +35,12 @@ mod tests {
     /// endpoint was the read half of feedback capture, so the silence was
     /// indistinguishable from "no one filed anything."
     ///
-    /// **Handlers only, by design.** The discriminator is the `State<AppState>`
+    /// Handlers only, by design. The discriminator is the `State<AppState>`
     /// extractor, which is what makes a function reachable as a route; helpers
     /// taking `&AppState` (`documents::store_blob`) keep `String` legitimately,
     /// because their error is converted by whichever handler calls them.
     ///
-    /// **Blind spot, deliberate:** a handler that takes no state at all is not
+    /// Blind spot, deliberate: a handler that takes no state at all is not
     /// checked. Parsing Rust to do better is not worth it — every handler in
     /// this crate reaches the database or the box, and so takes state.
     /// One whitespace-stripped signature, ending at its opening brace.
@@ -97,7 +97,7 @@ mod tests {
         );
     }
 
-    /// ⚠️ **A guard that cannot fire is worse than no guard**, because it reads
+    /// A guard that cannot fire is worse than no guard, because it reads
     /// as coverage. These are the real signatures from either side of the fix:
     /// `list_handler` as it shipped broken, and as it stands now.
     #[test]

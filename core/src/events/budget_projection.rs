@@ -91,13 +91,13 @@ impl Projection for BudgetProjection {
              DEFINE FIELD IF NOT EXISTS pattern ON recurring_patterns TYPE object FLEXIBLE;
              DEFINE FIELD IF NOT EXISTS status ON recurring_patterns TYPE string;",
         )
-        // ⚠️ **`.check()` is what makes a failed DEFINE visible.** Without it a
+        // `.check()` is what makes a failed DEFINE visible. Without it a
         // statement can fail and `init_schema` still returns `Ok` — which is
         // exactly how a missing FULLTEXT index would present: `search` over the
         // ledger returns zero hits and reports no error, so the assistant
         // concludes the user has no such transaction.
         //
-        // ⚠️ Six of the nine projections still omit this (2026-09-13); the three
+        // Six of the nine projections still omit this (2026-09-13); the three
         // that have it are the three newest. Adding it to the rest was tried and
         // the whole suite passed, so nothing fails on a *fresh* database — but a
         // statement that has been failing silently against the user's *existing*
@@ -647,7 +647,7 @@ impl BudgetProjection {
         // cannot walk a resolved pattern backwards. `derive_pattern_id` is
         // deterministic across devices while the scanner's skip check is purely
         // local, so a device that never materialized the row re-detects and its
-        // event used to reset a peer's **confirmed/dismissed** pattern back to
+        // event used to reset a peer's confirmed/dismissed pattern back to
         // `detected` — and replay made it stick. `auto_import_projection`
         // already takes exactly this care.
         db.query(

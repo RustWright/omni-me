@@ -58,7 +58,7 @@ impl ArchiveIndex for DbArchiveIndex<'_> {
 pub trait CursorStore: Send + Sync {
     /// The stored cursor, or `None` when this account has never polled.
     ///
-    /// ⚠️ The UID alone is not a cursor — see [`FetchCursor::uid_validity`]. A row
+    /// The UID alone is not a cursor — see [`FetchCursor::uid_validity`]. A row
     /// written before the validity was recorded loads it as `None`, which reads as
     /// "unknown" and never as a mismatch, so an upgrade does not reset a mailbox.
     async fn load(&self, account_name: &str) -> Result<Option<StoredCursor>, ImportError>;
@@ -121,7 +121,7 @@ impl CursorStore for SurrealCursorStore {
             .bind(("name", account_name.to_string()))
             .await
             .map_err(|e| ImportError::Upstream(format!("load cursor: {e}")))?;
-        // ⚠️ Through a serde row, not two `take("<field>")` calls. Taking a single
+        // Through a serde row, not two `take("<field>")` calls. Taking a single
         // nullable field into `Option<i64>` fails outright on a stored `NONE` —
         // "Expected int, got none" — so the row written before `uid_validity`
         // existed would make `load` error, `ImapSource::new` fail, and the account
@@ -171,8 +171,8 @@ pub struct ImapSource {
     projections: ProjectionRunner,
     /// Where fetched messages are archived, and as whose device.
     ///
-    /// ⚠️ `Option` because a caller with no blob store legitimately cannot
-    /// archive — ⛔ not because archiving is optional policy. Production passes
+    /// `Option` because a caller with no blob store legitimately cannot
+    /// archive — not because archiving is optional policy. Production passes
     /// it; leaving it `None` files every statement email as transactions only,
     /// with the message itself gone.
     archive: Option<ArchiveConfig>,
@@ -270,7 +270,7 @@ impl AutoImportSource for ImapSource {
             );
         }
 
-        // The accounting unit here is the **message**, not the event: one
+        // The accounting unit here is the message, not the event: one
         // statement email can yield many transactions, so counting events would
         // make the identity unbalanceable against what the mailbox handed us.
         let mut tally = ImportTally::new(outcome.messages_seen);
@@ -336,7 +336,7 @@ impl AutoImportSource for ImapSource {
         &self,
         since: Option<NaiveDate>,
     ) -> Result<CursorResetOutcome, ImportError> {
-        // ⛔ Rewound to zero, NOT deleted — and the difference is the whole
+        // Rewound to zero, NOT deleted — and the difference is the whole
         // behaviour. An absent cursor means "never polled" to every fetcher here,
         // and that case deliberately anchors to the mailbox's newest message so a
         // new account does not back-import years of mail. Deleting the row would
@@ -470,7 +470,7 @@ mod tests {
 
     /// A rewind leaves the cursor at zero, and zero is not the same as absent.
     ///
-    /// ⚠️ This deliberately does NOT claim "the next pull re-fetches", which it
+    /// This deliberately does NOT claim "the next pull re-fetches", which it
     /// cannot: `MockFetcher::fetch_new` ignores the cursor entirely and replays a
     /// script, so a second pull returning the same messages would prove only that
     /// the script agrees with the test. What decides re-fetching is the UID range,

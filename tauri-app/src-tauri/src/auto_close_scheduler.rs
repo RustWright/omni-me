@@ -1,7 +1,7 @@
 //! Background scheduler that invokes
 //! `omni_me_core::auto_close::auto_close_stale_journals`.
 //!
-//! Timing: a **catch-up tick shortly after start**, then one per local
+//! Timing: a catch-up tick shortly after start, then one per local
 //! midnight (`+ GRACE_SECONDS`, to avoid racing a midnight-adjacent write). If
 //! the timezone string can't be parsed, fall back to UTC and log a warning —
 //! the app should never panic on a bad timezone setting.

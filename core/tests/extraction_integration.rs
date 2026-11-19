@@ -19,7 +19,7 @@
 //!   cargo test -p omni-me-core --test extraction_integration -- --ignored
 //! ```
 //!
-//! ⚠️ The two PDF fixtures need `pdftotext` (poppler-utils) on the machine —
+//! The two PDF fixtures need `pdftotext` (poppler-utils) on the machine —
 //! PDFs are converted to text before the call, because no model reads PDF.
 //!
 //! These tests are not gated by CI — they exist for the developer to validate
@@ -50,7 +50,7 @@ fn make_extractor() -> OpenAiCompatExtractor {
         var("OMNI_EXTRACT_MODEL"),
         var("OMNI_EXTRACT_KEY"),
     );
-    // ⚠️ Pin the upstream when running through a gateway, mirroring
+    // Pin the upstream when running through a gateway, mirroring
     // `scripts/bench-openrouter.sh`. Without it OpenRouter routes to whatever
     // provider it likes and a latency number describes a stack we may never
     // ship — `MODEL_BENCH.md` measured 3.7x between serving tiers of the SAME
@@ -212,7 +212,7 @@ async fn rejects_unsupported_mime_without_calling_api() {
 // live endpoint rather than only against a mock: a scan reaches the model as
 // pictures, and an oversized photo survives downscaling still legible.
 //
-// ⚠️ Requires a **vision-capable** model. The Role A winner (`gpt-oss-120b`) is
+// Requires a vision-capable model. The Role A winner (`gpt-oss-120b`) is
 // text-only, so `OMNI_EXTRACT_MODEL` here is a different choice than `[llm]`.
 // ---------------------------------------------------------------------------
 
@@ -241,7 +241,7 @@ fn oversized_photo_of(fixture: &str) -> Vec<u8> {
 /// deliberate: they are what legibility actually means here — the model has to
 /// have read individual digits off the page, not recognised a receipt shape.
 ///
-/// ⚠️ Compared as numbers, not strings. `Decimal` renders 5.50 as "5.5" once
+/// Compared as numbers, not strings. `Decimal` renders 5.50 as "5.5" once
 /// normalized and as "5.50" otherwise, so a string compare fails on formatting
 /// while the digits are perfectly correct.
 const SYNTHETIC_ITEMS: [f64; 3] = [4.29, 5.50, 14.75];
@@ -328,7 +328,7 @@ async fn an_oversized_photo_survives_downscaling_legibly() {
 
 /// Extract whatever `OMNI_EXTRACT_SAMPLE` points at, and print what came back.
 ///
-/// ⚠️ The **path** is an input, never a committed fixture: real receipts stay
+/// The path is an input, never a committed fixture: real receipts stay
 /// outside the repo per `core/tests/README.md`. Skips loudly when unset, so it
 /// can never pass by silently doing nothing. Asserts only structural
 /// properties, because the right answer depends on whose receipt it is.
@@ -361,8 +361,8 @@ async fn extracts_an_arbitrary_local_sample() {
         _ => ExtractionHint::Receipt,
     };
 
-    // ⚠️ Timed separately, and this is not pedantry. `cargo test` builds
-    // **debug**, and Lanczos3 resampling a 12 MP photo unoptimized costs real
+    // Timed separately, and this is not pedantry. `cargo test` builds
+    // debug, and Lanczos3 resampling a 12 MP photo unoptimized costs real
     // wall-clock — enough that a single `extract()` timer reports local CPU as
     // if it were endpoint latency, and a model comparison built on it would be
     // comparing rustc optimisation levels.
@@ -402,7 +402,7 @@ async fn extracts_an_arbitrary_local_sample() {
         result.total, result.confidence
     );
     for p in &result.postings {
-        // ⚠️ `commodity` is printed next to `line_label` deliberately: under
+        // `commodity` is printed next to `line_label` deliberately: under
         // `json_object` a model conflated the two, putting "HAND WASH" where
         // "CAD" belongs, and the arithmetic check cannot see that.
         eprintln!(
@@ -416,7 +416,7 @@ async fn extracts_an_arbitrary_local_sample() {
     let report = verify(&result, hint, DEFAULT_CONFIDENCE_THRESHOLD);
     eprintln!("  verify: {report:?}");
 
-    // ⛔ No assertion on postings being non-empty. An empty extraction is the
+    // No assertion on postings being non-empty. An empty extraction is the
     // *correct* answer for a document that holds no transaction, and this
     // diagnostic gets pointed at whatever the user has to hand — during the
     // 2026-09-11 run that included a page of handwritten notes, which the model

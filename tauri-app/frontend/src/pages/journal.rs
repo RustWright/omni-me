@@ -46,7 +46,7 @@ fn viewport_width() -> f64 {
 /// a completion token: `YYYY-MM-DD HH:MM`, optionally ` TZ`. The fixed
 /// positions up to index 16 are all ASCII, so byte indexing is safe.
 ///
-/// **This shape is encoded twice and the compiler cannot see the second one.**
+/// This shape is encoded twice and the compiler cannot see the second one.
 /// The writer lives in JavaScript — `TS_TOKEN_RE` in `assets/js/editor.js` —
 /// and this is the reader, hand-rolled in Rust across the wasm boundary. Change
 /// the format on either side (seconds, a different bracket, a wider zone field)
@@ -776,7 +776,7 @@ fn DayView(
                         continue;
                     }
                     // Stamp the in-progress line, then read the now-stamped
-                    // **body** and fold it back into the full note before saving.
+                    // body and fold it back into the full note before saving.
                     //
                     // `js_flush_editor_timestamps` returns
                     // `editorView.state.doc.toString()`, and since Phase 5 that
@@ -1564,7 +1564,7 @@ struct DayStat {
 /// steps would have put roughly 80% of recent entries in the lightest band and
 /// made the channel say almost nothing.
 ///
-/// **PROVISIONAL.** That sample ended ~110 days before this shipped, and it came
+/// PROVISIONAL. That sample ended ~110 days before this shipped, and it came
 /// from the Obsidian vault rather than the live store. If most cells land in one
 /// shade, move these numbers — this constant is the single place to do it.
 const WORD_LEVELS: [usize; 2] = [250, 500];

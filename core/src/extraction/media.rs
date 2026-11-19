@@ -469,7 +469,7 @@ fn fit_set(decoded: &[image::DynamicImage]) -> Result<Vec<PreparedImage>, MediaE
     Err(last.expect("ladder is non-empty"))
 }
 
-/// Prepare several images that are pages of **one** document, sharing a single
+/// Prepare several images that are pages of one document, sharing a single
 /// request budget between them.
 ///
 /// Each is prepared on its own first, which keeps [`prepare_image`]'s
@@ -514,7 +514,7 @@ pub fn fits_request(images: &[PreparedImage]) -> Result<(), MediaError> {
 /// the empty password first, so an unencrypted document costs one `pdftoppm` run
 /// however many passwords are configured.
 ///
-/// ⚠️ Without this the vision fallback could not open an encrypted statement that
+/// Without this the vision fallback could not open an encrypted statement that
 /// the text path had just failed on, so the 18.3% of the corpus that is encrypted
 /// had no route at all: no text layer, and no picture of one either.
 async fn rasterize_with_any(
@@ -776,7 +776,7 @@ mod tests {
         );
     }
 
-    /// ⚠️ `supports()` and `format_for()` are two lists of MIME types that must
+    /// `supports()` and `format_for()` are two lists of MIME types that must
     /// agree. This asserts they do — widening one without the other is the
     /// exact drift `UnpreparableMime` exists to catch, and catching it in a
     /// test is cheaper than catching it against a live endpoint.

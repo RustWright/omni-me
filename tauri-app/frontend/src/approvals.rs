@@ -1,11 +1,11 @@
 //! What is waiting on the user, as app-wide context.
 //!
-//! Two renderers share it: the **nav badges**, so a queue is visible from
-//! wherever the user is, and the **assistant's reminder row**, for a stretch
-//! spent entirely in that window. ⛔ One fetch, one set of numbers — a badge and
+//! Two renderers share it: the nav badges, so a queue is visible from
+//! wherever the user is, and the assistant's reminder row, for a stretch
+//! spent entirely in that window. One fetch, one set of numbers — a badge and
 //! a sentence disagreeing about how much is waiting is worse than either alone.
 //!
-//! ⚠️ **Refreshed, unlike [`crate::features`].** The feature set is a boot
+//! Refreshed, unlike [`crate::features`]. The feature set is a boot
 //! snapshot on purpose; a count is the opposite — it is stale the moment a
 //! proposal lands or the user decides one, so this subscribes to
 //! [`crate::sync_refresh`], which fires for an inbound pull *and* for a local
@@ -38,7 +38,7 @@ pub fn use_pending_approvals_provider() -> Signal<Vec<PendingApprovals>> {
         spawn(async move {
             match bridge::invoke_pending_approvals().await {
                 Ok(fresh) => set.set(fresh),
-                // ⚠️ Reported, not swallowed. A failed read leaves the previous
+                // Reported, not swallowed. A failed read leaves the previous
                 // counts on screen, which is the right fallback — but a badge
                 // that silently stops updating is indistinguishable from a queue
                 // that stopped growing, and that is the failure worth naming.
@@ -63,7 +63,7 @@ pub fn use_pending_approvals() -> Vec<PendingApprovals> {
 
 /// The tab a surface is reviewed on, or `None` when this build has no such tab.
 ///
-/// ⛔ **`None` is a real answer, not an error.** A newer build can name a surface
+/// `None` is a real answer, not an error. A newer build can name a surface
 /// this one does not have; the honest response is to draw no badge, because a
 /// badge with nowhere to lead is worse than a missing one.
 pub fn tab_of(reviewed_at: &str) -> Option<Tab> {
@@ -102,7 +102,7 @@ mod tests {
         assert_eq!(tab_of(ASSISTANT_INBOX), Some(Tab::Assistant));
     }
 
-    /// ⛔ A surface this build does not know must draw nothing rather than
+    /// A surface this build does not know must draw nothing rather than
     /// panic or land on an arbitrary tab.
     #[test]
     fn an_unknown_surface_routes_nowhere() {

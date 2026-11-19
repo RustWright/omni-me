@@ -1,4 +1,4 @@
-//! Statements that arrive as a **rendered document** rather than a data export.
+//! Statements that arrive as a rendered document rather than a data export.
 //!
 //! The parsers in [`super::parse`] read CSV, where the format states its own
 //! structure: a comma ends a field and (usually) a header names it. Some banks
@@ -9,7 +9,7 @@
 //!
 //! ## The input contract
 //!
-//! `text` must come from a **layout-preserving** extraction
+//! `text` must come from a layout-preserving extraction
 //! (`pdftotext -layout`, not plain `pdftotext`). Without it the columns
 //! collapse into a single run of words, every amount lands in the same place,
 //! and the parse becomes confident nonsense rather than a loud failure — so
@@ -21,8 +21,8 @@
 //!
 //! Position-based parsing is exactly what [`super::parse`] warns against, and
 //! that warning stands. What makes it safe here is that a rendered statement is
-//! written for a reader who wants to verify it, so it **states figures about
-//! itself**: an opening and closing balance, and — depending on the layout —
+//! written for a reader who wants to verify it, so it states figures about
+//! itself: an opening and closing balance, and — depending on the layout —
 //! per-row running balances, sum totals, or transaction *counts*.
 //!
 //! That turns the usual weakness inside out. In a CSV parser the skip ledger is
@@ -37,8 +37,8 @@
 //!
 //! The same bank changed its statement design partway through the record, and
 //! the two forms share no structure worth abstracting over. The earlier
-//! importer of this data handled only the newer one and **silently skipped 41
-//! statements — roughly two years of history**, which then looked like an
+//! importer of this data handled only the newer one and silently skipped 41
+//! statements — roughly two years of history, which then looked like an
 //! account that opened mid-life with an unexplained balance. So a file matching
 //! neither layout is rejected outright rather than parsed partially: an
 //! unreadable statement is a visible problem, and a half-read one is not.
@@ -80,8 +80,8 @@ pub enum Layout {
     /// Every transaction row carries its own running balance, and the amount
     /// sits in one of two columns headed `Deposit` / `Withdrawal`.
     PerRowBalance,
-    /// Rows are grouped under one entry date and **only the last row of a
-    /// group carries a balance**; the rest have none at all. Amounts sit under
+    /// Rows are grouped under one entry date and only the last row of a
+    /// group carries a balance; the rest have none at all. Amounts sit under
     /// `DEBITS` / `CREDITS`.
     ///
     /// This is why a plain consecutive-pair balance check is nearly useless on
@@ -199,7 +199,7 @@ fn description(line: &str) -> String {
 /// The one figure a row's amount comes from, or an explanation of why the row
 /// is unreadable.
 ///
-/// The sign comes from the **column**, so the magnitude is taken and the cell's
+/// The sign comes from the column, so the magnitude is taken and the cell's
 /// own sign discarded — the same rule and the same reasoning as the
 /// debit/credit handling in [`super::parse`]. A bank writing `-50.00` under a
 /// withdrawal column is being redundant, not describing money coming in.
@@ -457,7 +457,7 @@ fn parse_per_row_balance(text: &str) -> Result<StatementParse, String> {
 /// The layout where rows are grouped under an entry date and only the last row
 /// of a group states a balance.
 ///
-/// Each row's date is taken from the **value date** column specifically, not
+/// Each row's date is taken from the value date column specifically, not
 /// from "the first date on the line" or "the last". A group's first row shows
 /// both entry and value date while the rows under it show only the value date,
 /// so any positional shortcut would read a different column depending on where

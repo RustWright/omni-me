@@ -4,7 +4,7 @@
 //!
 //! A bulk import of a few hundred rows cannot be validated by a human reading
 //! them; pretending otherwise produces rubber-stamping. And the obvious
-//! automatic check does not work either: **`bal = 0` proves nothing** in
+//! automatic check does not work either: `bal = 0` proves nothing in
 //! double-entry bookkeeping, because a transaction that was never emitted
 //! balances perfectly by being absent. Two real gaps in the canonical ledger —
 //! ~2.7 years of missing payroll deductions, and a documented pension account
@@ -13,8 +13,8 @@
 //! The only check that catches that class compares against something *outside*
 //! the books. Statements are that oracle:
 //!
-//! 1. the **transaction count** for the period must match, and
-//! 2. the **closing balance** must match.
+//! 1. the transaction count for the period must match, and
+//! 2. the closing balance must match.
 //!
 //! Both are needed. A count check misses a wrong amount; a balance check misses
 //! an offsetting pair (one row dropped, another duplicated). The canonical
@@ -39,7 +39,7 @@ pub mod replay;
 
 /// One row of a bank statement.
 ///
-/// `amount` is **signed from the account's perspective** — negative means money
+/// `amount` is signed from the account's perspective — negative means money
 /// left the account — matching how a posting on that account reads in the
 /// ledger. Formats that express direction with separate debit/credit columns
 /// are normalised into this at parse time, so downstream code never re-derives
@@ -143,8 +143,8 @@ pub struct StatementParse {
     /// is why an empty vec here means *"nothing to check"* as often as it means
     /// *"checked and passed"*. Callers reporting a verdict must say which.
     pub declared_check_failures: Vec<String>,
-    /// The period's opening and closing balances as the statement **states
-    /// them**, for formats that print them outside the row table.
+    /// The period's opening and closing balances as the statement states
+    /// them, for formats that print them outside the row table.
     ///
     /// These are not a convenience duplicate of the first and last row's
     /// running balance — they are the only source for them in a layout that
@@ -246,7 +246,7 @@ impl StatementParse {
     /// Every reason this parse must not be imported, in plain language.
     ///
     /// Empty means "nothing this format can check came back wrong" — which is
-    /// **not** the same as "verified". A format carrying no running balance and
+    /// not the same as "verified". A format carrying no running balance and
     /// declaring no totals has nothing to fail, so it clears this gate by
     /// having no gate to clear. [`Self::verifiability`] is what distinguishes
     /// the two, and a caller reporting a result must not collapse them.

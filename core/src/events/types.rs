@@ -94,7 +94,7 @@ pub enum EventType {
     DocumentTextTranscribed,
     /// A document removed on purpose, bytes and all.
     ///
-    /// ⛔ A tombstone, not a deletion. The archive event stays in the log — it has
+    /// A tombstone, not a deletion. The archive event stays in the log — it has
     /// to, the log is append-only and a projection rebuild replays it — so the row
     /// comes back on every rebuild and this is what makes it come back *purged*
     /// rather than pointing at bytes that are gone.
@@ -305,8 +305,8 @@ impl EventType {
     /// would be gated correctly and then survive a finances wipe, leaving a ledger
     /// that is neither empty nor complete.
     ///
-    /// ⚠️ **Ownership is read off the authoring gate, and the two are not quite the
-    /// same question.** `TransactionRecorded` is authored under *either* finances or
+    /// Ownership is read off the authoring gate, and the two are not quite the
+    /// same question. `TransactionRecorded` is authored under *either* finances or
     /// auto-import, so it belongs to both and a wipe of either claims it — which is
     /// right for a ledger wipe (a transaction is a transaction, whoever proposed it)
     /// and is the reason a finances wipe cannot leave auto-import's own events alone.
@@ -330,7 +330,7 @@ impl EventType {
     /// The features that may author this event, or `None` for an event no feature
     /// owns.
     ///
-    /// This is the **write** half of the feature map, and it is a match rather
+    /// This is the write half of the feature map, and it is a match rather
     /// than a lookup table so a new event type cannot be added without deciding
     /// which feature is allowed to emit it. Guarding here instead of at each of
     /// the ~70 commands means one site covers every write path, including ones
@@ -344,7 +344,7 @@ impl EventType {
     /// on the feature that renders it being switched on, and the first-run seed is
     /// emitted at startup, before any feature has been consulted).
     ///
-    /// This says nothing about **inbound** events: the sync pull path applies
+    /// This says nothing about inbound events: the sync pull path applies
     /// whatever the log contains, so every device keeps a complete log no matter
     /// which features it has switched on.
     pub fn authoring_features(&self) -> &'static [Feature] {
@@ -422,7 +422,7 @@ impl EventType {
             // one who accepted it.
             EventType::BeliefRecorded | EventType::BeliefSuperseded => &[Feature::Llm],
 
-            // Granting is about the assistant, so it is gated with it. ⚠️ Note
+            // Granting is about the assistant, so it is gated with it. Note
             // the asymmetry with `AssistantProposalDecided`, which is ungated:
             // that one had to stay reachable so a feature switch could not
             // strand a pending item. Nothing is stranded here — with the
@@ -440,8 +440,8 @@ impl EventType {
             | EventType::FeedbackCaptured
             | EventType::ConfigSet
             | EventType::RecordTypeDeclared
-            // ⚠️ **Deliberately ungated, and this differs from the auto-import
-            // precedent.** `AutoImportBatchDismissed` requires its own feature,
+            // Deliberately ungated, and this differs from the auto-import
+            // precedent. `AutoImportBatchDismissed` requires its own feature,
             // so switching auto-import off strands every pending batch in the
             // inbox with no way to clear it. Deciding a proposal is the *user*
             // closing something already in front of them, not the assistant
@@ -517,20 +517,20 @@ pub struct GenericNoteRenamedPayload {
 
 /// Text added to the end of a note, without restating what is already there.
 ///
-/// ⚠️ **The only payload in this file whose fold is not a plain overwrite**, and
+/// The only payload in this file whose fold is not a plain overwrite, and
 /// the reason it exists. [`GenericNoteUpdatedPayload`] carries the whole body, so
 /// an assistant asked to add a line has to reproduce the rest of the note
 /// exactly — costing tokens in proportion to the note's length and, worse, able
 /// to silently reword the part it was never asked to touch. This one cannot drop
 /// what it did not send.
 ///
-/// ⛔ **Appending only.** Inserting or replacing text in the middle is a
+/// Appending only. Inserting or replacing text in the middle is a
 /// different problem — it needs a position that survives concurrent edits from
 /// two devices — and is deliberately not attempted here. Do not widen this
 /// payload with an offset; a byte index into a body another device has already
 /// rewritten points at the wrong place, and the corruption is silent.
 ///
-/// ⚠️ Folding this is **not naturally idempotent** — concatenation applied twice
+/// Folding this is not naturally idempotent — concatenation applied twice
 /// is wrong, where an overwrite applied twice is not. `NotesProjection` keeps the
 /// applied event ids on the row to make replay safe; see `on_generic_appended`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -702,7 +702,7 @@ impl Tag {
     /// case or padding is a second tag, and the filter comes back empty for a
     /// document that visibly carries the tag.
     ///
-    /// ⚠️ `FromStr` keeps its lenient behaviour: it parses tags already in the
+    /// `FromStr` keeps its lenient behaviour: it parses tags already in the
     /// event log, written before this existed, and tightening it would fail
     /// events that cannot be rewritten.
     pub fn normalize(raw: &str) -> Result<Self, String> {
@@ -732,7 +732,7 @@ impl Tag {
 /// the fold has nothing to do; deduplicated because the column is an array and
 /// SurrealDB enforces no uniqueness on one.
 ///
-/// ⛔ Rejects the whole set on the first bad tag rather than dropping it. A
+/// Rejects the whole set on the first bad tag rather than dropping it. A
 /// silently-skipped tag is a tag the user typed, watched land, and cannot find.
 pub fn normalize_tag_set<I, S>(raw: I) -> Result<Vec<Tag>, String>
 where
@@ -1148,14 +1148,14 @@ impl DataWipedPayload {
 
 /// A problem report filed from inside the app at the moment of friction.
 ///
-/// **This is the only event about the app rather than about the user's own
-/// content**, and that difference is why it has no projection: nothing derives
+/// This is the only event about the app rather than about the user's own
+/// content, and that difference is why it has no projection: nothing derives
 /// state from it, and its only reader is a query that renders markdown for a
 /// person. Storing it as an event anyway buys the offline queue, retry, dedup
 /// and cross-device replication that the write path already provides — the
 /// alternative was rebuilding all four for a handful of rows a week.
 ///
-/// **Only `feedback_id` and `body` are required.** Every context field is
+/// Only `feedback_id` and `body` are required. Every context field is
 /// optional and defaults, so a screen that declines to describe itself costs
 /// the report a line rather than costing the user their report. Capture that
 /// can fail validation is capture that gets abandoned mid-friction, which is
@@ -1218,7 +1218,7 @@ pub struct FeedbackCapturedPayload {
 
 // Config
 
-/// A change to one configuration key's **shared** value.
+/// A change to one configuration key's shared value.
 ///
 /// `aggregate_id` is the key's wire name, so `get_by_aggregate` yields that key's
 /// history for free. Per-device overrides are deliberately absent from this
@@ -1272,7 +1272,7 @@ pub struct AssistantQuestionAskedPayload {
     /// True when the agent asked this on the user's behalf rather than the user
     /// typing it.
     ///
-    /// ⚠️ An explicit field rather than inferring it from `device_id`. The agent
+    /// An explicit field rather than inferring it from `device_id`. The agent
     /// is a device like any other, so "authored by the agent" is not the same
     /// claim as "nobody asked for this" — and the difference is exactly what a
     /// person needs to see before reading an answer they did not request.
@@ -1284,7 +1284,7 @@ pub struct AssistantQuestionAskedPayload {
 
 /// Why an answer stopped, at the write site.
 ///
-/// ⚠️ This is **not** the type carried on the wire — the payload's `stopped` is a
+/// This is not the type carried on the wire — the payload's `stopped` is a
 /// `String`, and this enum is how authors produce it. Same asymmetry as
 /// [`EventType`] against `NewEvent::event_type`, and for a sharper reason here: a
 /// newer build's stop reason must not make this one reject the payload, because a
@@ -1336,7 +1336,7 @@ impl fmt::Display for AnswerStop {
 
 /// What one request cost, as recorded.
 ///
-/// Deliberately **not** `crate::llm::chat::Usage`. That type parses one provider
+/// Deliberately not `crate::llm::chat::Usage`. That type parses one provider
 /// family's response block and changes when a provider reports something new;
 /// this one is a permanent record and must not move underneath the log. The
 /// conversion is one `From` impl, and it drops `total_tokens` because a sum of
@@ -1371,7 +1371,7 @@ pub struct RecordRef {
 
 /// The agent's reply to one question — including the replies that failed.
 ///
-/// **One event covers every ending.** A separate failure type would double the
+/// One event covers every ending. A separate failure type would double the
 /// event count for no gain, and a question with no terminal event is
 /// indistinguishable from one still being worked on. `text` is `None` for
 /// everything except [`AnswerStop::Answered`].
@@ -1419,8 +1419,8 @@ pub struct AssistantAnswerGivenPayload {
 /// it came out of — the inbox is reachable from the phone whether or not the user
 /// ever opens that thread.
 ///
-/// ⚠️ **This event is the whole proposal, including everything needed to carry it
-/// out.** Same reasoning as [`AutoImportBatchProposedPayload`] keeping its draft
+/// This event is the whole proposal, including everything needed to carry it
+/// out. Same reasoning as [`AutoImportBatchProposedPayload`] keeping its draft
 /// rows: a decision may be taken days later, from another device, and must not
 /// depend on re-deriving anything from a model run that is long gone.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1440,9 +1440,9 @@ pub struct AssistantProposalMadePayload {
     /// inbox, because "create a note titled X" without a reason is a decision the
     /// user has to reconstruct.
     pub rationale: String,
-    /// Whether the action declared itself reversible **at proposal time**.
+    /// Whether the action declared itself reversible at proposal time.
     ///
-    /// ⚠️ Snapshotted rather than looked up when rendering. The registry is code
+    /// Snapshotted rather than looked up when rendering. The registry is code
     /// and will move; the audit trail has to say what was claimed when the user
     /// was asked, not what a later build believes. A mismatch between this and
     /// the live declaration is a real signal, and it cannot be seen if the value
@@ -1467,7 +1467,7 @@ pub struct AssistantThreadDeletedPayload {
 
 /// What the user decided about one proposal.
 ///
-/// ⚠️ **One event covers every ending**, and the reasoning is
+/// One event covers every ending, and the reasoning is
 /// [`AssistantAnswerGivenPayload`]'s rather than auto-import's two-event shape: a
 /// proposal with no terminal event is indistinguishable from one still waiting,
 /// so a newer build's decision value must never make this build *reject* the
@@ -1493,7 +1493,7 @@ pub struct AssistantProposalDecidedPayload {
 
 /// How a proposal ended, at the write site.
 ///
-/// ⚠️ Not the type carried on the wire — same asymmetry as [`AnswerStop`], and
+/// Not the type carried on the wire — same asymmetry as [`AnswerStop`], and
 /// for the same reason. Readers treat an unrecognised value as "decided, outcome
 /// unknown", never as "still pending".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1534,7 +1534,7 @@ impl fmt::Display for ProposalDecision {
 
 /// One conclusion the assistant reached and the user accepted.
 ///
-/// ⚠️ **This event can only arrive through an approved proposal.** There is no
+/// This event can only arrive through an approved proposal. There is no
 /// other author: `belief.record` is an action, and an action only runs at
 /// approval. That is what makes the belief set auditable rather than merely
 /// inspectable — every entry was seen by a person before it existed.
@@ -1551,7 +1551,7 @@ pub struct BeliefRecordedPayload {
     pub confidence: String,
     /// When to re-examine it, as `YYYY-MM-DD`.
     ///
-    /// ⚠️ Chosen deliberately over decaying the confidence with age. Decay would
+    /// Chosen deliberately over decaying the confidence with age. Decay would
     /// compute a new number from one that was never calibrated, which is false
     /// precision squared; a review date says the honest thing instead — *this
     /// should be looked at again*, and a person decides.
@@ -1559,7 +1559,7 @@ pub struct BeliefRecordedPayload {
     pub review_after: Option<String>,
     /// The records the run actually opened while reaching this.
     ///
-    /// ⚠️ Derived from the trace, never written by the model — see
+    /// Derived from the trace, never written by the model — see
     /// `assistant::actions::ParamSource::EvidenceFromTrace`. A belief cannot cite
     /// a record the assistant never read.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1586,12 +1586,12 @@ pub struct BeliefSupersededPayload {
 
 /// The user allowing one action type to be carried out without being asked.
 ///
-/// ⚠️ **Authored by the user, never by the assistant.** There is no verb and no
+/// Authored by the user, never by the assistant. There is no verb and no
 /// action that produces this; an assistant able to propose its own promotion is
 /// the thing the whole permission model exists to prevent. What it may do is
 /// accumulate the approval record that makes the user's decision an informed one.
 ///
-/// ⚠️ **Only ever granted for a reversible action.** `docs/src/assistant.md`'s
+/// Only ever granted for a reversible action. `docs/src/assistant.md`'s
 /// destination is "reversible things it may do freely; irreversible things it
 /// always asks about", so a grant on an irreversible action is refused at the
 /// write site rather than merely discouraged — see `promotion::grant`.
@@ -1599,7 +1599,7 @@ pub struct BeliefSupersededPayload {
 pub struct AutonomyGrantedPayload {
     /// The action type name, e.g. `note.create`.
     pub action: String,
-    /// Whether the action declared itself reversible **when the grant was made**.
+    /// Whether the action declared itself reversible when the grant was made.
     ///
     /// Snapshotted for [`AssistantProposalMadePayload::reversible`]'s reason: the
     /// registry is code and moves, and the audit trail has to record what was
@@ -1623,17 +1623,17 @@ pub struct AutonomyRevokedPayload {
 
 /// A file entering the archive: the bytes, and the text they were found to hold.
 ///
-/// ⚠️ **The text travels in the event, and that is deliberate.** Every instinct
-/// says to derive it on each device from the blob — but blobs do **not** sync.
+/// The text travels in the event, and that is deliberate. Every instinct
+/// says to derive it on each device from the blob — but blobs do not sync.
 /// `tauri-app/src-tauri/src/commands/attachments.rs` is a 200 MB LRU cache, so a
 /// device that has never opened a document does not hold its bytes and never
 /// will. Text left out of the event would make the archive searchable only on
 /// whichever machine happened to have cached the file, which is not an archive.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentArchivedPayload {
-    /// Identity of the **archive entry**.
+    /// Identity of the archive entry.
     ///
-    /// ⚠️ Deliberately not `sha256`. The same bytes can legitimately be archived
+    /// Deliberately not `sha256`. The same bytes can legitimately be archived
     /// twice — the statement that arrived by email and the one scanned from
     /// paper are one file and two events, with different sources and dates — and
     /// keying on content would silently collapse them into whichever landed last.
@@ -1656,7 +1656,7 @@ pub struct DocumentArchivedPayload {
     /// Where [`Self::text`] came from: `extracted` (a text layer the file
     /// actually carried) | `transcribed` (a model read it off an image) | `none`.
     ///
-    /// ⚠️ Not decoration. Transcribed text is a model's reading and can be wrong
+    /// Not decoration. Transcribed text is a model's reading and can be wrong
     /// in ways extracted text cannot, so search over it is correspondingly less
     /// trustworthy — and a reader who cannot tell the two apart will trust both
     /// equally.
@@ -1669,12 +1669,12 @@ pub struct DocumentArchivedPayload {
     /// and what answers "where did this statement come from" years later —
     /// [`Self::source`] names the channel, never the specific message.
     ///
-    /// ⚠️ **`Option`, and it stays optional forever.** Most documents arrive on
+    /// `Option`, and it stays optional forever. Most documents arrive on
     /// their own, and every event written before this field existed must keep
     /// deserializing.
     ///
-    /// ⛔ **A link, not ownership.** The child is a full document — its own
-    /// text, its own fields, correctable on its own. ⛔ Do not infer a
+    /// A link, not ownership. The child is a full document — its own
+    /// text, its own fields, correctable on its own. Do not infer a
     /// cascading delete from it: the same attachment bytes may be filed again
     /// from another channel, and each filing is real.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1694,11 +1694,11 @@ pub struct DocumentField {
     pub source: String,
     /// Whether anything actually checked this value against something.
     ///
-    /// ⚠️ **True only for a value with a real oracle** — a statement's closing
-    /// balance agreeing with figures the bank states about itself. ⛔ A model's
+    /// True only for a value with a real oracle — a statement's closing
+    /// balance agreeing with figures the bank states about itself. A model's
     /// output is never verified, however confident it sounded: the existing
     /// verification pass inspects arithmetic, and there is no arithmetic in
-    /// "this is a 2023 notice of assessment". ⛔ Do not add a confidence score
+    /// "this is a 2023 notice of assessment". Do not add a confidence score
     /// beside this; a number would imply a calibration nothing here provides.
     pub verified: bool,
 }
@@ -1706,7 +1706,7 @@ pub struct DocumentField {
 impl DocumentField {
     /// How far this field's origin outranks another's when both claim one key.
     ///
-    /// ⚠️ **This is what stops a re-extraction quietly undoing the user's work.**
+    /// This is what stops a re-extraction quietly undoing the user's work.
     /// Fields fold by key, and the obvious rule — latest arrival wins — means a
     /// model re-run months later overwrites every correction a person made by
     /// hand. Ranking the *source* instead: a human beats anything, a parser
@@ -1737,8 +1737,8 @@ pub struct DocumentFieldsExtractedPayload {
     pub extracted_at: String,
     /// Every extracted value, folded by key.
     ///
-    /// ⚠️ **`kind`, `title` and `document_date` are keys in here, not fields of
-    /// their own.** The projection hoists those three into real columns because
+    /// `kind`, `title` and `document_date` are keys in here, not fields of
+    /// their own. The projection hoists those three into real columns because
     /// the archive list and every date filter read them directly — but they are
     /// ranked, folded and corrected by exactly the same rule as any other key.
     /// Giving them their own payload fields was the first shape tried and it
@@ -1767,14 +1767,14 @@ pub struct DocumentTextTranscribedPayload {
     pub document_id: String,
     /// What the model read off the document.
     ///
-    /// ⚠️ Always `TextSource::Transcribed` at the projection, never `extracted`:
+    /// Always `TextSource::Transcribed` at the projection, never `extracted`:
     /// this event exists precisely because nothing deterministic could read the
-    /// file. ⛔ The two must stay distinguishable downstream — search over a
+    /// file. The two must stay distinguishable downstream — search over a
     /// model's reading is less trustworthy than search over what a file states.
     pub text: String,
     /// `<name>@<ver>`, matching the `model:` half of [`DocumentField::source`].
     ///
-    /// ⛔ No confidence score beside it, for `DocumentField::verified`'s reason:
+    /// No confidence score beside it, for `DocumentField::verified`'s reason:
     /// nothing here checks a transcription against an oracle, and a number would
     /// imply a calibration that does not exist.
     pub model: String,
@@ -1789,13 +1789,13 @@ pub struct DocumentTextTranscribedPayload {
 
 /// A document purged on purpose: its row tombstoned and its bytes reclaimed.
 ///
-/// ⛔ **Not soft-delete, and not a row deletion either.** The point is reclaiming
+/// Not soft-delete, and not a row deletion either. The point is reclaiming
 /// storage, so the blob has to go — but the `document_archived` event stays in the
 /// log and a projection rebuild replays it, so without this the row would come
 /// back looking ordinary while its bytes were gone. Every reader must be able to
 /// tell *purged* from *broken*.
 ///
-/// ⚠️ **Deliberately carries no `sha256`.** Which blob a document pointed at is
+/// Deliberately carries no `sha256`. Which blob a document pointed at is
 /// already on its archive event, and bytes are shared — a statement that arrived
 /// by email and the same statement scanned are one blob and two documents. Naming
 /// the hash here would invite a reader to treat this event as authority to delete
@@ -1808,7 +1808,7 @@ pub struct DocumentPurgedPayload {
     /// RFC3339, from the purging device's clock.
     pub purged_at: String,
     /// Why it went, in the user's terms — the tag or sender group it was purged
-    /// under. ⚠️ Recorded because a purge is irreversible and the log is the only
+    /// under. Recorded because a purge is irreversible and the log is the only
     /// account of it that survives; a bare tombstone cannot answer "why is this
     /// gone".
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1821,7 +1821,7 @@ pub struct DocumentPurgedPayload {
 /// for free. Why a rule per tag rather than a `ConfigKey`, and what an absent rule
 /// means: [`crate::retention`].
 ///
-/// ⛔ `keep_days: None` clears the rule, which is the same state as never having
+/// `keep_days: None` clears the rule, which is the same state as never having
 /// set one. There is deliberately no separate "never".
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentRetentionSetPayload {
@@ -2795,7 +2795,7 @@ mod tests {
         assert_eq!(encode_tag_set(&set), "groceries,receipt");
     }
 
-    /// ⛔ One bad tag fails the write. Dropping it would report success for a tag
+    /// One bad tag fails the write. Dropping it would report success for a tag
     /// the user typed and can never find.
     #[test]
     fn a_bad_tag_fails_the_whole_set() {

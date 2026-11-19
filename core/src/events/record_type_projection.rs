@@ -2,7 +2,7 @@
 //!
 //! Modelled on `config_projection` down to the ordering guard, and for the same
 //! reason: a declaration nobody revisits never self-corrects the way a note does.
-//! Unlike config, it is read at **point of use** rather than once at startup, so a
+//! Unlike config, it is read at point of use rather than once at startup, so a
 //! shape changed on another device applies as soon as it syncs.
 
 use async_trait::async_trait;
@@ -143,8 +143,8 @@ pub async fn load_record_type(db: &Database, name: &str) -> Result<Option<Record
 
 /// The journal's record type, with the fallback an undeclared log needs.
 ///
-/// ⚠️ **The fallback is the reflective preset, and that is load-bearing rather than
-/// a default worth tidying.** Every install that predates record types has a log
+/// The fallback is the reflective preset, and that is load-bearing rather than
+/// a default worth tidying. Every install that predates record types has a log
 /// full of journal entries and no declaration in it, and the first thing that
 /// happens on upgrade is a replay. Falling back to the minimal preset would find
 /// nothing required, mark the entire back catalogue incomplete, and quietly undo a
@@ -167,10 +167,10 @@ pub async fn journal_record_type(db: &Database) -> RecordType {
 ///
 /// Which preset depends on what the log already holds, and the distinction is the
 /// whole migration:
-/// - **An install that predates record types** has journal entries written under the
+/// - An install that predates record types has journal entries written under the
 ///   three reflection prompts. It gets the reflective preset, so the declaration
 ///   matches what its entries already are and nothing is reinterpreted.
-/// - **A fresh install** has no entries and no expectations, so it gets the minimal
+/// - A fresh install has no entries and no expectations, so it gets the minimal
 ///   preset: a date, a body, and no prompts. The reflective preset stays available
 ///   as a worked example rather than being imposed as the app's opinion.
 ///
@@ -353,7 +353,7 @@ mod tests {
         out
     }
 
-    /// ⚠️ **The migration gate.** The one test that had to exist before any of the
+    /// The migration gate. The one test that had to exist before any of the
     /// record-type work merged.
     ///
     /// Replays a corpus of real journal frontmatter shapes twice: once with no

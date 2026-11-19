@@ -141,7 +141,7 @@ pub async fn start_full_server_with_blobs() -> (
 
 /// A server that declares itself `dev`.
 ///
-/// ⛔ Every other harness here declares no instance on purpose, because that is
+/// Every other harness here declares no instance on purpose, because that is
 /// what a destructive route must refuse — which also means the happy path of one
 /// cannot be reached through them. This is the opt-in, and `dev` is the only
 /// instance a test should ever claim to be.

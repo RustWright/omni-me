@@ -1,8 +1,8 @@
 //! The card that settles one assistant proposal.
 //!
-//! ⚠️ **Shared rather than copied, because two screens now review proposals.**
+//! Shared rather than copied, because two screens now review proposals.
 //! The assistant inbox shows everything without a domain screen of its own;
-//! Finances shows the ledger's, beside the ledger. ⛔ A second renderer would be
+//! Finances shows the ledger's, beside the ledger. A second renderer would be
 //! a second place for the irreversibility warning and the evidence row to drift,
 //! and those two are the parts of the card that make an approval informed.
 
@@ -15,7 +15,7 @@ use crate::types::AssistantProposal;
 
 /// One proposal, with the two buttons that settle it.
 ///
-/// ⚠️ Both buttons disable while the decision is in flight. Approving twice is
+/// Both buttons disable while the decision is in flight. Approving twice is
 /// refused by `core` — but the refusal arrives as an error the user did not
 /// cause, and a double-tap on a phone is the ordinary way to produce one.
 #[component]
@@ -84,7 +84,7 @@ pub fn ProposalCard(proposal: AssistantProposal, on_decided: EventHandler<()>) -
                 }
             }
 
-            // ⚠️ Shown **before** the buttons, and said out loud when absent. A
+            // Shown before the buttons, and said out loud when absent. A
             // completion asserts that something happened; the user reads their
             // own history back as fact afterwards, so the moment to see what the
             // claim rests on is the moment they are deciding. A card that simply
@@ -109,7 +109,7 @@ pub fn ProposalCard(proposal: AssistantProposal, on_decided: EventHandler<()>) -
                 }
             }
 
-            // ⚠️ Only said when it is true. A blanket reassurance on every card
+            // Only said when it is true. A blanket reassurance on every card
             // would be worth nothing on the day an irreversible action exists,
             // which is the day it matters most.
             if !proposal.reversible {

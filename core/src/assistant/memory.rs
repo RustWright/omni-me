@@ -1,6 +1,6 @@
 //! Reading back what the assistant believes.
 //!
-//! The list exists so the belief set can be **audited rather than trusted**,
+//! The list exists so the belief set can be audited rather than trusted,
 //! which `docs/src/assistant.md` names as the whole mitigation for a system that
 //! accumulates opinions about a person. That is why retired beliefs are readable
 //! too: a memory you can only see the current state of cannot be audited, only
@@ -15,7 +15,7 @@ use crate::events::EventError;
 
 /// One cited record, as it comes back off the projection.
 ///
-/// Deliberately **not** [`crate::events::RecordRef`], which is the shape written
+/// Deliberately not [`crate::events::RecordRef`], which is the shape written
 /// into the log. Same split as `AnswerUsage` against `llm::chat::Usage`: the
 /// event type is a permanent record and must not acquire a database trait to
 /// suit a query, and the query shape must be free to change without moving the
@@ -101,7 +101,7 @@ pub fn today() -> NaiveDate {
 }
 
 async fn query(db: &Database, filter: &str) -> Result<Vec<Belief>, EventError> {
-    // ⚠️ `recorded_at` is selected as well as ordered on — SurrealDB v3 rejects an
+    // `recorded_at` is selected as well as ordered on — SurrealDB v3 rejects an
     // `ORDER BY` over a field the projection does not return.
     let sql = format!(
         "SELECT belief_id, statement, confidence, review_after, evidence,
@@ -144,7 +144,7 @@ async fn query(db: &Database, filter: &str) -> Result<Vec<Belief>, EventError> {
             recorded_at,
             review_after: reviews.get(i).cloned().flatten(),
             evidence: evidence.get(i).cloned().flatten().unwrap_or_default(),
-            // ⚠️ `<string>` on an unset datetime yields a non-empty string rather
+            // `<string>` on an unset datetime yields a non-empty string rather
             // than NONE, so an uncast-vs-cast mix-up reports every belief as
             // retired. Normalized here, once, rather than at each caller.
             superseded_at: superseded
@@ -225,7 +225,7 @@ mod tests {
         assert!(live[0].is_live());
         assert_eq!(live[0].evidence.len(), 1, "evidence survives the read");
 
-        // ⚠️ The audit property: a retired belief is still readable, with why.
+        // The audit property: a retired belief is still readable, with why.
         let all = all(&db).await.unwrap();
         assert_eq!(all.len(), 2);
         let retired = all.iter().find(|b| b.belief_id == "b2").unwrap();

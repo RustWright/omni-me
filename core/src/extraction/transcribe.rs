@@ -23,7 +23,7 @@ pub struct Transcription {
 
 /// Read a document's text without interpreting it.
 ///
-/// ⛔ No confidence score, on [`super::document::DocumentReader`]'s reasoning:
+/// No confidence score, on [`super::document::DocumentReader`]'s reasoning:
 /// nothing here reconciles the answer against anything, so a number beside it
 /// would imply a calibration that does not exist. `TextSource::Transcribed` is
 /// the honest signal, and it ranks below a real text layer.
@@ -33,7 +33,7 @@ pub trait DocumentTranscriber: Send + Sync {
 
     /// Transcribe one document that may arrive as several files, in page order.
     ///
-    /// An empty string is a valid answer meaning the pages carry no text. ⛔ It
+    /// An empty string is a valid answer meaning the pages carry no text. It
     /// must never be turned into an error: a photograph of a blank page is an
     /// ordinary outcome, and the alternative is a model pressured to invent.
     async fn transcribe(&self, parts: &[DocumentPart<'_>]) -> Result<String, ExtractionError>;
@@ -64,8 +64,8 @@ pub fn transcription_prompt() -> String {
 /// the fence-stripping that `ask` already does — see the `json_schema` note in
 /// `openai_compat::OpenAiCompatExtractor::ask`.
 ///
-/// ⚠️ **The envelope admits absence, and that was checked before anything was
-/// built.** `text` is `required`, but the schema sets no `minLength`, so `""`
+/// The envelope admits absence, and that was checked before anything was
+/// built. `text` is `required`, but the schema sets no `minLength`, so `""`
 /// satisfies it. A required field with a minimum length would make "this page
 /// has no text" unsayable and force a fabrication — Stage 1's lesson, which cost
 /// a whole bench run on role A.
@@ -115,7 +115,7 @@ mod tests {
 
     #[test]
     fn a_response_without_the_field_is_a_parse_error_not_an_empty_page() {
-        // ⛔ These must stay distinguishable. Coercing a malformed answer to ""
+        // These must stay distinguishable. Coercing a malformed answer to ""
         // would write "this document has no text" over a document that has some,
         // and `TextSource::rank` would then let it stand.
         let err = parse_transcription(serde_json::json!({ "content": "hello" })).unwrap_err();

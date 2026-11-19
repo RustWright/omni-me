@@ -302,7 +302,7 @@ impl RoutinesProjection {
         // UPSERT-materialize: this is the handler that produced the reported
         // symptom — device A adds an item then renames it, device B skips or
         // loses the create, and the rename UPDATE matches nothing. When the
-        // create finally lands, B shows the **pre-rename** name forever.
+        // create finally lands, B shows the pre-rename name forever.
         // `RoutineItemModifiedPayload` carries no `group_id`, so the SCHEMAFULL
         // backfill has to be `group_id ?? ''`; the create supplies the real one.
         let query_str = format!(
@@ -500,14 +500,14 @@ mod tests {
         (db, store, runner)
     }
 
-    /// A mutation that arrives **before** the create it depends on must still
+    /// A mutation that arrives before the create it depends on must still
     /// land, and must survive the create arriving afterwards.
     ///
     /// This is an absence test for a silent no-op: routines was the projection
     /// family nobody converted to UPSERT-materialize. Device A adds an item and
     /// renames it; on device B the create is skipped by `apply_events_resilient`
     /// or simply hasn't been pulled, the rename's bare `UPDATE` matches nothing,
-    /// and when the create finally lands B shows the **pre-rename** name
+    /// and when the create finally lands B shows the pre-rename name
     /// forever, because nothing ever retries a no-op'd mutation.
     #[tokio::test]
     async fn item_rename_before_its_create_survives_the_create() {

@@ -1,7 +1,7 @@
 //! Autonomy: the evidence for granting it, and the grant itself.
 //!
-//! `docs/src/assistant.md`'s destination is one rule — **reversible things it may
-//! do freely; irreversible things it always asks about** — and this module is
+//! `docs/src/assistant.md`'s destination is one rule — reversible things it may
+//! do freely; irreversible things it always asks about — and this module is
 //! where that stops being a sentence and becomes a refusal.
 //!
 //! ## The evidence is a query, not a new record
@@ -15,7 +15,7 @@
 //!
 //! ## Who grants
 //!
-//! ⚠️ **The user, always.** There is no verb, no action and no proposal that
+//! The user, always. There is no verb, no action and no proposal that
 //! produces a grant. An assistant able to ask for more power — however politely,
 //! however gated — inverts the model this whole phase is built on. What it may do
 //! is behave well enough, for long enough, that the record speaks for it.
@@ -50,7 +50,7 @@ impl ActionRecord {
     /// Share of decided proposals that were approved, or `None` when none have
     /// been decided.
     ///
-    /// ⚠️ `None` rather than `0.0`. A rate of zero and "never used" are different
+    /// `None` rather than `0.0`. A rate of zero and "never used" are different
     /// facts and would drive opposite decisions; collapsing them into one number
     /// is how an unused action ends up looking like a badly-behaved one.
     pub fn approval_rate(&self) -> Option<f64> {
@@ -137,7 +137,7 @@ pub async fn granted_actions(db: &Database) -> Result<Vec<String>, EventError> {
 
 /// Whether one action may currently be carried out without asking.
 ///
-/// ⚠️ **Both halves are checked, every time.** A grant is not enough on its own:
+/// Both halves are checked, every time. A grant is not enough on its own:
 /// the action must *still* declare itself reversible. A build that changed an
 /// action's reversibility must not have old grants keep applying to it, and
 /// checking only the stored flag is how that would happen silently.
@@ -192,7 +192,7 @@ pub async fn grant(
 
 /// Take the permission back.
 ///
-/// ⚠️ Deliberately does **not** check the action against the registry. Revoking a
+/// Deliberately does not check the action against the registry. Revoking a
 /// grant for an action this build no longer knows must still work — otherwise a
 /// renamed or withdrawn action could leave a permission nothing can reach, which
 /// is the one direction of failure a permission system must not have.
@@ -314,7 +314,7 @@ mod tests {
         assert!(!note.granted, "nothing is granted by default");
     }
 
-    /// ⚠️ Never used and never approved are different facts, and they would drive
+    /// Never used and never approved are different facts, and they would drive
     /// opposite decisions. A rate of `0.0` for an action nobody has tried would
     /// read as one the assistant keeps getting wrong.
     #[tokio::test]
@@ -375,7 +375,7 @@ mod tests {
         assert!(!is_autonomous(&db, &config, "note.create").await.unwrap());
     }
 
-    /// ⛔ The published rule, enforced rather than advised: *irreversible things
+    /// The published rule, enforced rather than advised: *irreversible things
     /// it always asks about*. Refused at the write site, so no downstream check
     /// can be routed around.
     #[tokio::test]
@@ -407,7 +407,7 @@ mod tests {
         ));
     }
 
-    /// ⚠️ A permission must always be reachable to take back. Refusing to revoke
+    /// A permission must always be reachable to take back. Refusing to revoke
     /// an unknown action would strand a grant for a renamed or withdrawn one —
     /// the one direction of failure a permission system cannot have.
     #[tokio::test]
@@ -424,7 +424,7 @@ mod tests {
         );
     }
 
-    /// ⚠️ Both halves are checked on every use. If an action's reversibility
+    /// Both halves are checked on every use. If an action's reversibility
     /// changes in a later build, an old grant must stop applying — otherwise the
     /// rule silently stops holding for exactly the actions it matters most for.
     #[tokio::test]

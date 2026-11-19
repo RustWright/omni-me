@@ -129,11 +129,11 @@ impl ProjectionRunner {
             }
 
             // Upsert the version record, seeding `last_received_at` on first
-            // sight. The two first-sight cases need **opposite** seeds, and
+            // sight. The two first-sight cases need opposite seeds, and
             // `stored` is what tells them apart: `version` is a non-optional
             // field, so no version read back means no row at all.
             //
-            // - **No row** — this projection has never run, so it has projected
+            // - No row — this projection has never run, so it has projected
             //   nothing and must replay whatever the log already holds. Seeding
             //   `now` here skipped the entire backfill, silently and
             //   permanently: the mark sat ahead of those events forever, so no
@@ -142,7 +142,7 @@ impl ProjectionRunner {
             //   agent pulls the whole log *before* any projection exists, and
             //   booted on default features no matter what the user configured.
             //
-            // - **Row present, field NONE** — an install upgrading into this
+            // - Row present, field NONE — an install upgrading into this
             //   field, which is as caught-up as it ever was. Epoch there would
             //   mean a surprise full replay on the upgrade launch.
             //
@@ -191,7 +191,7 @@ impl ProjectionRunner {
                 projections = ?stale,
                 "rebuilding stale projections from the event log"
             );
-            // ⛔ Only the stale ones. This called `rebuild()` and so wiped every
+            // Only the stale ones. This called `rebuild()` and so wiped every
             // registered projection over one version bump.
             let stale_names: Vec<&str> = stale.iter().map(String::as_str).collect();
             self.rebuild_only(&stale_names).await?;
@@ -223,7 +223,7 @@ impl ProjectionRunner {
     /// Resilient rather than fail-fast: one bad historical event must not stop
     /// the rest of the backlog from landing.
     async fn catch_up(&self) -> Result<usize, EventError> {
-        // ⚠️ Filtered to the **registered** set, and the filtering happens in Rust
+        // Filtered to the registered set, and the filtering happens in Rust
         // rather than in the query. A feature-gated build registers a subset
         // (`events::registry`), and `advance_bookmark` only advances rows it
         // registered — so a de-registered projection's row freezes while the rest
@@ -255,7 +255,7 @@ impl ProjectionRunner {
         let registered: std::collections::BTreeSet<&str> =
             self.projections.iter().map(|p| p.name()).collect();
 
-        // The oldest watermark across **registered** projections — they advance
+        // The oldest watermark across registered projections — they advance
         // together, so the min only matters when the registered set changes: a
         // newly-added or re-enabled projection can't skip history.
         // The event id rides along with the timestamp so the resume point is a
@@ -288,13 +288,13 @@ impl ProjectionRunner {
         Ok(seen)
     }
 
-    /// Apply a batch of events through all matching projections, **fail-fast**:
+    /// Apply a batch of events through all matching projections, fail-fast:
     /// the first projection error aborts the batch and propagates.
     ///
-    /// This is the right semantics for **local single-event commands** (via
+    /// This is the right semantics for local single-event commands (via
     /// `commands::shared::append_and_apply`): the caller is the user whose
     /// action just failed, so surfacing the error — and refusing to advance —
-    /// is correct. For the **sync-pull path** use [`apply_events_resilient`]
+    /// is correct. For the sync-pull path use [`apply_events_resilient`]
     /// instead: there, one malformed/colliding *remote* event must not strand
     /// every later event in the batch.
     pub async fn apply_events(&self, events: &[Event]) -> Result<(), EventError> {
@@ -312,26 +312,26 @@ impl ProjectionRunner {
         Ok(())
     }
 
-    /// Apply a batch **best-effort**: a single failing event is logged and
+    /// Apply a batch best-effort: a single failing event is logged and
     /// skipped rather than aborting the batch. Returns the count of events that
     /// failed to apply (`0` = all clean).
     ///
     /// This is the sync-pull apply path. Two properties make it safe:
-    /// - The pulled events are already **durably appended** to the event store
+    /// - The pulled events are already durably appended to the event store
     ///   before this runs, so a skipped event is never *lost* — a `rebuild()`
     ///   (full replay) always recovers it, and with idempotent projections a
     ///   replay is a no-op for the events that did apply.
     /// - Not aborting means the pull cursor (already advanced past this batch)
     ///   stays consistent with "we applied everything we could," instead of the
     ///   old fail-fast behaviour where one bad event silently dropped every
-    ///   later event in the batch **and** they were never re-pulled.
+    ///   later event in the batch and they were never re-pulled.
     pub async fn apply_events_resilient(&self, events: &[Event]) -> usize {
         self.apply_events_scoped(events, None).await
     }
 
     /// As [`Self::apply_events_resilient`], restricted to the named projections.
     ///
-    /// `only: None` means every registered projection. ⚠️ The bookmark is scoped
+    /// `only: None` means every registered projection. The bookmark is scoped
     /// with the apply and not separately: advancing a projection's bookmark past
     /// events it never folded is how `catch_up` comes to skip them for good.
     async fn apply_events_scoped(&self, events: &[Event], only: Option<&[&str]>) -> usize {
@@ -453,7 +453,7 @@ impl ProjectionRunner {
 
     /// Rebuild all projections from scratch by replaying all events.
     ///
-    /// ⚠️ Wanted by `wipe_all_data`, which really does mean all of them. A version
+    /// Wanted by `wipe_all_data`, which really does mean all of them. A version
     /// bump wants [`Self::rebuild_only`] instead — see the note there.
     pub async fn rebuild(&self) -> Result<(), EventError> {
         self.rebuild_inner(None).await?;
@@ -466,8 +466,8 @@ impl ProjectionRunner {
 
     /// Rebuild only the named projections, leaving the others as they are.
     ///
-    /// ⛔ This is what a version bump needs, and it used to call [`Self::rebuild`].
-    /// One stale projection therefore wiped **all ten** and replayed the whole log
+    /// This is what a version bump needs, and it used to call [`Self::rebuild`].
+    /// One stale projection therefore wiped all ten and replayed the whole log
     /// through every one of them. Slow is the lesser half: Android kills a
     /// backgrounded app routinely, and a kill partway through left every
     /// projection emptied with no route back but another full rebuild.
@@ -946,7 +946,7 @@ mod tests {
 
     /// One stale projection must not wipe its neighbours.
     ///
-    /// The version check called `rebuild()`, which clears and replays **every**
+    /// The version check called `rebuild()`, which clears and replays every
     /// registered projection. On a device that is a multi-minute blank screen, and
     /// an Android process kill partway through leaves all of them empty with no
     /// recovery but another full rebuild.
@@ -1132,7 +1132,7 @@ mod tests {
     }
 
     /// Events already in the store when a projection is registered for the
-    /// **first** time must be projected, not skipped.
+    /// first time must be projected, not skipped.
     ///
     /// This is the cold-start order, and it is the reverse of the crash-window
     /// test above: there the projection is registered first and the event lands
@@ -1202,7 +1202,7 @@ mod tests {
     /// the previous launch did. `advance_bookmark` only advances rows it
     /// registered, so a de-registered projection's watermark freezes — and
     /// `catch_up` used to read every row unfiltered, so `min()` picked that
-    /// frozen mark and replayed the whole log on **every** launch, forever.
+    /// frozen mark and replayed the whole log on every launch, forever.
     ///
     /// The second half asserts the freeze is still load-bearing: re-registering
     /// the projection brings its stale mark back into the min, and the history it

@@ -16,7 +16,7 @@ const TABLE: &str = "record_embeddings";
 
 /// `EF` for the HNSW search — how many candidates the graph walk keeps in flight.
 ///
-/// ⚠️ **Both this and `k` must be integers in the query text.** SurrealDB's
+/// Both this and `k` must be integers in the query text. SurrealDB's
 /// `<|K,EF|>` operator dispatches on the *shape* of its arguments: two integers is
 /// the approximate/HNSW path, but `<|K,COSINE|>` is a brute-force scan that parses
 /// perfectly well and silently never touches the index. See
@@ -33,7 +33,7 @@ pub enum VectorError {
 
 /// What one sweep did, so a caller can log it rather than guess.
 ///
-/// ⚠️ Reports `skipped` explicitly rather than only counting work done: a sweep that
+/// Reports `skipped` explicitly rather than only counting work done: a sweep that
 /// silently embedded nothing and a sweep that correctly found nothing to do look
 /// identical otherwise.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -54,7 +54,7 @@ pub struct SweepReport {
 
 /// Create the table and its vector index.
 ///
-/// ⚠️ `dim` comes from the loaded model, never a constant: the index fixes
+/// `dim` comes from the loaded model, never a constant: the index fixes
 /// `DIMENSION` at definition time, so a model of another width would produce vectors
 /// the index cannot accept.
 pub async fn init_schema(db: &Database, dim: usize) -> Result<(), DbError> {
@@ -104,7 +104,7 @@ struct SourceRow {
     text: Option<String>,
     /// The entry's [`CatalogEntry::hidden_when`] column, evaluated in the query.
     ///
-    /// ⚠️ Selected rather than filtered out. Skipping hidden rows in the `WHERE`
+    /// Selected rather than filtered out. Skipping hidden rows in the `WHERE`
     /// would leave a record that was embedded *before* it was hidden sitting in
     /// the index forever, reachable by `knn_search` after `search`, `list` and
     /// `read` have all stopped returning it — a deleted transaction that only the
@@ -119,7 +119,7 @@ struct SourceRow {
 
 /// Bring the index up to date with the record tables.
 ///
-/// ⚠️ Deliberately **not** a `Projection` — a per-event `apply` would re-embed one
+/// Deliberately not a `Projection` — a per-event `apply` would re-embed one
 /// day's journal entry once per autosave. Why, in `docs/src/retrieval.md`.
 pub async fn sweep(
     db: &Database,
@@ -198,7 +198,7 @@ async fn sweep_one(
     // Every text field concatenated, in catalogue order: a note's title carries
     // meaning its body often omits, and embedding the body alone loses it.
     //
-    // ⚠️ `?? ''` is load-bearing, not defensive. `string::concat` stringifies an
+    // `?? ''` is load-bearing, not defensive. `string::concat` stringifies an
     // absent column to the literal text `NONE` rather than erroring, so an
     // untitled scan with no extracted text embeds and indexes the word "NONE" as
     // though the document said it — and a chunk retrieved on that basis is
@@ -237,7 +237,7 @@ async fn sweep_one(
     );
     let scanned_before = report.scanned;
 
-    // ⚠️ Collected because the scan above is the only thing that knows which
+    // Collected because the scan above is the only thing that knows which
     // records still exist, and the prune below needs exactly that set. Safe only
     // because the query is unpaged: under a LIMIT this would read every record
     // beyond the page as deleted and drop live vectors.
@@ -261,7 +261,7 @@ async fn sweep_one(
             );
         }
 
-        // ⛔ Before `is_current`, not after. A hidden row that was indexed while
+        // Before `is_current`, not after. A hidden row that was indexed while
         // visible still has its original text, so its hash still matches and
         // `is_current` would report it up to date and skip it — leaving the chunks
         // in place. Hiding has to win over freshness.
@@ -305,7 +305,7 @@ async fn sweep_one(
         report.embedded += 1;
     }
 
-    // ⛔ Records that no longer exist at all, which the loop above can never
+    // Records that no longer exist at all, which the loop above can never
     // reach: it iterates what is there, so a deleted record simply produces no
     // row and its chunks are never visited.
     //
@@ -342,7 +342,7 @@ async fn embedded_ids(db: &Database, record_type: &str) -> Result<Vec<String>, D
 
 /// Is this record already indexed, under this exact text and this exact model?
 ///
-/// ⚠️ The model name is half the check, not decoration. Two models of the *same*
+/// The model name is half the check, not decoration. Two models of the *same*
 /// width produce vectors in unrelated spaces, so a config swap between them leaves
 /// an index that is the right shape and entirely meaningless. Width cannot detect
 /// that; the name can.
@@ -559,7 +559,7 @@ mod tests {
 
     /// One model for the whole test binary.
     ///
-    /// ⚠️ These tests reach the network on a cold cache — fastembed downloads
+    /// These tests reach the network on a cold cache — fastembed downloads
     /// ~133 MB the first time. Loading once rather than per test keeps that to a
     /// single fetch and a single ONNX session.
     fn shared_embedder() -> &'static Embedder {
@@ -675,7 +675,7 @@ mod tests {
 
     /// A record that is deleted outright must leave the index with it.
     ///
-    /// ⚠️ This is the wipe's case, and it is not the shrinking one below: there
+    /// This is the wipe's case, and it is not the shrinking one below: there
     /// the record still exists and the sweep visits it. Here it is gone, so the
     /// scan produces no row for it and nothing in the per-record path can ever
     /// run. Without the prune its chunks stay, keep ranking, and
@@ -768,7 +768,7 @@ mod tests {
 
         let report = sweep(&db, &config(), embedder).await.unwrap();
 
-        // ⚠️ Derived, never hardcoded: this count is a function of the catalogue,
+        // Derived, never hardcoded: this count is a function of the catalogue,
         // so a new entry changes it. A literal here reads as a real regression
         // the next time one lands — which is exactly how it last went stale.
         const SEEDED_TABLES: [&str; 2] = ["generic_notes", "journal_entries"];
@@ -787,7 +787,7 @@ mod tests {
         );
     }
 
-    /// ⚠️ Asserts on the **indexed text**, not on the sweep succeeding. An absent
+    /// Asserts on the indexed text, not on the sweep succeeding. An absent
     /// column concatenates to the literal `NONE` rather than erroring, so the
     /// broken form embeds cheerfully and returns a clean report — there is no
     /// failure to catch, only a wrong string sitting in the index.

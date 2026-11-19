@@ -1,7 +1,7 @@
 //! `--bench-retrieval`: is meaning-based retrieval actually better, and what does
 //! each model cost to run?
 //!
-//! ⚠️ **Test scaffolding**, on the same terms as [`super::ask`].
+//! Test scaffolding, on the same terms as [`super::ask`].
 //!
 //! ## Why this is not part of `--bench`
 //!
@@ -19,7 +19,7 @@
 //! question is that record" has to be written down by hand, and writing it down over
 //! real entries would still be a fixture — just an unshareable one.
 //!
-//! ⚠️ **The honest limitation: the same hand wrote the corpus and the questions.**
+//! The honest limitation: the same hand wrote the corpus and the questions.
 //! A fixture built only from paraphrase cases would flatter embeddings by
 //! construction, since keyword search cannot win a case with no shared words. So the
 //! cases are labelled [`CaseKind::Lexical`] or [`CaseKind::Semantic`] and both are
@@ -355,7 +355,7 @@ const JOURNAL: &[(&str, &str, &str)] = &[
 
 /// The labelled questions. Each names exactly one right answer.
 ///
-/// ⚠️ **A case with more than one defensible answer is a bad case**, not a hard one:
+/// A case with more than one defensible answer is a bad case, not a hard one:
 /// the scorecard would then punish a retriever for finding the other right record.
 /// Where two records were plausible the fixture was changed, not the label.
 const CASES: &[Case] = &[
@@ -531,7 +531,7 @@ fn share<T>(items: &[T], pred: impl Fn(&T) -> bool) -> f64 {
 
 /// Resident set size in KB, from `/proc/self/status`.
 ///
-/// ⚠️ Linux only, and `None` elsewhere rather than a fabricated zero. The number
+/// Linux only, and `None` elsewhere rather than a fabricated zero. The number
 /// this measurement exists to inform is a Linux box's memory budget, so a platform
 /// that cannot report it should say so rather than report something.
 fn rss_kb() -> Option<u64> {
@@ -580,7 +580,7 @@ pub async fn run(cache_dir: PathBuf) {
 
     // ── One embedder per pass, each in its own database ──
     //
-    // ⚠️ A fresh database per embedder is not tidiness. `DEFINE INDEX ... HNSW
+    // A fresh database per embedder is not tidiness. `DEFINE INDEX ... HNSW
     // DIMENSION n` fixes the width when the index is created, so a 384-wide model
     // and a 768-wide one cannot share a table — and the second would fail to
     // insert rather than produce bad results, which at least fails loudly.
@@ -669,7 +669,7 @@ fn rerank_models() -> Vec<String> {
     model_list("OMNI_BENCH_RERANK_MODELS", RERANK_MODEL_VALUES)
 }
 
-/// Which embedders to measure. **Only the configured default**, unless asked.
+/// Which embedders to measure. Only the configured default, unless asked.
 ///
 /// Asymmetric with [`rerank_models`] on purpose: the reranker is the open question
 /// this bench exists to settle, while the embedder was settled in C1 and each extra
@@ -905,7 +905,7 @@ mod tests {
             .expect("case names a record in the corpus")
             .to_lowercase();
 
-            // ⚠️ Whole words, not substrings. A substring check reports "me"
+            // Whole words, not substrings. A substring check reports "me"
             // overlapping "kilometres" and would push the fixture toward avoiding
             // innocent letter sequences instead of avoiding shared terms.
             let answer_words: Vec<&str> = answer.split(|c: char| !c.is_alphanumeric()).collect();

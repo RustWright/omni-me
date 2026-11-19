@@ -7,7 +7,7 @@
 //!
 //! ## Why this is not `RecordType`
 //!
-//! [`crate::record_type::RecordType`] describes a **document form** — identity
+//! [`crate::record_type::RecordType`] describes a document form — identity
 //! rule, template, property set, completeness rule — so the client can render an
 //! editor for a note and decide whether it is finished. Its properties are YAML
 //! frontmatter keys; `validate()` rejects colons and newlines specifically to
@@ -27,7 +27,7 @@
 //! not exist would be genericity in name only. The rationale in full is in
 //! `docs/src/assistant.md`.
 //!
-//! ⚠️ A projection whose tables are queryable but which has no entry here is
+//! A projection whose tables are queryable but which has no entry here is
 //! invisible to the assistant, and nothing else would say so.
 //! [`every_queryable_projection_is_catalogued`] is what stops that being silent.
 
@@ -105,7 +105,7 @@ pub struct ChildCollection {
     pub foreign_key: &'static str,
     /// How these rows are ordered.
     ///
-    /// ⚠️ Declared, never inferred from the record id. Completion rows are keyed
+    /// Declared, never inferred from the record id. Completion rows are keyed
     /// `{item_id}-{date}-{done|skip}`, so ordering by id sorts by *item* and only
     /// then by date — which silently returned "whichever item sorts highest"
     /// while the description promised "newest first".
@@ -115,7 +115,7 @@ pub struct ChildCollection {
     pub description: &'static str,
     /// Columns on [`ChildCollection::table`] the model must never be handed.
     ///
-    /// ⚠️ Empty for both of today's collections, and present anyway:
+    /// Empty for both of today's collections, and present anyway:
     /// `fetch_children` selects `*` exactly as `read` does, so a bookkeeping
     /// column on a child table is the same defect in the same function. Fixing
     /// only the parent row would have left the twin shipping — and made it look
@@ -123,9 +123,9 @@ pub struct ChildCollection {
     /// [`CatalogEntry::hidden_fields`].
     pub hidden_fields: &'static [&'static str],
     /// Column marking a row on [`ChildCollection::table`] as hidden, for a child
-    /// table **no entry of its own owns**.
+    /// table no entry of its own owns.
     ///
-    /// ⚠️ `routine_items` is that case: it has a `removed` column and no entry, so
+    /// `routine_items` is that case: it has a `removed` column and no entry, so
     /// there is nothing for `store::fetch_children` to inherit a rule from. Where
     /// the table *does* have an entry — `documents`, read by its own `attachments`
     /// collection — leave this `None` and let the entry's
@@ -192,26 +192,26 @@ pub struct CatalogEntry {
     pub record_type: Option<&'static str>,
     /// Columns on [`CatalogEntry::table`] the model must never be handed.
     ///
-    /// ⚠️ **Bookkeeping columns exist, and `read` selects `*`.** A projection is
+    /// Bookkeeping columns exist, and `read` selects `*`. A projection is
     /// free to keep state on a row that makes the *fold* work and means nothing to
     /// a reader — `generic_notes.applied_appends` is the ids of the append events
     /// already folded in, which is how replay converges. Handed to a model inside
     /// a record described as a note, those become event ids it can quote back as
     /// though the user had written them.
     ///
-    /// ⛔ **The two ends of this live in different files**, which is the whole
+    /// The two ends of this live in different files, which is the whole
     /// hazard: the column is declared in the projection's schema and hidden here.
     /// Adding a bookkeeping column without adding it to this list is silent. The
     /// projection's own definition carries a pointer back to this field; keep it.
     ///
-    /// ⚠️ Deliberately *not* an allow-list of visible columns. That would make the
+    /// Deliberately *not* an allow-list of visible columns. That would make the
     /// failure "a real column silently stopped reaching the model", which is far
     /// harder to notice than one extra key.
     pub hidden_fields: &'static [&'static str],
     /// A boolean column whose `true` rows this catalog never returns, from
     /// `search`, `list` or `read` alike.
     ///
-    /// ⚠️ **Soft-deletion is invisible to a filter-driven query.** Every entry
+    /// Soft-deletion is invisible to a filter-driven query. Every entry
     /// here predates this field because none of their tables had one: a note is
     /// deleted outright, and a routine's `removed` lives on its *items*, which
     /// `derive` already filters. `transactions` is the first top-level table
@@ -219,11 +219,11 @@ pub struct CatalogEntry {
     /// `WHERE` purely from model-supplied narrowings — so without a declaration
     /// the assistant reads deleted ledger entries and cites them as evidence.
     ///
-    /// ⛔ **Not a filter.** A filter is something the model chooses to apply, and
+    /// Not a filter. A filter is something the model chooses to apply, and
     /// "the model remembered to exclude deleted rows" is not a property worth
     /// having. This is applied to every query over the table whatever was asked.
     ///
-    /// ⚠️ **Distinct from retirement, which is deliberately visible.** A retired
+    /// Distinct from retirement, which is deliberately visible. A retired
     /// belief stays readable on purpose — `memory.rs` keeps the audit trail — so
     /// that is a filter's job, not this one. The test is whether a person would
     /// call the row *gone*.
@@ -325,7 +325,7 @@ const NOTE: CatalogEntry = CatalogEntry {
     children: &[],
     derived: None,
     record_type: None,
-    // ⚠️ The ids of the append events already folded into `raw_text`. Declared in
+    // The ids of the append events already folded into `raw_text`. Declared in
     // `NotesProjection`'s schema, where the comment explains why the fold needs
     // them; they are how replay converges and not a word the user wrote.
     hidden_fields: &["applied_appends"],
@@ -341,7 +341,7 @@ const ROUTINE: CatalogEntry = CatalogEntry {
     description: "A repeating group of things done together, and its history.",
     identity: IdentityKind::Opaque,
     handle: "name",
-    // ⚠️ Group name only. Searching by *item* name ("do I have a routine with
+    // Group name only. Searching by *item* name ("do I have a routine with
     // stretching in it?") means matching a child table and returning its parents,
     // which `search`'s one-table query shape cannot express. Left undone rather
     // than half-done; it is the first thing to reach for if routine search
@@ -376,7 +376,7 @@ const ROUTINE: CatalogEntry = CatalogEntry {
             limit: 200,
             description: "The individual things done as part of this routine.",
             hidden_fields: &[],
-            // ⛔ An item the user removed is not part of the routine any more, and
+            // An item the user removed is not part of the routine any more, and
             // `routine_items` has no entry of its own to inherit this from. The
             // completion rollup already filtered them, so `read` was handing the
             // model a raw `items` array that disagreed with its own derived view.
@@ -394,7 +394,7 @@ const ROUTINE: CatalogEntry = CatalogEntry {
             limit: 60,
             description: "Recent completion history, newest first, including skips.",
             hidden_fields: &[],
-            // ⚠️ None, and `skipped` is NOT the column for this: a skip is a
+            // None, and `skipped` is NOT the column for this: a skip is a
             // recorded outcome the user chose, not a removed row, and the
             // description promises it.
             hidden_when: None,
@@ -414,8 +414,8 @@ const ROUTINE: CatalogEntry = CatalogEntry {
 
 /// What the assistant has concluded about the user, and is allowed to read back.
 ///
-/// ⚠️ **This is the one sanctioned form of recall, and the contrast with
-/// `assistant_messages` is the point.** Conversations are deliberately absent
+/// This is the one sanctioned form of recall, and the contrast with
+/// `assistant_messages` is the point. Conversations are deliberately absent
 /// from this catalog, because letting the assistant search its own past answers
 /// means it cites its own earlier guesses as evidence about the user's life. A
 /// belief is the opposite: it was proposed, it carries the records it was drawn
@@ -426,7 +426,7 @@ const BELIEF: CatalogEntry = CatalogEntry {
     table: "beliefs",
     projection: BeliefsProjection::NAME,
     feature: Feature::Llm,
-    // ⚠️ This said "filter on `retired` to exclude them" until 2026-09-13. There
+    // This said "filter on `retired` to exclude them" until 2026-09-13. There
     // is no `retired` filter and no `retired` column — retirement is
     // `superseded_at` being set — so the instruction named two things that do not
     // exist, and a model following it either failed the call or gave up and cited
@@ -460,7 +460,7 @@ const BELIEF: CatalogEntry = CatalogEntry {
     derived: None,
     record_type: None,
     hidden_fields: &[],
-    // ⛔ Not `superseded_at`. A retired belief stays readable on purpose — the
+    // Not `superseded_at`. A retired belief stays readable on purpose — the
     // audit trail is the point (`memory.rs`) — so hiding it here would delete a
     // deliberate capability. What is missing is the *filter*; see this entry's
     // description.
@@ -479,7 +479,7 @@ const DOCUMENT_INTERNALS: &[&str] = &["sha256", "device_id"];
 
 /// The archive: everything ingested, whatever could be read out of it.
 ///
-/// ⚠️ **The first entry whose text columns are `option<>`**, because every
+/// The first entry whose text columns are `option<>`, because every
 /// archive column is — see `DocumentsProjection`'s schema for why. Two things
 /// depend on that and are easy to undo by accident: `vector_store::sweep_one`
 /// coalesces before concatenating, and `filename` is a text field so that a scan
@@ -493,7 +493,7 @@ const DOCUMENT: CatalogEntry = CatalogEntry {
                   whatever text could be read out of it. Text may be missing or \
                   model-transcribed; check `text_source` before relying on it.",
     identity: IdentityKind::Opaque,
-    // ⚠️ Not `title`. A title only exists once fields have been extracted, so most
+    // Not `title`. A title only exists once fields have been extracted, so most
     // of the corpus has none, while `filename` is written at ingest for every
     // document. A handle that is usually absent degrades to a bare ULID.
     handle: "filename",
@@ -542,7 +542,7 @@ const DOCUMENT: CatalogEntry = CatalogEntry {
     },
     children: &[ChildCollection {
         name: "attachments",
-        // ⚠️ The same table — an attachment is a document. The only
+        // The same table — an attachment is a document. The only
         // self-referential collection here; `parent_document_id` is a link and
         // not ownership, so a child is independently searchable and readable.
         table: "documents",
@@ -556,7 +556,7 @@ const DOCUMENT: CatalogEntry = CatalogEntry {
         limit: 20,
         description: "Files that arrived inside this one, for an email.",
         hidden_fields: DOCUMENT_INTERNALS,
-        // ⚠️ None on purpose. `documents` has its own entry declaring
+        // None on purpose. `documents` has its own entry declaring
         // `hidden_when: Some("purged")`, and `fetch_children` inherits it — one
         // declaration, so the two cannot drift.
         hidden_when: None,
@@ -564,8 +564,8 @@ const DOCUMENT: CatalogEntry = CatalogEntry {
     derived: None,
     record_type: None,
     hidden_fields: DOCUMENT_INTERNALS,
-    // ⛔ This one line is what takes a purged document out of `search`, `list`,
-    // `read`, the result counts **and** the vector index — the sweep reads it to
+    // This one line is what takes a purged document out of `search`, `list`,
+    // `read`, the result counts and the vector index — the sweep reads it to
     // decide which rows' chunks to delete. Without it a purged spam email stays
     // reachable by `knn_search` long after every other path stopped returning it,
     // which is the failure `vector_store::sweep` documents at length.
@@ -585,14 +585,14 @@ const TRANSACTION_INTERNALS: &[&str] = &["superseded_by", "merged_ids", "balanci
 
 /// The ledger: what was actually spent, and what it was for.
 ///
-/// ⚠️ **The counter-example the catalog was designed against.** Journal, note and
+/// The counter-example the catalog was designed against. Journal, note and
 /// belief are all "a record is a text body with metadata"; a transaction's meaning
 /// is in its amounts and accounts, and full-text over `description` finds almost
 /// nothing worth having. That is why `filters` carries the weight here and
-/// `text_fields` is one entry long — ⛔ do not widen it to make search feel more
+/// `text_fields` is one entry long — do not widen it to make search feel more
 /// productive, because a match on a payee name is not evidence about money.
 ///
-/// ⚠️ **`category` is `option<string>`** — most rows have none until something
+/// `category` is `option<string>` — most rows have none until something
 /// categorises them, which is exactly what `transaction.categorize` is for. It is
 /// an `Exact` filter and not a text field, so the `string::concat(NONE, …)` trap
 /// that bit `documents` does not reach it; keep it that way.
@@ -644,7 +644,7 @@ const TRANSACTION: CatalogEntry = CatalogEntry {
     derived: None,
     record_type: None,
     hidden_fields: TRANSACTION_INTERNALS,
-    // ⛔ The reason this field exists. A deleted transaction stays on the table
+    // The reason this field exists. A deleted transaction stays on the table
     // with `removed = true`, and every query here builds its `WHERE` from
     // model-supplied filters alone — so without this the assistant reads money
     // the user deleted and cites it as though it had been spent.
@@ -697,7 +697,7 @@ mod tests {
         "auto_import",
         // Writes an hledger file out to disk; owns no queryable table of its own.
         "journal_file",
-        // ⚠️ The assistant's own conversations, and the exclusion is a decision
+        // The assistant's own conversations, and the exclusion is a decision
         // rather than an omission. Registering it reads as "the assistant
         // remembers"; what it actually does is put every answer it has ever given
         // into the corpus it retrieves from, so its earlier guesses come back as
@@ -750,8 +750,8 @@ mod tests {
 
     /// The ledger entry must stay findable by its numbers, not by its prose.
     ///
-    /// ⚠️ This was `transaction_shape_is_expressible` and asserted the entry was
-    /// **not** registered, under a finance hold the user lifted on 2026-09-11.
+    /// This was `transaction_shape_is_expressible` and asserted the entry was
+    /// not registered, under a finance hold the user lifted on 2026-09-11.
     /// The hold is gone; the property it was really protecting is not. Journal,
     /// note and belief are three variations of "a record is a text body", and a
     /// transaction is the counter-example that stops the catalog quietly becoming
@@ -791,14 +791,14 @@ mod tests {
 
     /// Whatever an entry hides, a child collection must not hand back.
     ///
-    /// ⚠️ This used to forbid the shape outright — no child could read a table
+    /// This used to forbid the shape outright — no child could read a table
     /// with hidden rows — because `fetch_children` ignored the rule entirely and
     /// the only safe answer was "never do that". `documents` is self-referential
     /// and gained `hidden_when: Some("purged")`, so the shape now exists.
     ///
-    /// ⛔ The guarantee moved rather than weakened: `store::fetch_children` now
+    /// The guarantee moved rather than weakened: `store::fetch_children` now
     /// applies the child's own rule, or the rule of the entry owning its table.
-    /// What this asserts is that **exactly one** of those is declared, because two
+    /// What this asserts is that exactly one of those is declared, because two
     /// declarations for one table is how they come to disagree. The behaviour is
     /// covered by `store::tests::a_purged_attachment_is_not_returned_through_its_parent`
     /// and `store::tests::a_removed_routine_item_is_not_returned_through_its_group`.

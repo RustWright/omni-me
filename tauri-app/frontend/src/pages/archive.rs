@@ -5,7 +5,7 @@
 //! answers *is this value right*, and that second question is why the layout is
 //! what it is.
 //!
-//! ⛔ **A field is only editable beside the document it came from.** The detail
+//! A field is only editable beside the document it came from. The detail
 //! view renders the document and its fields together, and correction is offered
 //! nowhere else. That is not a layout preference: a correction lands
 //! `verified: true`, and the only thing that makes the flag honest is that the
@@ -25,12 +25,12 @@ use crate::use_page_back;
 /// The "keep forever" retention timer. Mirrors `core::retention::KEEP_FOREVER`.
 const KEEP_FOREVER: u32 = u32::MAX;
 
-/// The MIME type an archived email carries. ⛔ Must match `archive::mime_for`'s
+/// The MIME type an archived email carries. Must match `archive::mime_for`'s
 /// `"eml"` arm — the archive writes it and this filters on it, and nothing else
 /// connects the two.
 const MAIL_MIME: &str = "message/rfc822";
 
-/// The field key carrying a document's tag set. ⛔ Must match
+/// The field key carrying a document's tag set. Must match
 /// `events::DOCUMENT_TAGS_KEY` — this crate cannot see it, and the consequence of
 /// a mismatch is that `FieldPanel` starts offering the joined tag value as an
 /// editable text row again.
@@ -38,7 +38,7 @@ const TAGS_FIELD_KEY: &str = "tags";
 
 /// Rows per list call.
 ///
-/// ⚠️ The page size is the caller's, deliberately: a short page is how this
+/// The page size is the caller's, deliberately: a short page is how this
 /// screen knows it has reached the end, and that inference only holds if it
 /// chose the number. The command clamps it to its own ceiling.
 const DOC_PAGE: u32 = 50;
@@ -50,9 +50,9 @@ enum View {
     /// The purge queue for one tag group, optionally narrowed to what is past
     /// that tag's retention (RFC3339).
     ///
-    /// ⛔ A nested view on this page, never the assistant inbox: approval lives
+    /// A nested view on this page, never the assistant inbox: approval lives
     /// with the domain the thing belongs to, and these are archive documents.
-    /// ⛔ The cutoff travels from `RetentionGroup::cutoff` untouched — re-deriving
+    /// The cutoff travels from `RetentionGroup::cutoff` untouched — re-deriving
     /// it here would let the screen and the server disagree about the set.
     Purge(String, Option<String>),
     /// The same preview and confirm, for one document deleted from its own view.
@@ -66,14 +66,14 @@ pub fn ArchivePage() -> Element {
     let mut view = use_signal(|| View::List);
     let mut search = use_signal(String::new);
     let mut kind = use_signal(String::new);
-    // ⚠️ Scoping to mail filters on `mime_type`, not `kind`. `kind` comes from
+    // Scoping to mail filters on `mime_type`, not `kind`. `kind` comes from
     // field extraction, which has not run for mail and may never — a kind-based
     // mail filter would return nothing and look like an empty archive.
     let mut mail_only = use_signal(|| false);
     let mut tag = use_signal(String::new);
     let mut retention_open = use_signal(|| false);
     let mut reload = use_signal(|| 0u32);
-    // The badge's set, reachable. ⛔ Without this the count on the nav and the
+    // The badge's set, reachable. Without this the count on the nav and the
     // assistant's reminder row name a queue with no way in — the list has no
     // other way to tell a counted document from the rest, and past one page they
     // are not on screen at all.
@@ -109,7 +109,7 @@ pub fn ArchivePage() -> Element {
         },
     );
 
-    // Pages past the first, appended as the user asks for them. ⛔ Reset whenever
+    // Pages past the first, appended as the user asks for them. Reset whenever
     // a filter moves, or rows fetched under the old one survive into the new
     // result — see the effect below.
     let mut extra_pages: Signal<Vec<DocumentItem>> = use_signal(Vec::new);
@@ -147,7 +147,7 @@ pub fn ArchivePage() -> Element {
     });
 
     // Every filter the resource above keys on, read again here so a change to any
-    // of them drops the accumulated pages. ⚠️ Reading them in the resource's
+    // of them drops the accumulated pages. Reading them in the resource's
     // closure does not do this — that closure re-runs to fetch page 0, it does
     // not know page 1..n exist.
     use_effect(move || {
@@ -309,7 +309,7 @@ pub fn ArchivePage() -> Element {
                                     class: "w-40".to_string(),
                                 }
                             }
-                            // ⛔ Only offered once a tag is chosen, and it names
+                            // Only offered once a tag is chosen, and it names
                             // that tag. A bare "Purge…" with no group in view
                             // would be an irreversible action whose scope the
                             // user has to infer.
@@ -344,7 +344,7 @@ pub fn ArchivePage() -> Element {
                                 },
                                 "Retention"
                             }
-                            // ⚠️ Its own control rather than an entry in the kind
+                            // Its own control rather than an entry in the kind
                             // dropdown: mail has no `kind`, so listing it there
                             // would put a value in a menu built from a different
                             // column and quietly return nothing.
@@ -363,7 +363,7 @@ pub fn ArchivePage() -> Element {
                                 },
                                 "Mail only"
                             }
-                            // The nav badge's set. ⛔ A filter, never a queue of
+                            // The nav badge's set. A filter, never a queue of
                             // its own: the module header's rule is that a value
                             // is corrected beside its document, and narrowing the
                             // list still opens the detail view to do it.
@@ -402,7 +402,7 @@ pub fn ArchivePage() -> Element {
                                 }
                             },
                             Some(Ok(docs)) if docs.is_empty() => rsx! {
-                                // ⚠️ Every filter counts, not just the search box.
+                                // Every filter counts, not just the search box.
                                 // A narrowing that is not listed here reports "the
                                 // archive is empty" for a filter that simply
                                 // matched nothing — the two readings this
@@ -422,7 +422,7 @@ pub fn ArchivePage() -> Element {
                                 let shown = docs.len() + extra.len();
                                 // The first page filling exactly is the only
                                 // evidence there is more; a short page is the end.
-                                // ⚠️ `exhausted` then records what a later page
+                                // `exhausted` then records what a later page
                                 // actually returned, so this never has to guess
                                 // twice.
                                 let more_possible = first_len == DOC_PAGE && !*exhausted.read();
@@ -441,7 +441,7 @@ pub fn ArchivePage() -> Element {
                                         p { class: "text-[11px] text-red-300", "Couldn't load more: {msg}" }
                                     }
 
-                                    // ⛔ The count is always stated once there is
+                                    // The count is always stated once there is
                                     // more than a page. Newest-first ordering makes
                                     // a silent cut-off read as "nothing older
                                     // exists", which is the failure this replaces.
@@ -510,7 +510,7 @@ pub fn ArchivePage() -> Element {
     }
 }
 
-/// ⚠️ Distinguishes "nothing filed" from "nothing matched". They look identical
+/// Distinguishes "nothing filed" from "nothing matched". They look identical
 /// and mean opposite things — one is a setup step, the other a bad search.
 #[component]
 fn EmptyState(searching: bool) -> Element {
@@ -554,7 +554,7 @@ fn DocumentCard(doc: DocumentItem, on_open: EventHandler<String>) -> Element {
                             if let Some(s) = &doc.ingest_source {
                                 span { "via {s}" }
                             }
-                            // ⚠️ Surfaced because a document the archive cannot
+                            // Surfaced because a document the archive cannot
                             // read is findable by name only — invisible
                             // otherwise, and the user can do something about it.
                             if !doc.is_searchable_by_content() {
@@ -652,7 +652,7 @@ fn DocumentDetail(
                             ParentLink { parent_id: parent, on_open: on_open }
                         }
 
-                        // ⛔ The document and its fields, side by side at md+ and
+                        // The document and its fields, side by side at md+ and
                         // stacked below. Editing a value requires seeing the
                         // document; this grid is that requirement, in layout.
                         div { class: "grid md:grid-cols-2 gap-4 items-start",
@@ -662,12 +662,12 @@ fn DocumentDetail(
                             // which sets overflow-auto expecting to scroll itself —
                             // widen the track instead. The page then pans sideways.
                             div { class: "min-w-0",
-                                // ⛔ An email renders from its stored text, never
+                                // An email renders from its stored text, never
                                 // from its bytes. The bytes are raw MIME — quoted-
                                 // printable and base64 parts — so the byte viewer
                                 // would show scaffolding, and parsing MIME again in
                                 // wasm would duplicate what ingest already did.
-                                // ⛔ Checked before the viewer, never after. A
+                                // Checked before the viewer, never after. A
                                 // purged document still carries its `sha256`, so
                                 // the viewer would fetch, get a 404 and render
                                 // "couldn't load attachment" — which is what a
@@ -697,7 +697,7 @@ fn DocumentDetail(
                                 }
                             }
                             div { class: "min-w-0 space-y-4",
-                                // ⚠️ No tag editor on a purged document: tags exist
+                                // No tag editor on a purged document: tags exist
                                 // to find a document again, and this one is gone.
                                 if !d.purged.unwrap_or(false) {
                                     TagPanel {
@@ -772,8 +772,8 @@ fn advance_when_checked(
 
 /// Split the archive's stored email text into headers and body.
 ///
-/// ⚠️ Splits on the **first blank line**, which is what `archive::derive_text`
-/// writes and what RFC 5322 defines. ⛔ Returning the whole text as a body when
+/// Splits on the first blank line, which is what `archive::derive_text`
+/// writes and what RFC 5322 defines. Returning the whole text as a body when
 /// no blank line is found is deliberate: showing everything unsplit is a worse
 /// layout, while showing nothing would hide a message that is genuinely there.
 fn split_email_text(text: &str) -> (Vec<(String, String)>, String) {
@@ -786,7 +786,7 @@ fn split_email_text(text: &str) -> (Vec<(String, String)>, String) {
         .filter_map(|line| {
             let (k, v) = line.split_once(':')?;
             let v = v.trim();
-            // ⚠️ A header with no value is dropped rather than rendered as a
+            // A header with no value is dropped rather than rendered as a
             // dangling label — `Subject:` with nothing after it is common in
             // automated mail.
             (!v.is_empty()).then(|| (k.trim().to_string(), v.to_string()))
@@ -797,7 +797,7 @@ fn split_email_text(text: &str) -> (Vec<(String, String)>, String) {
 
 /// "Arrived inside …", on a document that came in as an attachment.
 ///
-/// ⚠️ Fetches the parent only to name it. Rendering a bare "arrived inside an
+/// Fetches the parent only to name it. Rendering a bare "arrived inside an
 /// email" would need no call and tell the reader nothing they could act on —
 /// the useful fact is *which* message, and the way back to it.
 #[component]
@@ -807,7 +807,7 @@ fn ParentLink(parent_id: String, on_open: EventHandler<String>) -> Element {
     }));
 
     rsx! {
-        // ⛔ Renders nothing until the parent is known, and nothing at all if the
+        // Renders nothing until the parent is known, and nothing at all if the
         // lookup fails. A half-resolved "arrived inside …" with no name is worse
         // than staying quiet, and this is decoration on someone else's page.
         match parent.read().as_ref() {
@@ -830,7 +830,7 @@ fn ParentLink(parent_id: String, on_open: EventHandler<String>) -> Element {
 
 /// An archived email: its headers, its body, and the documents that came with it.
 ///
-/// ⛔ **Renders the archive's extracted text, never the raw bytes.** The bytes
+/// Renders the archive's extracted text, never the raw bytes. The bytes
 /// are raw MIME, so the byte viewer would show base64 payloads and boundary
 /// markers; re-parsing MIME in wasm would duplicate work ingest already did and
 /// give a second implementation to disagree with the first.
@@ -854,7 +854,7 @@ fn EmailView(document_id: String, on_open: EventHandler<String>) -> Element {
                         "Couldn't read this message: {e}"
                     }
                 },
-                // ⚠️ Distinguished from an empty body on purpose: "we have no
+                // Distinguished from an empty body on purpose: "we have no
                 // text for this" and "this message said nothing" are different
                 // facts, and only the first is a reason to go looking.
                 Some(Ok(None)) => rsx! {
@@ -912,7 +912,7 @@ fn EmailView(document_id: String, on_open: EventHandler<String>) -> Element {
 
 /// Retention rules, and what they have caught.
 ///
-/// ⛔ Proposes only. "Review" opens the same purge preview and confirm every purge
+/// Proposes only. "Review" opens the same purge preview and confirm every purge
 /// goes through — retention never removes anything itself, which is the standing
 /// ruling, not a limitation of this screen.
 #[component]
@@ -984,7 +984,7 @@ fn RetentionPanel(on_review: EventHandler<(String, String)>) -> Element {
         div { class: "p-3 rounded-lg border border-obsidian-border/10 bg-obsidian-sidebar/30 space-y-3",
             div { class: "space-y-1",
                 h2 { class: "text-sm font-semibold text-obsidian-text", "Retention" }
-                // ⛔ The sentence this surface exists to carry. An empty rules list
+                // The sentence this surface exists to carry. An empty rules list
                 // is not "nothing configured yet", it is "everything is kept", and
                 // a tag with no rule keeps its documents even when another tag on
                 // them says to let go.
@@ -1023,7 +1023,7 @@ fn RetentionPanel(on_review: EventHandler<(String, String)>) -> Element {
                     onclick: move |_| {
                         match days.read().trim().parse::<u32>() {
                             Ok(n) if n > 0 => apply(Some(n)),
-                            // ⛔ Zero is refused rather than read as "purge now" —
+                            // Zero is refused rather than read as "purge now" —
                             // the most destructive reading of a typo.
                             _ => error.set(Some("give a number of days, at least 1".into())),
                         }
@@ -1109,7 +1109,7 @@ fn RetentionPanel(on_review: EventHandler<(String, String)>) -> Element {
                                         }
                                     }
                                 }
-                                // ⛔ "Review", not "Purge". What this opens is the
+                                // "Review", not "Purge". What this opens is the
                                 // preview: every document listed, each sparable,
                                 // one confirm.
                                 button {
@@ -1222,7 +1222,7 @@ fn PurgeGroup(
                         .filter(|i| !spared.read().contains(&i.document_id))
                         .map(|i| i.document_id.clone())
                         .collect();
-                    // ⚠️ Recomputed from what is actually checked, not taken from
+                    // Recomputed from what is actually checked, not taken from
                     // the preview totals — otherwise sparing a row would leave the
                     // button promising bytes that are no longer going.
                     let bytes_going: u64 = p
@@ -1247,7 +1247,7 @@ fn PurgeGroup(
                             p {
                                 "{p.total} {crate::types::plural(p.total, \"document\")} · frees {crate::types::human_bytes(p.bytes_reclaimable)}"
                             }
-                            // ⚠️ Stated separately rather than netted off: "frees
+                            // Stated separately rather than netted off: "frees
                             // 31 MB" and "frees 0.3 MB of the 31 MB you selected"
                             // are different answers, and shared bytes make the
                             // second one the true one.
@@ -1366,7 +1366,7 @@ fn PurgeGroup(
                                                 let _ = bridge::invoke_trigger_sync().await;
                                                 crate::sync_refresh::bump_sync_epoch(sync_epoch);
                                             }
-                                            // ⚠️ Left on screen rather than bounced
+                                            // Left on screen rather than bounced
                                             // back: a purge that half-failed is
                                             // something the user has to see, and the
                                             // report above says what did go.
@@ -1378,7 +1378,7 @@ fn PurgeGroup(
                                 class: "px-3 py-2 text-sm rounded-lg border border-red-500/40 \
                                         bg-red-950/30 text-red-200 hover:bg-red-950/50 \
                                         disabled:opacity-40",
-                                // ⚠️ Read it back before changing it. This is the last
+                                // Read it back before changing it. This is the last
                                 // thing a person sees before an irreversible action,
                                 // so it states the count and what it actually frees —
                                 // and "frees nothing" is a real and common answer when
@@ -1407,7 +1407,7 @@ fn PurgeGroup(
 /// the remove handler need it, and a closure capturing the panel's signals is not
 /// `Copy` — it can be moved into one handler or the other, never both.
 ///
-/// ⚠️ Always the whole set. The fold overwrites the `tags` key and can never
+/// Always the whole set. The fold overwrites the `tags` key and can never
 /// remove one, so a delta would leave a tag the person took off still on the row.
 #[allow(clippy::too_many_arguments)]
 fn save_tag_set(
@@ -1463,7 +1463,7 @@ fn TagPanel(doc: DocumentItem, on_saved: EventHandler<()>) -> Element {
                 "Tags"
             }
             div { class: "p-2 rounded border border-obsidian-border/10 text-xs",
-                // ⛔ `sanitize: false`. The shared editor's sanitizer strips `:`,
+                // `sanitize: false`. The shared editor's sanitizer strips `:`,
                 // which is what a `key:value` tag is built on; the backend
                 // normalizes instead.
                 TagChipEditor {
@@ -1488,7 +1488,7 @@ fn TagPanel(doc: DocumentItem, on_saved: EventHandler<()>) -> Element {
                 }
             }
             if let Some(msg) = error.read().clone() {
-                // ⚠️ The backend rejects a whole set rather than dropping one bad
+                // The backend rejects a whole set rather than dropping one bad
                 // tag, so this has to be visible: silently keeping the old set
                 // would look like a tag that saved and then vanished.
                 p { class: "text-[11px] text-red-300", "Couldn't save tags: {msg}" }
@@ -1542,7 +1542,7 @@ fn confirm_fields(
 
 #[component]
 fn FieldPanel(doc: DocumentItem, on_saved: EventHandler<()>) -> Element {
-    // ⛔ `tags` is a folded field like any other, so it arrives here too — and it
+    // `tags` is a folded field like any other, so it arrives here too — and it
     // must not be offered as a free-text row. Its value is the whole set joined by
     // commas, and editing it as text would write tags nothing normalized, which
     // the filter then cannot match. `TagPanel` owns that key.
@@ -1555,7 +1555,7 @@ fn FieldPanel(doc: DocumentItem, on_saved: EventHandler<()>) -> Element {
         .filter(|f| f.key != TAGS_FIELD_KEY && !f.value.is_empty())
         .collect();
 
-    // ⛔ A purged document cannot be checked against anything — its bytes are
+    // A purged document cannot be checked against anything — its bytes are
     // gone — so confirming or correcting a value here would write `verified: true`
     // with no oracle behind it. Same argument that hides the tag editor above.
     let purged = doc.purged.unwrap_or(false);
@@ -1606,7 +1606,7 @@ fn FieldPanel(doc: DocumentItem, on_saved: EventHandler<()>) -> Element {
             if fields.is_empty() {
                 div { class: "p-3 rounded border border-obsidian-border/10 text-xs text-obsidian-text-muted space-y-1",
                     p { "Nothing has read this document yet." }
-                    // ⚠️ Says why rather than looking broken. Reading a scan
+                    // Says why rather than looking broken. Reading a scan
                     // needs a model, and that runs as a scheduled batch.
                     p { class: "text-obsidian-text-muted/70",
                         "Statements are read when they're filed; everything else is read on the next pass."
@@ -1776,7 +1776,7 @@ fn FieldRow(
             div { class: "flex items-center justify-between gap-2",
                 span { class: "text-[11px] text-obsidian-text-muted", "{humanise(&field.key)}" }
                 div { class: "flex items-center gap-1.5 shrink-0",
-                    // ⛔ Provenance is always shown, never only on hover. A value
+                    // Provenance is always shown, never only on hover. A value
                     // a model guessed and one the bank's own figures confirm look
                     // identical otherwise.
                     span { class: "text-[10px] text-obsidian-text-muted/70", "{field.origin()}" }
@@ -1866,7 +1866,7 @@ fn FieldRow(
 
 /// `notice_of_assessment` → `Notice of assessment`.
 ///
-/// ⚠️ Display only. The stored key is what folds and what filters match, so ⛔
+/// Display only. The stored key is what folds and what filters match, so
 /// nothing may round-trip through this.
 pub(crate) fn humanise(key: &str) -> String {
     let spaced = key.replace('_', " ");
@@ -1901,7 +1901,7 @@ mod tests {
         }
     }
 
-    /// ⛔ Mail is recognised by MIME, never by `kind`. Field extraction has not
+    /// Mail is recognised by MIME, never by `kind`. Field extraction has not
     /// run for mail and may never, so a `kind`-based check would report every
     /// archived email as an ordinary file and route it to the byte viewer —
     /// which would render raw MIME at the user.
@@ -1930,14 +1930,14 @@ mod tests {
         assert_eq!(body, "The body.\nSecond line.", "CRLF must be normalised");
     }
 
-    /// ⚠️ A colon inside the subject must not split the header a second time.
+    /// A colon inside the subject must not split the header a second time.
     #[test]
     fn a_header_value_containing_a_colon_survives_intact() {
         let (headers, _) = split_email_text("Subject: Re: your order: shipped\n\nbody");
         assert_eq!(headers[0].1, "Re: your order: shipped");
     }
 
-    /// ⛔ Text with no blank line still renders. Returning nothing would hide a
+    /// Text with no blank line still renders. Returning nothing would hide a
     /// message that is genuinely there because its shape was unexpected.
     #[test]
     fn text_with_no_header_block_is_all_body() {
@@ -1964,7 +1964,7 @@ mod tests {
 
     #[test]
     fn a_document_with_no_file_yet_has_nothing_to_render() {
-        // ⚠️ Not a defensive branch: fields can fold before the archive event
+        // Not a defensive branch: fields can fold before the archive event
         // that carries the hash, so this row shape is reachable in normal sync.
         let mut d = doc();
         d.sha256 = None;

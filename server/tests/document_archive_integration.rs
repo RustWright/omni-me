@@ -5,7 +5,7 @@
 //! reach the blob directory under the hash the response names, and that a
 //! document nothing can read still comes back as a success rather than an error.
 //!
-//! ⚠️ Archiving deliberately runs no model, so `NullExtractor` in the harness is
+//! Archiving deliberately runs no model, so `NullExtractor` in the harness is
 //! not a limitation here — it is the point. A route that needed an extractor to
 //! file a document would refuse every scan.
 
@@ -105,7 +105,7 @@ async fn a_document_with_no_readable_text_is_still_archived() {
 
 #[tokio::test]
 async fn an_unknown_source_is_refused_rather_than_defaulted() {
-    // ⛔ A typo'd source silently filed as `upload` would put a wrong provenance
+    // A typo'd source silently filed as `upload` would put a wrong provenance
     // on an event that is never rewritten.
     let (url, _h) = common::start_full_server(None).await;
     let client = reqwest::Client::new();
@@ -153,7 +153,7 @@ async fn the_same_bytes_filed_twice_are_two_documents_and_one_blob() {
 
 #[tokio::test]
 async fn a_statement_is_filed_with_its_parsed_fields_in_the_same_request() {
-    // ⚠️ The join the unit tests cannot make: `ingest_one` builds two events, and
+    // The join the unit tests cannot make: `ingest_one` builds two events, and
     // this proves the route actually appends both. Wired up wrong, the archive
     // event lands alone and the document is searchable by name only — which
     // looks exactly like success from the response body.

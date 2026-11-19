@@ -83,7 +83,7 @@ pub fn balances_from(ledger: &Ledger) -> Balance {
 }
 
 /// The parse-derived read-side artifacts of a journal: per-account balances +
-/// the `P`-directive FX price table. Both come from a **single** [`parse`], so
+/// the `P`-directive FX price table. Both come from a single [`parse`], so
 /// the Tauri layer can cache them together and hand `&balance` / `&prices` to
 /// the parsed-input variants (`*_from`) of the balance/dashboard aggregators
 /// instead of re-reading and re-parsing the journal on every read command.
@@ -105,7 +105,7 @@ impl JournalArtifacts {
     }
 }
 
-/// Parse a journal **once** and derive both the balance table and the price
+/// Parse a journal once and derive both the balance table and the price
 /// table from that single parse. Equivalent to calling [`balances`] and
 /// building [`Prices`] separately, but at a third of the parsing cost — the
 /// basis of the Tauri-side journal cache.
@@ -158,12 +158,12 @@ fn raw_balances(ledger: &Ledger) -> Balance {
 
 /// Normalize an hledger file into something `ledger-parser` v6 will accept.
 ///
-/// **One helper, two callers** — this module (which reads balances back out of
+/// One helper, two callers — this module (which reads balances back out of
 /// `budget.journal`) and `journal_import` (which reads a user's journal in).
 /// They used to have *disjoint* prep passes, and each one's gap was the other's
 /// fix: this side stripped `account` blocks but not malformed `P` directives,
 /// the import side did the reverse. Since the `JournalFile` projection writes an
-/// `account` block for every per-account override, importing omni-me's **own**
+/// `account` block for every per-account override, importing omni-me's own
 /// regenerated journal failed wholesale — and one such directive is already
 /// present in real user data.
 ///
@@ -174,7 +174,7 @@ fn raw_balances(ledger: &Ledger) -> Balance {
 ///    live in the DB. A single one otherwise collapses every balance view.
 /// 2. Status markers are spaced out — see [`normalize_status_marker`].
 /// 3. `P` price directives are kept when they carry a time component and
-///    dropped when they don't. **Not** dropped wholesale: `insert_from` reads
+///    dropped when they don't. Not dropped wholesale: `insert_from` reads
 ///    these for base-currency conversion, so stripping them all here would
 ///    silently un-price every foreign holding. `ledger-parser` v6 requires the
 ///    time, which hand-written journals routinely omit.

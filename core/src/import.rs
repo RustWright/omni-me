@@ -136,7 +136,7 @@ fn split_frontmatter_and_body(content: &str) -> (&str, String) {
 /// unterminated one — which is the same fallback [`split_frontmatter_and_body`]
 /// takes, since that is exactly the case where the whole input *is* the body.
 ///
-/// ⚠️ Exists so a caller that must **not** touch the frontmatter can slice past
+/// Exists so a caller that must not touch the frontmatter can slice past
 /// it and keep its bytes. [`split_frontmatter_and_body`] cannot serve that
 /// caller: it hands back an owned body with a leading blank line trimmed, so the
 /// offsets it was built from are gone and nothing can be written back.

@@ -14,8 +14,8 @@ const PROMPT: &str = "\n## What happened today? (Add as much detail as you want)
 /// Render the default journal-entry template for a given date string
 /// (expected format: `YYYY-MM-DD`), with one blank line per declared property.
 ///
-/// ⚠️ **Built through `serialize_journal` rather than as a format string, and
-/// that is load-bearing.** `core/.../notes_projection.rs::is_complete` stops its
+/// Built through `serialize_journal` rather than as a format string, and
+/// that is load-bearing. `core/.../notes_projection.rs::is_complete` stops its
 /// single-pass scan at the first non-`key: value` line, so a `tags:` block list
 /// — or a declared key written any other way — would leave every entry
 /// permanently incomplete and break auto-close. The serializer is where those

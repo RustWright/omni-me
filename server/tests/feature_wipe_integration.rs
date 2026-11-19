@@ -6,7 +6,7 @@
 //! may narrow the previewed features and never widen them, and that a wipe
 //! addressed to the wrong deployment is refused before anything is deleted.
 //!
-//! ⚠️ Every assertion goes over a real socket against the production router,
+//! Every assertion goes over a real socket against the production router,
 //! because the ticket and the declared instance live in server state — an
 //! in-process call to `purge_features` reaches neither.
 
@@ -77,7 +77,7 @@ async fn a_previewed_wipe_takes_the_ledger_and_leaves_everything_else() {
     assert_eq!(preview["total"], 2);
     assert_eq!(preview["events_by_type"]["transaction_recorded"], 1);
     assert_eq!(preview["events_by_type"]["transaction_categorized"], 1);
-    // ⛔ The preview writes nothing. A person who looks and walks away has an
+    // The preview writes nothing. A person who looks and walks away has an
     // unchanged log.
     assert_eq!(event_types(&db).await.len(), 5);
     assert_eq!(preview["instance"], "dev");
@@ -158,7 +158,7 @@ async fn a_wipe_ticket_cannot_be_replayed() {
     assert_eq!(replay.status(), reqwest::StatusCode::CONFLICT);
 }
 
-/// ⛔ A confirm may shrink what was previewed and never widen it. Previewing
+/// A confirm may shrink what was previewed and never widen it. Previewing
 /// finances and confirming finances *plus auto-import* would destroy events
 /// nobody counted.
 #[tokio::test]
@@ -231,7 +231,7 @@ async fn a_wipe_addressed_to_production_is_refused_by_the_dev_server() {
     assert_eq!(event_types(&db).await, vec!["transaction_recorded"]);
 }
 
-/// ⛔ Documents are refused through this route: a document event names a blob, and
+/// Documents are refused through this route: a document event names a blob, and
 /// only the purge path's refcount knows whether anything else still points at it.
 #[tokio::test]
 async fn documents_are_refused_and_the_route_says_why() {
@@ -271,7 +271,7 @@ async fn documents_are_refused_and_the_route_says_why() {
         .json()
         .await
         .unwrap();
-    // ⚠️ The preview is allowed: counting is not destroying, and seeing the number
+    // The preview is allowed: counting is not destroying, and seeing the number
     // is how someone learns the refusal applies to something real.
     assert_eq!(preview["total"], 1);
 

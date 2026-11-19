@@ -20,7 +20,7 @@ pub enum RerankError {
 
 /// A loaded cross-encoder, shareable across tasks.
 ///
-/// ⚠️ **A reranker is not automatically an improvement** — three of the four offered
+/// A reranker is not automatically an improvement — three of the four offered
 /// models measured *worse* than the fused ranking they were given. `MODEL_BENCH.md`
 /// § Retrieval holds the per-model numbers.
 ///
@@ -35,7 +35,7 @@ pub struct Reranker {
 impl Reranker {
     /// Load a reranker by its config name, caching into `cache_dir`.
     ///
-    /// ⚠️ Blocks for the download on a cold cache, and the smallest of these models
+    /// Blocks for the download on a cold cache, and the smallest of these models
     /// is 151 MB while the largest is 2.2 GB. Callers warm this at startup.
     pub fn load(model_name: &str, cache_dir: PathBuf) -> Result<Self, RerankError> {
         let model = parse_model(model_name)?;
@@ -110,7 +110,7 @@ impl super::retrieval::Rerank for RerankService<'_> {
     async fn rank(&self, query: &str, documents: &[String]) -> Vec<(usize, f32)> {
         match self.reranker.rank(query, documents.to_vec()).await {
             Ok(scored) => scored,
-            // ⚠️ An empty return is defined as "no opinion", never "no results":
+            // An empty return is defined as "no opinion", never "no results":
             // degrade the ordering, never the answer.
             Err(e) => {
                 tracing::warn!(error = %e, "reranking failed; keeping the fused order");

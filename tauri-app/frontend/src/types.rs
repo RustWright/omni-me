@@ -56,7 +56,7 @@ pub struct DocumentField {
     pub value: String,
     /// `parser:<id>` | `model:<name>` | `human`.
     pub source: String,
-    /// ⚠️ **Not "is this right"** — it is "did something check this against a
+    /// Not "is this right" — it is "did something check this against a
     /// figure the document states about itself". A model's value is never
     /// verified however plausible it looks, so the UI marks unverified values
     /// rather than hiding the distinction.
@@ -80,7 +80,7 @@ impl DocumentField {
 
 /// One archived document. Mirrors `DocumentRow`.
 ///
-/// ⚠️ Almost everything is optional because the projection's columns are: a
+/// Almost everything is optional because the projection's columns are: a
 /// document can be archived long before anything reads it, and fields extracted
 /// on another device can arrive before the archive event itself.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -98,21 +98,21 @@ pub struct DocumentItem {
     pub document_date: Option<String>,
     /// The tag set, hoisted from the `tags` field into its own column.
     ///
-    /// ⚠️ `None` and `Some(vec![])` are different states and the distinction is
+    /// `None` and `Some(vec![])` are different states and the distinction is
     /// carried deliberately: absent means nothing has ever tagged this document,
     /// empty means a person cleared its tags.
     #[serde(default)]
     pub tags: Option<Vec<String>>,
     /// Whether this document was purged on purpose.
     ///
-    /// ⚠️ Load-bearing in the detail view: a purged row still carries its
+    /// Load-bearing in the detail view: a purged row still carries its
     /// `sha256`, so without this the viewer fetches, gets a 404 and renders
     /// "couldn't load attachment" — which is what a broken archive looks like.
     #[serde(default)]
     pub purged: Option<bool>,
     #[serde(default)]
     pub fields: Option<Vec<DocumentField>>,
-    /// The document this one arrived inside. ⛔ A link, not ownership — an
+    /// The document this one arrived inside. A link, not ownership — an
     /// attachment stays independently listed and searchable.
     #[serde(default)]
     pub parent_document_id: Option<String>,
@@ -138,7 +138,7 @@ pub struct PurgeItem {
 pub struct PurgePreview {
     pub group: String,
     pub items: Vec<PurgeItem>,
-    /// Every match, listed or not. ⚠️ `items.len()` can be smaller.
+    /// Every match, listed or not. `items.len()` can be smaller.
     pub total: usize,
     pub bytes_reclaimable: u64,
     pub bytes_shared: u64,
@@ -150,7 +150,7 @@ pub struct PurgePreview {
 impl PurgePreview {
     /// Whether the group is larger than one preview page.
     ///
-    /// ⛔ Matters because the ruling is that every item going is *listed*. When
+    /// Matters because the ruling is that every item going is *listed*. When
     /// this is true the confirm covers the listed rows only, and the surface has
     /// to say so rather than implying the whole group went.
     pub fn is_truncated(&self) -> bool {
@@ -173,7 +173,7 @@ pub struct RetentionGroup {
     pub count: usize,
     /// The earliest day a member's timer started (`YYYY-MM-DD`).
     pub oldest: Option<String>,
-    /// ⛔ Goes to the purge preview unchanged.
+    /// Goes to the purge preview unchanged.
     pub cutoff: String,
 }
 
@@ -191,7 +191,7 @@ pub struct PurgeReport {
 
 /// `word` or `word`s, by count.
 ///
-/// ⚠️ Exists because the purge confirm is the last thing read before something
+/// Exists because the purge confirm is the last thing read before something
 /// irreversible, and "Purge 1 documents" reads as a screen nobody proofread —
 /// which is not the impression that button should leave.
 pub fn plural(n: usize, word: &str) -> String {
@@ -204,7 +204,7 @@ pub fn plural(n: usize, word: &str) -> String {
 
 /// The date half of an RFC3339 timestamp, or the whole string if it has no `T`.
 ///
-/// ⚠️ Lenient on purpose: `archived_at` is written by whichever device filed the
+/// Lenient on purpose: `archived_at` is written by whichever device filed the
 /// document, and a row that renders nothing because its timestamp was shaped
 /// unexpectedly is worse than one showing a slightly odd string.
 pub fn day_of(timestamp: &str) -> &str {
@@ -229,14 +229,14 @@ impl DocumentItem {
     /// Whether this document is an email, and so renders as a message rather
     /// than through the byte-based viewer.
     ///
-    /// ⚠️ Keyed on the MIME type, not on `kind`. `kind` comes from field
+    /// Keyed on the MIME type, not on `kind`. `kind` comes from field
     /// extraction, which for mail has not run and may never — a check on it
     /// would report every archived email as "not an email".
     pub fn is_email(&self) -> bool {
         self.mime_type.as_deref() == Some("message/rfc822")
     }
 
-    /// What to show in a list. ⛔ Never an empty row: a document with no title
+    /// What to show in a list. Never an empty row: a document with no title
     /// and no filename is still a real entry and must stay clickable.
     pub fn display_name(&self) -> String {
         match (&self.title, &self.filename) {
@@ -410,7 +410,7 @@ pub enum ConfigGroup {
     /// Retrieval settings the headless agent reads. Rendered here because this is
     /// the only screen there is — the agent runs on a box and has none.
     ///
-    /// ⚠️ **Mirrors `core::config::ConfigGroup` and must stay exhaustive.** The
+    /// Mirrors `core::config::ConfigGroup` and must stay exhaustive. The
     /// backend sends this as a field of every `ConfigEntry`; a variant missing
     /// here fails deserialization of the *whole* config list, so one unrecognised
     /// group empties the settings screen rather than hiding one section.
@@ -462,7 +462,7 @@ impl Feature {
 
     /// The inverse of [`Feature::key`].
     ///
-    /// ⚠️ Derived from `key()` by walking [`ALL_FEATURES`] rather than written as
+    /// Derived from `key()` by walking [`ALL_FEATURES`] rather than written as
     /// a second `match`. The two spellings drifting is exactly the silent failure
     /// [`Features::from_entries`] warns about, and a reversed pair is the easiest
     /// version of it to write and the hardest to see.
@@ -473,8 +473,8 @@ impl Feature {
 
 /// One review surface with something waiting on it.
 ///
-/// Mirrors `omni_me_core::approvals::PendingApprovals`. ⚠️ `reviewed_at` is a
-/// **string**, not an enum: core sends a feature as its config key
+/// Mirrors `omni_me_core::approvals::PendingApprovals`. `reviewed_at` is a
+/// string, not an enum: core sends a feature as its config key
 /// (`feature.documents`) or the literal `assistant_inbox`, and an unrecognised
 /// value must mean "a surface this build does not know", which
 /// [`crate::approvals::tab_of`] turns into no badge rather than a panic.
@@ -503,7 +503,7 @@ impl Features {
     /// Read the feature set out of a fetched config list.
     ///
     /// A key the list does not mention, or whose value is not a boolean, counts
-    /// as **on** — the same direction `ResolvedConfig::bool_of` falls back in. A
+    /// as on — the same direction `ResolvedConfig::bool_of` falls back in. A
     /// missing key must never hide a tab: an empty or failed read would blank the
     /// whole app, which looks like data loss rather than a preference.
     pub fn from_entries(entries: &[ConfigEntry]) -> Self {
@@ -1251,7 +1251,7 @@ pub struct SkippedLineView {
 /// `commands::budget::ImportStatementResult` — one shape for every statement
 /// format, CSV export or rendered PDF alike.
 ///
-/// ⚠️ **Empty `blockers` does not mean verified.** A format carrying no balance
+/// Empty `blockers` does not mean verified. A format carrying no balance
 /// and declaring no totals has nothing to fail, so it clears the gate by
 /// offering no gate — `verifiability` carries that distinction in words, and
 /// the UI must show it rather than inferring a clean bill from an empty list.
@@ -1400,7 +1400,7 @@ pub struct AssistantThread {
 
 /// A record an answer actually opened, for the citation links under it.
 ///
-/// ⚠️ **`title` is always `None` off the wire** — the event deliberately does not
+/// `title` is always `None` off the wire — the event deliberately does not
 /// freeze one, so a renamed record still cites correctly. Resolve the display
 /// name locally; see `docs`/`assistant::answer::records_read`.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -1457,7 +1457,7 @@ pub struct AssistantMessage {
     /// True when the agent raised this question on the user's behalf rather than
     /// the user typing it.
     ///
-    /// ⚠️ Worth showing. An answer to something you never asked, rendered
+    /// Worth showing. An answer to something you never asked, rendered
     /// identically to one you did, is the difference between a check-in and the
     /// assistant appearing to have opinions out of nowhere.
     #[serde(default)]
@@ -1523,7 +1523,7 @@ pub struct AssistantAsked {
 
 /// Something the assistant has offered to do, waiting on the user.
 ///
-/// ⚠️ Nothing has happened when one of these exists. The assistant has no write
+/// Nothing has happened when one of these exists. The assistant has no write
 /// path — accepting it here is what authors the change.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AssistantProposal {
@@ -1536,7 +1536,7 @@ pub struct AssistantProposal {
     /// The assistant's one-sentence reason, written to stand alone — the inbox
     /// shows it without the conversation around it.
     pub rationale: String,
-    /// What the action declared **when it was proposed**, not now.
+    /// What the action declared when it was proposed, not now.
     pub reversible: bool,
     pub created_at: String,
     /// `None` while waiting. `approved` | `rejected`, or a value a newer build
@@ -1580,7 +1580,7 @@ impl AssistantProposal {
     /// What accepting this would do, in the user's words rather than the
     /// action's name.
     ///
-    /// ⚠️ Falls back to the raw action name for anything this build does not
+    /// Falls back to the raw action name for anything this build does not
     /// recognise. A proposal made by a newer build must render as *something* a
     /// person can decide on — a blank card is the one outcome that makes the
     /// inbox unusable.
@@ -1629,7 +1629,7 @@ impl AssistantProposal {
                 (n, None) if n > 1 => format!("Mark {n} routine items skipped"),
                 _ => "Mark a routine item skipped".to_string(),
             },
-            // ⚠️ The entry itself is the detail; the summary says what kind of
+            // The entry itself is the detail; the summary says what kind of
             // change it is, because a date-and-payee line lifted out of the
             // hledger text would read as though that were the whole proposal.
             "transaction.record" => "Add a transaction to the ledger".to_string(),
@@ -1642,7 +1642,7 @@ impl AssistantProposal {
                 (n, None) if n > 1 => format!("Categorise {n} transactions"),
                 _ => "Categorise a transaction".to_string(),
             },
-            // ⚠️ "Replace" out loud, not "tag". Tagging overwrites the whole set,
+            // "Replace" out loud, not "tag". Tagging overwrites the whole set,
             // so a card reading "add a tag" would describe a different and safer
             // operation than the one being approved.
             "transaction.tag" => "Replace the tags on a transaction".to_string(),
@@ -1660,14 +1660,14 @@ impl AssistantProposal {
     /// How many items a batched action names, or `0` when it names none as a
     /// list.
     ///
-    /// ⚠️ **Zero is the honest answer for an older proposal, not a bug.** Cards
+    /// Zero is the honest answer for an older proposal, not a bug. Cards
     /// stored before batching carry a singular `item_id`, and this deliberately
     /// does not go looking for it: the callers all fall through to the "a
-    /// routine item" wording, which is exactly right for one item. ⛔ Do not
+    /// routine item" wording, which is exactly right for one item. Do not
     /// "fix" this by counting a singular key as 1 — the fallback already says
     /// the true thing, and the special case would only add a way to disagree.
     fn batch_size(&self) -> usize {
-        // ⚠️ Both keys, because the two batched actions name different things —
+        // Both keys, because the two batched actions name different things —
         // `item_ids` for a routine, `txn_ids` for the ledger. Checked rather than
         // parameterised so a caller cannot ask the wrong key and be told zero,
         // which reads as "one item" and understates the batch.
@@ -1682,7 +1682,7 @@ impl AssistantProposal {
 
     /// The records the assistant had open when it proposed this.
     ///
-    /// ⚠️ System-filled at proposal time and never model-authored, so it is the
+    /// System-filled at proposal time and never model-authored, so it is the
     /// one part of the card that cannot be talked into existence. An action that
     /// does not take evidence returns empty, which the card must distinguish
     /// from an action that takes it and got none.
@@ -1695,7 +1695,7 @@ impl AssistantProposal {
 
     /// Whether this action's whole case rests on what it read, so a card with no
     /// evidence has to say so out loud rather than simply omitting the row.
-    /// ⚠️ **Ledger membership is narrower than "takes an evidence argument".**
+    /// Ledger membership is narrower than "takes an evidence argument".
     /// `transaction.record` invents money that was not there and `transaction.clear`
     /// asserts a statement agreed — for both, "proposed without opening any
     /// record" is the sentence that should stop the user approving. Categorising
@@ -1716,23 +1716,23 @@ impl AssistantProposal {
 
     /// What the assistant is proposing, in enough detail to decide on.
     ///
-    /// ⚠️ Falls back to the raw arguments for an action this build does not know,
+    /// Falls back to the raw arguments for an action this build does not know,
     /// rather than showing nothing. A proposal from a newer build must still be
     /// decidable — an empty card is the one outcome that makes the inbox useless.
     pub fn detail(&self) -> Option<String> {
         let arg = |key: &str| self.args.get(key).and_then(|v| v.as_str());
         match self.action.as_str() {
             "note.create" => return arg("body").map(str::to_string),
-            // ⚠️ The added text is the whole decision — what the note already
+            // The added text is the whole decision — what the note already
             // says is not being changed, so showing only this is showing all of
             // it. A card that summarised instead would hide the thing approving
             // actually writes.
             "note.append" => return arg("added_text").map(str::to_string),
-            // ⚠️ Both halves, labelled, and never just the replacement. The old
+            // Both halves, labelled, and never just the replacement. The old
             // text is what makes this checkable: the card is the only place anyone
             // sees *what is being overwritten* before it is, and a card showing
             // only the new wording is an approval given without the comparison.
-            // ⛔ Not `raw_text` — the resolved body is not in these arguments (the
+            // Not `raw_text` — the resolved body is not in these arguments (the
             // app fills it when the user accepts), and showing a whole note here
             // would bury the two lines that are actually the decision.
             "note.revise" => {
@@ -1787,14 +1787,14 @@ impl AssistantProposal {
                 return (!lines.is_empty()).then(|| lines.join("\n"));
             }
             "routine.complete" => return None,
-            // ⛔ The postings verbatim, never a summary of them. The amounts and
+            // The postings verbatim, never a summary of them. The amounts and
             // the accounts *are* the proposal, and a card that rendered "about
             // €4" would be asking for approval of a number the user never saw.
             "transaction.record" => return arg("entry").map(str::to_string),
             "transaction.tag" => {
                 let tags = self.args.get("tags")?.as_array()?;
                 let listed: Vec<&str> = tags.iter().filter_map(|t| t.as_str()).collect();
-                // ⚠️ Says what the *end state* is, because tagging replaces. An
+                // Says what the *end state* is, because tagging replaces. An
                 // empty list is a real proposal — it clears every tag — and it is
                 // the one case a bare list would render as blank space.
                 return Some(if listed.is_empty() {
@@ -1835,7 +1835,7 @@ impl AssistantProposal {
 
 /// A routine frequency as a person says it.
 ///
-/// ⚠️ `custom:N` is the wire form and must never reach the screen as-is — it is
+/// `custom:N` is the wire form and must never reach the screen as-is — it is
 /// the app's encoding, not language. An unrecognised value is shown verbatim
 /// rather than guessed at.
 fn readable(frequency: &str) -> String {
@@ -1862,7 +1862,7 @@ pub struct EvidenceRef {
 
 /// A lasting conclusion the assistant drew and the user accepted.
 ///
-/// ⚠️ Nothing here was written by the assistant alone — every belief went through
+/// Nothing here was written by the assistant alone — every belief went through
 /// the approval gate, which is what makes the set auditable rather than merely
 /// visible.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -1892,7 +1892,7 @@ impl Belief {
 
     /// How well supported it is, in words a person can act on.
     ///
-    /// ⚠️ Falls through to the raw value rather than guessing. A confidence this
+    /// Falls through to the raw value rather than guessing. A confidence this
     /// build does not know was recorded by a newer one, and showing it verbatim
     /// is honest where silently calling it "low" would be a lie about the record.
     pub fn confidence_label(&self) -> String {
@@ -1915,7 +1915,7 @@ pub struct ActionRecord {
     pub pending: u32,
     /// Whether the assistant may currently do this without asking.
     pub granted: bool,
-    /// Whether it can be undone. ⛔ An irreversible action can never be granted.
+    /// Whether it can be undone. An irreversible action can never be granted.
     pub reversible: bool,
 }
 
@@ -1927,7 +1927,7 @@ impl ActionRecord {
     /// Share of decided proposals that were approved, or `None` when none have
     /// been decided.
     ///
-    /// ⚠️ `None` rather than zero: "never used" and "always rejected" are
+    /// `None` rather than zero: "never used" and "always rejected" are
     /// opposite facts, and one number cannot say both.
     pub fn approval_rate(&self) -> Option<f64> {
         let decided = self.decided();
@@ -1991,7 +1991,7 @@ mod action_record_tests {
         assert_eq!(r.evidence_label(), "You accepted 2 of 2 (100%)");
     }
 
-    /// ⚠️ `custom:N` is the wire encoding, not language. It must never reach a
+    /// `custom:N` is the wire encoding, not language. It must never reach a
     /// card as-is.
     #[test]
     fn a_custom_frequency_reads_as_words_not_as_its_encoding() {
@@ -2002,7 +2002,7 @@ mod action_record_tests {
         assert_eq!(readable("whenever"), "whenever");
     }
 
-    /// ⛔ The published rule, at the surface that offers the choice.
+    /// The published rule, at the surface that offers the choice.
     #[test]
     fn an_irreversible_action_is_not_grantable() {
         assert!(!record(9, 0, false).can_be_granted());
@@ -2110,7 +2110,7 @@ mod proposal_tests {
         assert_eq!(item.detail().as_deref(), Some("About 10 minutes"));
     }
 
-    /// ⚠️ A proposal from a newer build must still render something decidable:
+    /// A proposal from a newer build must still render something decidable:
     /// the raw action name, and its arguments verbatim. A blank card is the one
     /// outcome that makes the inbox unusable — the user cannot accept or decline
     /// what they cannot read.
@@ -2130,7 +2130,7 @@ mod proposal_tests {
         assert!(detail.contains("count: 3"), "{detail}");
     }
 
-    /// ⚠️ The count is how much of the ledger moves, so it goes in the line the
+    /// The count is how much of the ledger moves, so it goes in the line the
     /// user scans. A card reading "File a transaction under Groceries" while
     /// authoring twelve is asking for an approval they did not give.
     #[test]
@@ -2148,7 +2148,7 @@ mod proposal_tests {
         assert_eq!(one.summary(), "File a transaction under Groceries");
     }
 
-    /// ⛔ Tagging **replaces**, and the card has to say so both ways round.
+    /// Tagging replaces, and the card has to say so both ways round.
     ///
     /// Wording it as an addition would describe a safer operation than the one
     /// being approved, and an empty list — which clears every tag — is a real
@@ -2196,14 +2196,14 @@ mod proposal_tests {
         assert!(clear.cites_evidence());
         assert!(proposal("transaction.record", serde_json::json!({})).cites_evidence());
 
-        // ⚠️ And the ones that do not. Making a category proposal apologise for
+        // And the ones that do not. Making a category proposal apologise for
         // having no citation teaches the user to scroll past the warning on the
         // cards where it means something.
         assert!(!proposal("transaction.categorize", serde_json::json!({})).cites_evidence());
         assert!(!proposal("transaction.tag", serde_json::json!({})).cites_evidence());
     }
 
-    /// ⛔ The postings are the proposal. A summarised amount would be an approval
+    /// The postings are the proposal. A summarised amount would be an approval
     /// of a number the user never saw.
     #[test]
     fn a_record_proposal_shows_the_postings_verbatim() {
@@ -2214,7 +2214,7 @@ mod proposal_tests {
         assert_eq!(p.detail().as_deref(), Some(entry));
     }
 
-    /// ⚠️ The day is the decision, so it belongs in the line the user scans —
+    /// The day is the decision, so it belongs in the line the user scans —
     /// not folded into a detail block they may not open.
     #[test]
     fn a_completion_proposal_leads_with_the_day_it_claims() {
@@ -2252,7 +2252,7 @@ mod proposal_tests {
         assert_eq!(p.detail().as_deref(), Some("Reason given: Travelling."));
     }
 
-    /// ⚠️ An append card must show the text it would write, in full. What the
+    /// An append card must show the text it would write, in full. What the
     /// note already says is not changing, so the added text *is* the decision —
     /// and it is the one part the user cannot check by remembering the note.
     #[test]
@@ -2283,7 +2283,7 @@ mod proposal_tests {
         assert_eq!(renamed.detail(), None, "the title is already the summary");
     }
 
-    /// ⚠️ A revise card is the only place the **old** text is visible before it
+    /// A revise card is the only place the old text is visible before it
     /// stops existing. Showing only the replacement would be asking for consent to
     /// a comparison the user cannot make.
     #[test]
@@ -2320,8 +2320,8 @@ mod proposal_tests {
         );
     }
 
-    /// ⚠️ **The count is not decoration — it is the scope of what is being
-    /// approved.** There is no partial approval, so a card reading "a routine
+    /// The count is not decoration — it is the scope of what is being
+    /// approved. There is no partial approval, so a card reading "a routine
     /// item" over a proposal that would tick five is asking for consent to four
     /// things the user never saw.
     ///
@@ -2370,7 +2370,7 @@ mod proposal_tests {
         );
     }
 
-    /// ⚠️ The case worth catching: an action whose whole argument is what it
+    /// The case worth catching: an action whose whole argument is what it
     /// read, proposed having read nothing. The card has to be able to say so,
     /// which means distinguishing "cites nothing" from "does not cite".
     #[test]
@@ -2488,7 +2488,7 @@ mod purge_display_tests {
         assert_eq!(plural(412, "document"), "documents");
     }
 
-    /// ⚠️ `0` is "nothing", not "0 B". A group whose files are all shared frees
+    /// `0` is "nothing", not "0 B". A group whose files are all shared frees
     /// nothing, and that is a sentence rather than a quantity.
     #[test]
     fn bytes_read_as_english() {
@@ -2506,7 +2506,7 @@ mod purge_display_tests {
         assert_eq!(day_of(""), "");
     }
 
-    /// ⛔ A group larger than one preview page must be reported as truncated, or
+    /// A group larger than one preview page must be reported as truncated, or
     /// the confirm implies it covered rows the user never saw.
     #[test]
     fn a_group_bigger_than_its_page_reports_itself_truncated() {

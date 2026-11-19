@@ -164,7 +164,7 @@ mod tests {
         apply(&db, &runner, "newsletter", Some(90)).await;
         assert_eq!(rule(&db, "newsletter").await, Some(Some(90)));
 
-        // ⛔ The row survives the clear. Deleting it would lose the timestamp the
+        // The row survives the clear. Deleting it would lose the timestamp the
         // ordering guard reads, and a stale `set` would then resurrect 90 days.
         apply(&db, &runner, "newsletter", None).await;
         assert_eq!(

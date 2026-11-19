@@ -3,13 +3,13 @@
 //! Each parser turns one bank's export into [`StatementParse`]. They share two
 //! rules, and both exist because this output is used as an *oracle*:
 //!
-//! - **Nothing is skipped silently.** A line that is not a transaction is
+//! - Nothing is skipped silently. A line that is not a transaction is
 //!   counted as `structural`; a line that looks like one but cannot be read
 //!   goes to `skipped` with its raw text. Neither is a bare `continue`.
-//! - **Signs are normalised at the boundary** into "negative means money left
+//! - Signs are normalised at the boundary into "negative means money left
 //!   this account", so no downstream caller re-derives a convention.
 //!
-//! Column layouts are matched by **header name**, not position. Bank exports
+//! Column layouts are matched by header name, not position. Bank exports
 //! reorder and add columns between versions, and a positional parser silently
 //! reads the wrong field when they do — it does not fail, it just returns
 //! confident nonsense.
@@ -92,10 +92,10 @@ fn missing(name: &str, header: &[String]) -> String {
 /// confirmed against the raw exports rather than assumed, which is why this
 /// source cannot dedup on identity and uses a date floor instead — no algorithm
 /// reconstructs an identifier the source never wrote.
-/// The first non-blank line's cells, for a caller that has to **discover** a
+/// The first non-blank line's cells, for a caller that has to discover a
 /// format rather than being told it.
 ///
-/// ⚠️ The import path never needs this: the user picks the format, so each
+/// The import path never needs this: the user picks the format, so each
 /// parser can afford to be lenient about columns it merely *prefers*. The
 /// archive has no such caller — a bulk-ingested file arrives with nothing but
 /// bytes — and that leniency then makes two parsers accept the same file. See
@@ -133,7 +133,7 @@ pub fn parse_brokerage_statement(csv: &str) -> Result<StatementParse, String> {
 /// rest are ignored by name lookup, so added columns are harmless.
 /// Fold each `FEE-<parent_id>` row into the transaction it belongs to.
 ///
-/// The transfer service bills a service fee as a **separate statement row**
+/// The transfer service bills a service fee as a separate statement row
 /// whose id is the parent's id with a `FEE-` prefix
 /// (`FEE-CARD-1234` → `CARD-1234`), and reports the parent row
 /// exclusive of it. The books record one transaction carrying both — an
@@ -220,7 +220,7 @@ fn parse_transfer_rows(csv: &str) -> Result<StatementParse, String> {
 
 /// Parse a chequing-account CSV export.
 ///
-/// `Date, Description, Debit, Credit` with **no header row**, so the columns
+/// `Date, Description, Debit, Credit` with no header row, so the columns
 /// are read positionally — forced by the format, not chosen. Exactly one of
 /// Debit / Credit carries a value per row; see [`AmountCols::DebitCredit`] for
 /// why the sign falls out of which one.
@@ -231,7 +231,7 @@ fn parse_transfer_rows(csv: &str) -> Result<StatementParse, String> {
 /// statement import means money vanishing with no trace anywhere. Rows that
 /// cannot be read now land in [`StatementParse::skipped`] with their raw text.
 ///
-/// ⚠️ **This format carries no running-balance column**, so `running_balance`
+/// This format carries no running-balance column, so `running_balance`
 /// is `None` on every row and the closing-balance half of the oracle is
 /// *unavailable* here — which [`crate::statement::replay`] reports as `None`
 /// rather than as a pass. The count check and the skip ledger are the whole
@@ -281,7 +281,7 @@ enum AmountCols {
     ///
     /// `amount = credit - debit`, applied uniformly to asset and liability
     /// accounts alike. The canonical ledger's conventions record that a
-    /// liability-negation special case was tried here and **reverted** —
+    /// liability-negation special case was tried here and reverted —
     /// credit-normal accounts use the same formula, and the sign falls out of
     /// which column the bank filled.
     DebitCredit { debit: usize, credit: usize },
@@ -318,7 +318,7 @@ fn parse_with(
     parse_rows(lines, &map)
 }
 
-/// Parse a format that carries **no header row**, against a caller-supplied
+/// Parse a format that carries no header row, against a caller-supplied
 /// column map.
 ///
 /// Positional reading is a liability — [`parse_with`] exists because a bank
@@ -342,7 +342,7 @@ fn parse_fixed(csv: &str, map: &ColumnMap) -> Result<StatementParse, String> {
 /// is a footer or a finding. An unparseable *value* is an `Err`, which is a
 /// different thing from an absent one and must never be collapsed into it.
 ///
-/// A debit/credit row with **both** columns populated is an error rather than a
+/// A debit/credit row with both columns populated is an error rather than a
 /// subtraction. The formats in use fill exactly one, so both being present
 /// means the column map is wrong for this file — and quietly netting them would
 /// turn a misread layout into a plausible number, which is the failure mode
@@ -410,7 +410,7 @@ fn parse_rows<'a>(
             // problem. Distinguishing them keeps `skipped` meaningful — a skip
             // ledger full of footers is one nobody reads.
             //
-            // A line carrying **no readable money either** is the same case by
+            // A line carrying no readable money either is the same case by
             // a stated rule rather than a guess: whatever it is, it cannot be a
             // transaction, because nothing on it could supply an amount. That
             // covers headers a user pasted onto a headerless export, section
@@ -863,7 +863,7 @@ Date,Description,Debit,Credit
         assert_eq!(p.lines_seen, p.rows.len() + p.structural + p.skipped.len());
     }
 
-    /// A **dated** row with no amount is a finding, not structure — deliberately
+    /// A dated row with no amount is a finding, not structure — deliberately
     /// unlike the old parser, which dropped it silently as a closing-balance
     /// marker. A date is what makes a line look like a transaction, so an
     /// amount-less one is exactly the shape of a row we failed to read. The user

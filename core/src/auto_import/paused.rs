@@ -9,7 +9,7 @@
 //!
 //! So the server records paused *names* here, in a small `paused_sources.toml`
 //! separate from `sources.toml`. Names, not definitions: this is deliberately
-//! source-agnostic so it covers **compiled overlay bank sources** too — they
+//! source-agnostic so it covers compiled overlay bank sources too — they
 //! have no `sources.toml` entry, but they do have a registry name, which is all
 //! this file keys on. At boot the composition root loads this set and re-pauses
 //! each matching source *after* it spawns (see `omni-me-server::run`).

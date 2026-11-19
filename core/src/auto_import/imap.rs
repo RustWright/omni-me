@@ -161,14 +161,14 @@ pub fn dispatch_to<'a>(
 
 /// The `source_metadata` key naming the archived message a draft came from.
 ///
-/// ⚠️ Read by the review UI to put the email beside the transactions it
+/// Read by the review UI to put the email beside the transactions it
 /// produced. `source_metadata` is deliberately opaque at the core layer, so
 /// this const is the only thing keeping writer and reader on the same spelling.
 pub const EMAIL_DOCUMENT_ID_KEY: &str = "email_document_id";
 
 /// Record which archived document a proposed batch was derived from.
 ///
-/// ⚠️ **Merges into `source_metadata` rather than replacing it** — the handler
+/// Merges into `source_metadata` rather than replacing it — the handler
 /// has already put `from`/`subject`/`uid` there, and the review UI reads those.
 /// A non-object or absent value is replaced with a fresh object; anything else
 /// would mean dropping the link rather than the label, and the link is the half
@@ -215,7 +215,7 @@ fn stamp_email_document(event: &mut NewEvent, document_id: &str) {
 
 /// Where to file fetched messages, when they are being archived.
 ///
-/// ⛔ **Archiving happens here, not in a handler.** Whether a message is kept is
+/// Archiving happens here, not in a handler. Whether a message is kept is
 /// a property of the *message*, not of whichever handler happened to claim it —
 /// and the handlers differ per deployment (the overlay adds its own). Put this
 /// in `ReceiptHandler` and a bank statement claimed by another handler would go
@@ -290,9 +290,9 @@ pub fn is_skipped_sender(from: &str, skip: &[String]) -> bool {
 /// appending events — keeps this function pure-ish + testable without an
 /// EventStore handle.
 ///
-/// With `archive` set, **every fetched message is archived** as a document plus
+/// With `archive` set, every fetched message is archived as a document plus
 /// one per real attachment, before dispatch and regardless of its outcome.
-/// ⚠️ Including the ones no handler claims: everything here is in a label the
+/// Including the ones no handler claims: everything here is in a label the
 /// user deliberately applied, and an unrouted message is precisely the one they
 /// will later want to look at to ask why it produced nothing.
 ///
@@ -354,7 +354,7 @@ pub async fn poll_once_skipping(
         } else {
             None
         };
-        // Archive first, and independently of routing. ⚠️ A failure here must
+        // Archive first, and independently of routing. A failure here must
         // not cost the transaction: the draft is the thing the user is waiting
         // on, and a blob-store error is recoverable by re-fetching later, while
         // an aborted pass pins the cursor (see the `failed` arm below).
@@ -423,7 +423,7 @@ pub async fn poll_once_skipping(
         match handled {
             Some(result) => match result {
                 Ok(mut handler_events) => {
-                    // ⛔ Stamped here, not in the handler. Every handler would
+                    // Stamped here, not in the handler. Every handler would
                     // otherwise have to remember to do it — including the
                     // overlay's private ones, which this crate cannot see — and
                     // the one that forgot would produce a draft whose source is
@@ -495,7 +495,7 @@ pub async fn poll_once_skipping(
     // Advance the cursor regardless of unrouted OR failed count — neither is
     // re-processable, and pinning the cursor on them wedges the mailbox.
     //
-    // ⚠️ The validity carried forward is the one just *observed*, never the
+    // The validity carried forward is the one just *observed*, never the
     // stored one. After a reset the fetcher has already decided the old UID is
     // meaningless, so persisting the old validity beside the new UID would make
     // the next tick detect the same reset again, forever.
@@ -803,7 +803,7 @@ mod tests {
         assert_eq!(outcome.next_cursor.last_seen_uid, Some(102));
     }
 
-    /// ⛔ A charge is never dropped for its sender: LinkedIn bills Premium from
+    /// A charge is never dropped for its sender: LinkedIn bills Premium from
     /// linkedin.com, and that receipt must import like any other.
     #[tokio::test]
     async fn a_listed_sender_with_a_charge_is_kept() {
@@ -938,8 +938,8 @@ mod tests {
     /// The whole chain in one pass: archive the message, keep its document id,
     /// dispatch, and stamp the draft the handler produced.
     ///
-    /// ⚠️ The unit tests above prove the stamping function; this proves the
-    /// **wiring** — that `poll_once` actually threads the id from the archive
+    /// The unit tests above prove the stamping function; this proves the
+    /// wiring — that `poll_once` actually threads the id from the archive
     /// step through to the handler's output, which is where it could silently
     /// not happen.
     #[tokio::test]
@@ -1015,7 +1015,7 @@ mod tests {
         );
     }
 
-    /// ⛔ The link must survive beside the handler's own metadata, not replace
+    /// The link must survive beside the handler's own metadata, not replace
     /// it: the review UI reads `from`/`subject` from the same object, and
     /// clobbering them would trade a visible label for an invisible link.
     #[test]
@@ -1056,7 +1056,7 @@ mod tests {
         );
     }
 
-    /// ⚠️ A handler may return events that are not batch proposals; stamping
+    /// A handler may return events that are not batch proposals; stamping
     /// one would invent a `source_metadata` field on a payload without one.
     #[test]
     fn stamping_leaves_an_unrelated_event_alone() {
@@ -1073,8 +1073,8 @@ mod tests {
         assert_eq!(event.payload, before);
     }
 
-    /// ⚠️ Archiving is a property of the message, so it must happen for a
-    /// message **no handler wants** too — that is the one the user will later
+    /// Archiving is a property of the message, so it must happen for a
+    /// message no handler wants too — that is the one the user will later
     /// open to ask why it produced nothing.
     #[tokio::test]
     async fn every_fetched_message_is_archived_including_the_unrouted_one() {

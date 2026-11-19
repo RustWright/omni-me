@@ -16,7 +16,7 @@ pub struct RetentionClass {
     pub definition: &'static str,
 }
 
-/// ⛔ `receipt` comes first and its definition carries the one rule that must
+/// `receipt` comes first and its definition carries the one rule that must
 /// not be lost: a charge makes it a receipt whatever else the email is about.
 pub const CLASSES: &[RetentionClass] = &[
     RetentionClass {

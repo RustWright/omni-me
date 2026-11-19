@@ -30,7 +30,7 @@ pub mod ledger;
 pub mod llm;
 /// RFC 5322 / MIME reading.
 ///
-/// ⚠️ **Deliberately NOT behind `auto-import`**, though only that feature
+/// Deliberately NOT behind `auto-import`, though only that feature
 /// fetches mail. `archive::derive_text` reads an `.eml`'s body through this, so
 /// gating it would make a document's text depend on which binary happened to
 /// ingest it — the archive would be searchable on the server and not on a

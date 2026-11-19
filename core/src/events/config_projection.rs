@@ -143,7 +143,7 @@ pub async fn load_shared(db: &Database) -> Result<crate::config::ResolvedConfig,
 
 /// Read the shared config layer straight from its materialized table.
 ///
-/// **No replay.** Startup needs this answer before `ProjectionRunner` is even
+/// No replay. Startup needs this answer before `ProjectionRunner` is even
 /// constructed, so it reads what the previous run left behind. The cost is one
 /// launch of lag for a value set on another device, which is the trade decision 7
 /// accepted; record types, read at point of use, have no such lag.

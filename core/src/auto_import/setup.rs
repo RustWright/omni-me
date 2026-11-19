@@ -28,7 +28,7 @@ pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(30 * 60);
 /// else `interval`.
 ///
 /// `paused` is the persisted off-switch set (#367): a source whose name is in it
-/// is **registered but not spawned** — it appears in the status snapshot flagged
+/// is registered but not spawned — it appears in the status snapshot flagged
 /// `paused`, ready to be resumed, but never spawns a scheduler task, so it does
 /// not even tick once at boot. That "not even once" matters for a bank source:
 /// re-arming a source the user switched off — if only for a single login at

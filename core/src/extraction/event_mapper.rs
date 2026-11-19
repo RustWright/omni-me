@@ -3,14 +3,14 @@
 //! Two flavors because bank statements and receipts have opposite sign
 //! conventions:
 //!
-//! - **Statement extraction** — each posting in the result represents one
+//! - Statement extraction — each posting in the result represents one
 //!   row of the statement, signed from the bank's perspective (negative =
 //!   outflow). The handler knows which hledger account corresponds to that
 //!   bank. Each posting becomes a draft with the bank-side posting + an
 //!   `Unmatched` mirror; user assigns the real other-side account during
 //!   batch review.
 //!
-//! - **Receipt extraction** — one purchase becomes ONE draft, anchored on the
+//! - Receipt extraction — one purchase becomes ONE draft, anchored on the
 //!   document's stated total, because that total is the figure a single bank
 //!   charge cancels against and `reconciliation::find_match_candidates` pairs
 //!   only amounts that cancel exactly. Line items become expense legs and a
@@ -93,7 +93,7 @@ pub fn statement_extraction_to_drafts(
 /// Receipt-flavored draft mapping: one draft per purchase, anchored on the
 /// document's stated total, or on the sum of its lines when it states none.
 ///
-/// Deliberately takes **no** counter-leg resolver. The receipt's `Unmatched`
+/// Deliberately takes no counter-leg resolver. The receipt's `Unmatched`
 /// leg is not a gap waiting to be filled — it is the thing that *cancels*
 /// against the bank row's `Unmatched` so `reconciliation::find_match_candidates`
 /// can pair the two. Resolving it to a real account here would leave nothing to
@@ -165,7 +165,7 @@ fn charge_drafts(result: &ExtractionResult, source_prefix: &str) -> Vec<DraftTra
     }
 
     // Lines in several currencies have no meaningful sum, so each stays its own
-    // draft. ⚠️ These do not reconcile against a single bank charge.
+    // draft. These do not reconcile against a single bank charge.
     let mut drafts = Vec::with_capacity(result.postings.len());
     for (i, p) in result.postings.iter().enumerate() {
         let external_id = format!("{source_prefix}-{i}");

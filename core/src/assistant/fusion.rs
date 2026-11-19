@@ -14,7 +14,7 @@ pub struct RecordKey {
 
 /// One retriever decides the order; the other only contributes what the first missed.
 ///
-/// ⚠️ **This, not [`rank`], is what the live search path uses.** Fusing the two
+/// This, not [`rank`], is what the live search path uses. Fusing the two
 /// retrievers as equals was measured and it *lost* — see `docs/src/retrieval.md`
 /// § "Why the two retrievers are not equals". Do not swap this for RRF without a
 /// measurement that says otherwise.
@@ -39,13 +39,13 @@ pub fn prefer(primary: &[RecordKey], secondary: &[RecordKey]) -> Vec<(RecordKey,
 
 /// Merge several ranked lists into one, then guarantee every type a seat.
 ///
-/// ⚠️ **Not on the live path** — [`prefer`] is. Kept because the argument for RRF
+/// Not on the live path — [`prefer`] is. Kept because the argument for RRF
 /// survives the measurement that retired it: it is the right tool for two retrievers
 /// of *comparable* precision, which is what a second high-quality retriever would
 /// make true. Wiring it back in is a decision with a benchmark attached, not a
 /// simplification.
 ///
-/// ⚠️ **Fuses ranks, never scores.** The two retrievers' scores are on scales with
+/// Fuses ranks, never scores. The two retrievers' scores are on scales with
 /// nothing in common, so feeding raw scores here silently reintroduces the
 /// incomparability that ranks exist to avoid.
 ///
@@ -78,11 +78,11 @@ pub fn rank(rankings: &[Vec<RecordKey>]) -> Vec<(RecordKey, f64)> {
 
 /// Take the top `limit` of an already-ordered list, then guarantee every type a seat.
 ///
-/// ⚠️ **Does not sort. The caller's order is the answer's order.** That is what lets a
+/// Does not sort. The caller's order is the answer's order. That is what lets a
 /// reranked list — scored in cross-encoder logits, not RRF weights — pass through
 /// unharmed. A sort would reorder it by whichever scale produced bigger numbers.
 ///
-/// ⚠️ **The floor belongs here, at the final width, not at the pool's.** Applied to a
+/// The floor belongs here, at the final width, not at the pool's. Applied to a
 /// wide rerank pool and then cut, the cut can discard every member of the type the
 /// floor just protected: still "applied", guarantee gone.
 pub fn cut(ranked: &[(RecordKey, f64)], limit: usize) -> Vec<RecordKey> {
@@ -151,7 +151,7 @@ mod tests {
         }
     }
 
-    /// ⛔ The measured reason the retrievers are not equals. Under RRF a record the
+    /// The measured reason the retrievers are not equals. Under RRF a record the
     /// keyword arm liked could outvote the semantic top hit, which cost 19 points of
     /// top-1 the moment keyword matching started returning anything.
     #[test]

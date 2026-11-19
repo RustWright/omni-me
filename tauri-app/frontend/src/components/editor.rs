@@ -66,7 +66,7 @@ const EDITOR_BUNDLE_SRC: &str = "/assets/js/editor.bundle.js";
 /// Inject `editor.bundle.js` (once) and resolve when `window.createEditor` is
 /// defined. Returns `false` if it never appeared within the polling window.
 ///
-/// **Why this is separate from [`Editor`], and why the root calls it too.**
+/// Why this is separate from [`Editor`], and why the root calls it too.
 /// This used to run only on Editor mount, which meant the ~1 MB bundle didn't
 /// start downloading until a page containing an editor rendered. That was fine
 /// while the app painted Journal immediately — the bundle parsed *in parallel*

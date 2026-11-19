@@ -30,7 +30,7 @@ pub struct Embedder {
 impl Embedder {
     /// Load a model by the name held in config, caching into `cache_dir`.
     ///
-    /// ⚠️ The first call downloads the model and blocks for as long as that takes.
+    /// The first call downloads the model and blocks for as long as that takes.
     /// Callers on a request path must warm this at startup, not on demand.
     pub fn load(model_name: &str, cache_dir: PathBuf) -> Result<Self, EmbeddingError> {
         let model = parse_model(model_name)?;
@@ -54,7 +54,7 @@ impl Embedder {
 
     /// Vector width this model produces.
     ///
-    /// ⚠️ Read from the model, never hardcoded. The HNSW index declares a fixed
+    /// Read from the model, never hardcoded. The HNSW index declares a fixed
     /// `DIMENSION`, so a config change to a differently-sized model makes every stored
     /// vector meaningless.
     pub fn dim(&self) -> usize {
@@ -63,7 +63,7 @@ impl Embedder {
 
     /// The configured model name, stored alongside the vectors.
     ///
-    /// ⚠️ Two models of the *same* width still produce incompatible vector spaces, so
+    /// Two models of the *same* width still produce incompatible vector spaces, so
     /// width alone cannot detect a model swap. The name can.
     pub fn name(&self) -> &str {
         &self.name
@@ -137,7 +137,7 @@ impl std::fmt::Debug for Embedder {
 
 /// The instruction a model expects on a query but not on a passage.
 ///
-/// ⚠️ **Per-model, and wrong to generalise.** BGE v1.5 English is trained with this
+/// Per-model, and wrong to generalise. BGE v1.5 English is trained with this
 /// exact sentence on the query side only; E5 uses `query:`/`passage:`; MiniLM uses
 /// neither. Applying BGE's prefix to a model not trained with it does not error — it
 /// quietly shifts every query away from its passages and degrades recall, which looks

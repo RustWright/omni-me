@@ -6,7 +6,7 @@
 //! `DocumentFieldsExtracted` so the archive gets a parser-sourced answer for the
 //! documents that admit one, and a model is asked only about the rest.
 //!
-//! ⚠️ **`verified` is not "a parser produced it".** It is "something checked
+//! `verified` is not "a parser produced it". It is "something checked
 //! this against a figure the bank states about itself" — see
 //! [`DocumentField::verified`]. The distinction is load-bearing here because
 //! several CSV exports parse perfectly while declaring nothing, so a clean parse
@@ -31,7 +31,7 @@ pub const VERIFIABILITY_KEY: &str = "verifiability";
 
 /// Which CSV export a file turned out to be.
 ///
-/// ⚠️ The finance import path takes this from the user (`budget::import_chequing_csv`
+/// The finance import path takes this from the user (`budget::import_chequing_csv`
 /// has a `format` option). The archive cannot: a bulk-ingested file arrives with
 /// nothing but bytes, so the format has to be *discovered* — see
 /// [`claim_statement`].
@@ -79,15 +79,15 @@ impl StatementFormat {
         }
     }
 
-    /// Header columns that must **all** be present for this format to claim a
+    /// Header columns that must all be present for this format to claim a
     /// file. Empty for the headerless format, which is why it is the fallback.
     ///
-    /// ⚠️ These are stricter than the parsers themselves, deliberately. A
+    /// These are stricter than the parsers themselves, deliberately. A
     /// parser treats a column it can work without as optional — the transfer
     /// map takes `running balance` and `transferwise id` as `Option`, so with
     /// only `date` and `amount` present it accepts a brokerage export and
     /// produces rows. That is correct when the *user* named the format and
-    /// wrong when nothing did. ⛔ Tighten the signature here, never the parser:
+    /// wrong when nothing did. Tighten the signature here, never the parser:
     /// the import path depends on that leniency.
     fn signature(self) -> &'static [&'static str] {
         match self {
@@ -122,13 +122,13 @@ fn recognises(parse: &StatementParse) -> bool {
 ///
 /// Two passes, and the order is the point. A file with a header is matched
 /// against the header signatures first, because those identify a format
-/// positively. Only if none matches is the **headerless** chequing map tried,
+/// positively. Only if none matches is the headerless chequing map tried,
 /// and it has to be last: reading by position alone, it will accept any CSV
 /// whose third and fourth columns happen to hold money, so letting it compete
 /// with a positive identification would let column coincidence outvote a
 /// declared header.
 ///
-/// ⛔ **Ambiguity returns `None` rather than a best guess.** Two signatures
+/// Ambiguity returns `None` rather than a best guess. Two signatures
 /// matching one file means the formats overlap in a way nothing here can
 /// adjudicate, and picking the first would make the winner depend on
 /// declaration order in [`StatementFormat::ALL`] — a silent dependency that
@@ -168,14 +168,14 @@ pub const HUMAN_SOURCE: &str = "human";
 
 /// Turn one hand-entered value into the event that folds it onto a document.
 ///
-/// ✅ **`verified: true`, and this is the one path where that is honest.** The
+/// `verified: true`, and this is the one path where that is honest. The
 /// flag means a value was checked against something real, and the archive page
-/// ⛔ **requires the document to be visible beside the field being edited** — so
+/// requires the document to be visible beside the field being edited — so
 /// the oracle is the person reading the document. That UI constraint is what
-/// this function's `verified` depends on; ⛔ do not call it from anywhere that
+/// this function's `verified` depends on; do not call it from anywhere that
 /// cannot show the document, because then nothing checked anything.
 ///
-/// ⚠️ One key per event. Fields fold by key, so correcting three values writes
+/// One key per event. Fields fold by key, so correcting three values writes
 /// three events and each is independently attributable — a single batched event
 /// would make a later reader unable to tell which value the person actually
 /// looked at.
@@ -198,14 +198,14 @@ pub fn human_correction(
 
 /// A person's tag set for a document, as the one folded `tags` field.
 ///
-/// ⚠️ **The whole set, every time.** The fold overwrites a key and can never
+/// The whole set, every time. The fold overwrites a key and can never
 /// remove one, so a partial write would leave a tag the person took off still on
 /// the row — which is why the tag set is one field rather than one field per tag,
 /// and why the caller sends what the set should become.
 ///
-/// ✅ `verified: true` for a narrower reason than [`human_correction`]'s. There
+/// `verified: true` for a narrower reason than [`human_correction`]'s. There
 /// the flag is honest because the person could see the document the value came
-/// from; here the tag *is* their own label, so there is no reading to check. ⛔ Do
+/// from; here the tag *is* their own label, so there is no reading to check. Do
 /// not carry that argument to any other key.
 pub fn human_tag_set(document_id: &str, tags: &[Tag]) -> DocumentFieldsExtractedPayload {
     DocumentFieldsExtractedPayload {
@@ -242,12 +242,12 @@ pub fn email_date(
 /// The deterministic half: what a parser can say about the bytes alone.
 ///
 /// Synchronous, and takes no reader — which is the point. Ingest calls this one,
-/// so ⛔ *no model at ingest* is a fact about what is in scope rather than a
+/// so *no model at ingest* is a fact about what is in scope rather than a
 /// comment someone has to remember to obey. It needs nothing remote, so it can
 /// run wherever a document enters: a device's background queue, the server, a
 /// backfill. The model half pays network latency and is scheduled separately.
 ///
-/// ⚠️ **No MIME gate.** Bulk ingest labels plenty of files
+/// No MIME gate. Bulk ingest labels plenty of files
 /// `application/octet-stream`, and gating on a declared type would silently send
 /// those to a model instead. Valid UTF-8 is the only precondition — which
 /// excludes PDFs and images by construction — and [`claim_statement`]'s
@@ -266,13 +266,13 @@ pub fn parser_fields(document_id: &str, bytes: &[u8]) -> Option<DocumentFieldsEx
 /// file a parser can read costs money to produce a value that would lose the
 /// fold anyway.
 ///
-/// ⚠️ Ingest does not call this; it calls [`parser_fields`] directly. This is the
+/// Ingest does not call this; it calls [`parser_fields`] directly. This is the
 /// scheduled path, and the two are not interchangeable: the reader is the half
 /// that reaches the network, so it belongs to a batch that can be retried, rated
 /// and paused, not to the request that files a document.
 ///
 /// `None` means no fields could be derived: no parser recognised the file and
-/// either no reader is configured or it failed. ⛔ That is a normal outcome, not
+/// either no reader is configured or it failed. That is a normal outcome, not
 /// an ingest failure — the document is already archived and findable by name.
 pub async fn derive_fields(
     document_id: &str,
@@ -373,7 +373,7 @@ pub fn fields_from_statement(
         fields.push(field(CLOSING_BALANCE_KEY, balance.to_string(), checked));
     }
 
-    // ⛔ The token, not `Verifiability::describe`. That renders a sentence for a
+    // The token, not `Verifiability::describe`. That renders a sentence for a
     // person to read, which belongs to whichever surface is showing this — a
     // stored value has to be filterable, and a stored sentence would also freeze
     // today's wording into every document's history.
@@ -519,7 +519,7 @@ Date,Description,Amount,Balance
 
     #[test]
     fn a_clean_parse_of_a_format_that_declares_nothing_is_not_verified() {
-        // ⚠️ The case the whole `verified` flag exists for. This export carries
+        // The case the whole `verified` flag exists for. This export carries
         // no balance column, so every line parses and nothing is checked —
         // `import_blockers` is empty because there was no gate to fail.
         const NO_BALANCE: &str = "\
@@ -587,7 +587,7 @@ Date,Description,Amount
 
     #[tokio::test]
     async fn with_no_reader_configured_a_document_simply_gains_no_fields() {
-        // ⛔ Not an error. The document is already archived and findable by name;
+        // Not an error. The document is already archived and findable by name;
         // a backfill must not abort over a file nothing can structure.
         assert!(
             derive_fields("doc-3", b"a letter", "text/plain", None, &[])
@@ -604,9 +604,9 @@ Date,Description,Amount
 
     #[test]
     fn the_chequing_map_does_not_claim_a_brokerage_export() {
-        // ⚠️ The discovery rule's real hazard, and the reason `recognises`
-        // insists on an empty skip ledger. The chequing map is **positional and
-        // headerless**, so it will read any four-column CSV — here it lands on
+        // The discovery rule's real hazard, and the reason `recognises`
+        // insists on an empty skip ledger. The chequing map is positional and
+        // headerless, so it will read any four-column CSV — here it lands on
         // Amount and Balance as debit and credit. `read_amount` refuses a row
         // with both populated rather than netting them, which turns every row
         // into a skip and disqualifies the claim. Netting would instead have
@@ -621,7 +621,7 @@ Date,Description,Amount
 
     #[test]
     fn a_lenient_parser_does_not_out_claim_the_format_that_declares_itself() {
-        // ⚠️ The overlap that made the first version of this rule useless. The
+        // The overlap that made the first version of this rule useless. The
         // transfer map takes `running balance` and `transferwise id` as
         // *optional*, so it parses a brokerage export happily — two claimants,
         // and a rule that refuses ambiguity then refused every real file. The

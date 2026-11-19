@@ -5,7 +5,7 @@
 //! those live on the server and in `core::archive`. The one write here is a
 //! person fixing a value they can see is wrong.
 //!
-//! ⛔ **Gated on [`Feature::Documents`], every command including the reads.** An
+//! Gated on [`Feature::Documents`], every command including the reads. An
 //! archive the user has switched off must not answer questions about what it
 //! holds; a list endpoint that still returns filenames leaks exactly what the
 //! switch was flipped to stop.
@@ -23,12 +23,12 @@ use crate::AppState;
 
 /// The most documents one list call will return, whatever the caller asks for.
 ///
-/// ⚠️ The corpus is over a thousand files, so this is a real page rather than a
-/// generous ceiling — the caller must offer a way past it. ⛔ A list that stops
+/// The corpus is over a thousand files, so this is a real page rather than a
+/// generous ceiling — the caller must offer a way past it. A list that stops
 /// here silently reads as the whole archive: the rows are ordered newest-first,
 /// so the cut-off looks like nothing older exists.
 ///
-/// ⚠️ A **ceiling**, not the page size. The caller passes its own `limit` and so
+/// A ceiling, not the page size. The caller passes its own `limit` and so
 /// knows whether a short page means the end — the alternative is a second copy
 /// of this number in the frontend, drifting silently. Same split as
 /// `list_transactions` and its `TXN_PAGE_SIZE`.
@@ -40,7 +40,7 @@ const PAGE: u32 = 100;
 /// takes `''` for that, so `None` and `Some("")` behave identically and a cleared
 /// search box does not need a different call.
 ///
-/// ⚠️ One struct rather than five parameters, matching `list_transactions` and
+/// One struct rather than five parameters, matching `list_transactions` and
 /// its `TxnFilter`. Adding the fifth tripped `clippy::too_many_arguments` on both
 /// sides of the boundary at once, which is the lint doing its job: four `&str` in
 /// a row is a call site nobody can read.
@@ -52,7 +52,7 @@ pub struct DocumentListFilter {
     mime: Option<String>,
     tag: Option<String>,
     /// Narrow to documents carrying a field nothing has checked — the set the nav
-    /// badge counts. ⛔ Without it that count names a queue with no way in: the
+    /// badge counts. Without it that count names a queue with no way in: the
     /// list offers no other way to tell the counted documents from the rest, and
     /// past `PAGE` rows they are not on screen at all.
     unverified_only: Option<bool>,
@@ -87,7 +87,7 @@ pub async fn list_documents(
 
 /// The documents that arrived inside this one.
 ///
-/// ⚠️ Its own call rather than a field on [`get_document`]: only the email view
+/// Its own call rather than a field on [`get_document`]: only the email view
 /// needs it, and every other document in the archive would pay a second query to
 /// learn it has no children.
 #[tauri::command(rename_all = "snake_case")]
@@ -114,7 +114,7 @@ pub async fn get_document(
 
 /// One document's extracted text.
 ///
-/// ⚠️ Separate from [`get_document`] so the list path never carries text — see
+/// Separate from [`get_document`] so the list path never carries text — see
 /// `queries::document_text`. Used to show an archived email beside the drafts
 /// it produced.
 #[tauri::command(rename_all = "snake_case")]
@@ -148,15 +148,15 @@ pub async fn document_tags(state: State<'_, AppState>) -> Result<Vec<String>, St
 
 /// Replace a document's tag set.
 ///
-/// ⚠️ **Replace, not add or remove** — the whole set is one folded field, so the
+/// Replace, not add or remove — the whole set is one folded field, so the
 /// caller sends what the set should become. That is the same contract
 /// `tag_transaction` already has, and for the same reason; to add one tag, send
 /// the current tags plus the new one.
 ///
-/// ✅ Lands as `source: human`, `verified: true`. Unlike a field correction this
+/// Lands as `source: human`, `verified: true`. Unlike a field correction this
 /// does not need the document visible: a tag is the person's own label rather
 /// than a reading of the document, so there is nothing for them to be checking it
-/// against. ⛔ That argument does not extend to any other field.
+/// against. That argument does not extend to any other field.
 ///
 /// Normalizing here rather than in the UI is deliberate. The frontend is a
 /// separate crate with its own `sanitize_tag`, and a tag stored in a form the
@@ -187,12 +187,12 @@ pub async fn set_document_tags(
 
 /// Record a person's correction of one field.
 ///
-/// ✅ Lands as `source: human`, `verified: true` — see
+/// Lands as `source: human`, `verified: true` — see
 /// [`document_fields::human_correction`] for why that flag is honest here and
-/// ⛔ the UI constraint it depends on: the document must be visible beside the
+/// the UI constraint it depends on: the document must be visible beside the
 /// field being edited.
 ///
-/// ⚠️ **Refuses an empty key.** A field keyed `""` folds onto every future
+/// Refuses an empty key. A field keyed `""` folds onto every future
 /// empty-keyed write and can never be corrected again through this path, since
 /// the UI has nothing to render as its label.
 #[tauri::command(rename_all = "snake_case")]
@@ -212,7 +212,7 @@ pub async fn correct_document_field(
         return Err("a correction needs a document".to_string());
     }
 
-    // ⛔ Refused on a purged document. `verified: true` claims a person checked
+    // Refused on a purged document. `verified: true` claims a person checked
     // the value against the document, and its bytes are gone — so here the flag
     // could only ever be a lie. The archive page hides the editor; this is the
     // half a second caller cannot skip.
@@ -254,7 +254,7 @@ pub async fn set_document_retention(
         .ok_or_else(|| "a retention rule needs a tag".to_string())?
         .to_string();
     if keep_days == Some(0) {
-        // ⛔ Refused rather than treated as "purge immediately". Zero is what a
+        // Refused rather than treated as "purge immediately". Zero is what a
         // slider reaches by accident, and the thing it would mean is the most
         // destructive reading available.
         return Err("a retention rule of 0 days is not allowed; clear it instead".to_string());
@@ -291,7 +291,7 @@ pub fn list_retention_classes() -> Vec<(String, String)> {
 
 /// Every tag with a live rule, and the days it keeps for.
 ///
-/// ⚠️ Tags absent from this list are **kept** — the surface has to say so.
+/// Tags absent from this list are kept — the surface has to say so.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn list_document_retention(
     state: State<'_, AppState>,
@@ -316,7 +316,7 @@ pub struct RetentionRule {
 
 /// Documents past their retention, grouped by the tag whose rule decided it.
 ///
-/// ⛔ Proposes only; the purge confirm remains the only thing that removes anything.
+/// Proposes only; the purge confirm remains the only thing that removes anything.
 /// Each group's `cutoff` goes to [`preview_document_purge`] unchanged, or the screen
 /// and the server would disagree about the set.
 #[tauri::command(rename_all = "snake_case")]
@@ -383,13 +383,13 @@ pub struct RetentionGroup {
     /// The earliest day any member's timer started (`YYYY-MM-DD`), the date the
     /// preview rows show; not the earliest archive time, which for mail is the backfill.
     pub oldest: Option<String>,
-    /// RFC3339. ⛔ Hand this to the purge preview unchanged.
+    /// RFC3339. Hand this to the purge preview unchanged.
     pub cutoff: String,
 }
 
 /// `POST /documents/purge/preview` — what purging this group would remove.
 ///
-/// ⛔ Goes to the server rather than the local database, and not only because the
+/// Goes to the server rather than the local database, and not only because the
 /// server is where the blobs are. The byte figures depend on a reference count
 /// over every document *and* every transaction attachment, and a device holds a
 /// bounded cache rather than the archive — its answer to "what would this free"
@@ -453,7 +453,7 @@ async fn post_purge_preview(
     serde_json::from_str(&body).map_err(|e| format!("purge preview decode: {e}"))
 }
 
-/// `POST /documents/purge` — ⛔ irreversible, and only for a set the user has
+/// `POST /documents/purge` — irreversible, and only for a set the user has
 /// just been shown.
 ///
 /// The `token` came from the preview and the server checks it: this command
@@ -496,7 +496,7 @@ mod tests {
     /// Two constants the wasm frontend restates because it cannot depend on
     /// `omni-me-core`, checked against the values they mirror.
     ///
-    /// ⚠️ Both fail *silently* in the same direction — a filter that quietly
+    /// Both fail *silently* in the same direction — a filter that quietly
     /// matches nothing, which reads as an empty archive rather than as a bug. The
     /// comments beside each const say "must match"; this is what makes that true.
     /// Same shape as `routines::tests`' check on the wipe phrase.

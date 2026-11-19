@@ -4,7 +4,7 @@
 //! everything anything has since read out of it. Why that is three events and
 //! how fields fold: `docs/src/archive.md`.
 //!
-//! ⚠️ **Rank is compared before arrival order, never after** — see
+//! Rank is compared before arrival order, never after — see
 //! [`DocumentField::rank`] and [`merge_fields`] for fields, [`TextSource::rank`]
 //! and [`write_text_if_it_outranks`] for text. Reversing the two would make a
 //! re-extraction silently overwrite every value a person corrected by hand, and
@@ -176,7 +176,7 @@ impl DocumentsProjection {
         .await?
         .check()?;
 
-        // ⚠️ Text is written through the same guard as a transcription, and it is
+        // Text is written through the same guard as a transcription, and it is
         // this handler — not the new one — that needed it. The pull filter runs
         // on the author's clock (see `init_schema`), so a transcription authored
         // on another device can fold *before* the archive event that created the
@@ -201,7 +201,7 @@ impl DocumentsProjection {
                 }
             };
 
-        // ⛔ `document_id` only. A transcription never creates the columns that
+        // `document_id` only. A transcription never creates the columns that
         // identify a file — no `sha256`, no `filename`. If it folds before the
         // archive event, the row it leaves behind is a text-only stub that
         // `on_archived` completes on arrival, which is exactly what the
@@ -215,15 +215,15 @@ impl DocumentsProjection {
 
     /// Tombstone a document: the row stays, marked purged, and its text goes.
     ///
-    /// ⛔ **`UPSERT`, not `UPDATE`** — the lesson `routines_projection` paid for.
+    /// `UPSERT`, not `UPDATE` — the lesson `routines_projection` paid for.
     /// A bare `UPDATE` silently matches nothing when the purge folds before the
     /// archive event it purges, and nothing ever retries a no-op'd mutation; the
     /// archive event would then arrive and materialize a fully visible row whose
     /// bytes had already been deleted. That is the one outcome this whole design
     /// exists to prevent.
     ///
-    /// ⚠️ **`text` is cleared here, and that is the only place purging reclaims
-    /// anything from the log.** Blob bytes live on disk and are deleted by the
+    /// `text` is cleared here, and that is the only place purging reclaims
+    /// anything from the log. Blob bytes live on disk and are deleted by the
     /// caller; a document's text lives in the *event payload*, which is
     /// append-only and stays. Nulling the column is what takes a purged spam
     /// email out of search and out of the embedding sweep — the log still holds
@@ -314,7 +314,7 @@ impl DocumentsProjection {
         let fields = serde_json::to_value(&merged)
             .map_err(|e| EventError::Validation(format!("could not serialize fields: {e}")))?;
 
-        // ⚠️ `None`, not `Some(vec![])`, when the key is absent. An empty array
+        // `None`, not `Some(vec![])`, when the key is absent. An empty array
         // would make an untagged document indistinguishable from one whose tags
         // were cleared, and `docs/src/archive.md` records why an absent column
         // has to stay absent: `string::concat` renders it as the literal `NONE`
@@ -356,7 +356,7 @@ impl DocumentsProjection {
 
 /// Fold `incoming` over `existing`, one key at a time, by origin rank.
 ///
-/// ⚠️ The comparison is `>=`, not `>`. Equal ranks must let the newer value
+/// The comparison is `>=`, not `>`. Equal ranks must let the newer value
 /// through, or a second human correction of the same field would be discarded
 /// and the UI would report a save that did nothing — the silent-success class
 /// `ActionParam::verbatim` guards against on the note path.
@@ -379,7 +379,7 @@ fn merge_fields(existing: Vec<DocumentField>, incoming: Vec<DocumentField>) -> V
 /// Write a document's text only when its provenance is at least as good as what
 /// the row already holds.
 ///
-/// ⚠️ `>=`, matching [`merge_fields`] and for the same reason: equal ranks let
+/// `>=`, matching [`merge_fields`] and for the same reason: equal ranks let
 /// the newer value through, so re-running transcription with a better model
 /// lands rather than being silently discarded. What the ordering itself is —
 /// and therefore what can shadow what — is [`TextSource::rank`].
@@ -394,7 +394,7 @@ async fn write_text_if_it_outranks(
     text: Option<String>,
     text_source: &str,
 ) -> Result<(), EventError> {
-    // ⛔ A purge outranks every text source there is, and this is the one place
+    // A purge outranks every text source there is, and this is the one place
     // that has to know it. Both writers of text come through here, and either
     // would otherwise restore a purged document's words: the archive event
     // carries `extracted`, a transcription carries `transcribed`, and both beat
@@ -546,7 +546,7 @@ mod tests {
 
     #[tokio::test]
     async fn fields_arriving_before_the_archive_event_still_land() {
-        // ⚠️ The case every `option<>` column exists for. The pull filter runs on
+        // The case every `option<>` column exists for. The pull filter runs on
         // the author's clock, so an extraction done on one device can be folded
         // ahead of the archive event that created the row. Required columns would
         // reject it, and the document would never become findable.
@@ -716,7 +716,7 @@ mod tests {
         );
     }
 
-    /// ⚠️ Cleared is not the same state as never tagged, and the column has to
+    /// Cleared is not the same state as never tagged, and the column has to
     /// keep them apart: an empty array means a person took the tags off, absent
     /// means nothing has ever tagged this document. Collapsing the two would make
     /// "I removed that tag" and "no tag was ever suggested" look identical.
@@ -795,7 +795,7 @@ mod tests {
 
     /// A purge tombstones the row and takes its text out of every read surface.
     ///
-    /// ⚠️ The text lives in the *event payload* as well, and that stays — the log
+    /// The text lives in the *event payload* as well, and that stays — the log
     /// is append-only. Nulling the column is what removes a purged spam email from
     /// search and from the embedding sweep; the words survive where nothing reads
     /// them back.
@@ -829,7 +829,7 @@ mod tests {
         );
     }
 
-    /// ⛔ The case the `UPSERT` exists for, and the one a bare `UPDATE` loses.
+    /// The case the `UPSERT` exists for, and the one a bare `UPDATE` loses.
     ///
     /// The pull filter runs on the authoring device's clock, so a purge can reach
     /// a device before the archive event it purges. `routines_projection` paid for
@@ -890,7 +890,7 @@ mod tests {
         assert_eq!(column(&db, "p3", "text").await, None);
     }
 
-    /// ⚠️ Fields are NOT blocked, deliberately. A purged row keeps its title and
+    /// Fields are NOT blocked, deliberately. A purged row keeps its title and
     /// kind so the archive can say *which* document went; only the content goes.
     #[tokio::test]
     async fn a_purged_document_keeps_the_labels_that_say_what_it_was() {
@@ -1095,7 +1095,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_transcription_folded_before_its_archive_event_survives_it() {
-        // ⚠️ The case the rank guard exists for, and it is `on_archived` that
+        // The case the rank guard exists for, and it is `on_archived` that
         // needed it. The pull filter runs on the author's clock, so a phone's
         // transcription can fold ahead of the laptop's archive event. That event
         // carries `None` — the absence that made transcription necessary — and
@@ -1196,7 +1196,7 @@ mod tests {
 
     #[test]
     fn an_unknown_text_source_outranks_none() {
-        // ⚠️ Asymmetric on purpose. A source a later build introduced must not be
+        // Asymmetric on purpose. A source a later build introduced must not be
         // erasable by an archive event carrying `None`, because that loss is
         // unrecoverable on any device that does not hold the blob.
         assert!(TextSource::rank("ocr-v2") > TextSource::rank(TextSource::None.as_str()));

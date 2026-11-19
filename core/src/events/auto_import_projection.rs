@@ -376,7 +376,7 @@ impl AutoImportProjection {
         // materialized the `Proposed` row (skipped by `apply_events_resilient`,
         // or simply not pulled yet). The batch then sat at `pending` there
         // forever, and `commit_batch`'s only gate is `row.status != "pending"`
-        // (`commands/auto_import.rs:356`) — so it could be committed a **second**
+        // (`commands/auto_import.rs:356`) — so it could be committed a second
         // time, minting fresh ULID-keyed `TransactionRecorded` events with no
         // content dedup behind them.
         //
@@ -446,7 +446,7 @@ mod tests {
         batch_ids.into_iter().zip(statuses).collect()
     }
 
-    /// A resolve that arrives **before** its proposal must not leave the batch
+    /// A resolve that arrives before its proposal must not leave the batch
     /// re-openable.
     ///
     /// Absence test for a double-spend. The pending row is keyed on

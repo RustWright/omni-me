@@ -129,7 +129,7 @@ pub async fn set_global_config(
 
 /// Set (or clear, with `value: None`) this device's override for one key.
 ///
-/// Emits **no event**, by design — see the module header.
+/// Emits no event, by design — see the module header.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn set_device_override(
     state: State<'_, AppState>,

@@ -7,7 +7,7 @@
 //! call site is `Icon { name: IconName::ChevronRight, class: "w-4 h-4" }` and the
 //! stroke/viewBox boilerplate lives in exactly one place.
 //!
-//! Paths are heroicons **v1 outline** (integer 24-grid coords) to match the set
+//! Paths are heroicons v1 outline (integer 24-grid coords) to match the set
 //! already in the codebase — don't mix in v2 paths, whose decimal coords read at
 //! a visibly different weight next to these.
 

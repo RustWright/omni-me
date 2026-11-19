@@ -20,12 +20,12 @@ use crate::AppState;
 
 /// A preview that has been shown, and the only wipe that may act on it.
 ///
-/// ⛔ The same gate the document purge uses, for the same reason: a confirm may
+/// The same gate the document purge uses, for the same reason: a confirm may
 /// only ever narrow what a preview described. There the unit is a document id;
 /// here it is a feature, so "shrink" means the confirmed set must be a subset of
 /// the previewed one. Nothing may add a feature that was never counted.
 ///
-/// ⚠️ Single-use and single-slot, so a stale token cannot be replayed later
+/// Single-use and single-slot, so a stale token cannot be replayed later
 /// against a log that has since moved on.
 #[derive(Debug, Clone)]
 pub struct WipeTicket {
@@ -56,7 +56,7 @@ pub struct WipePreviewResponse {
     /// that reports one total cannot be checked against what the ledger holds.
     pub events_by_type: BTreeMap<String, usize>,
     pub total: usize,
-    /// Which deployment this is. ⛔ The confirm must name it back, so a wipe
+    /// Which deployment this is. The confirm must name it back, so a wipe
     /// aimed at dev cannot land on production because a shell had the wrong host.
     pub instance: Option<String>,
     /// Hand back with the confirm. See [`WipeTicket`].
@@ -161,12 +161,12 @@ async fn preview_handler(
     }))
 }
 
-/// Delete a confirmed set of features' events. ⛔ Irreversible.
+/// Delete a confirmed set of features' events. Irreversible.
 async fn confirm_handler(
     State(state): State<AppState>,
     Json(body): Json<WipeConfirmRequest>,
 ) -> Result<Json<WipeReport>, (StatusCode, String)> {
-    // ⛔ Refuses when the server declared no instance. An undeclared deployment is
+    // Refuses when the server declared no instance. An undeclared deployment is
     // treated as a refusal everywhere a destructive tool asks, precisely so that a
     // half-provisioned box cannot be mistaken for the dev one.
     let Some(declared) = state.instance else {
@@ -345,7 +345,7 @@ async fn destroy(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // ⛔ Not optional. The projections are derived, so until they are rebuilt the
+    // Not optional. The projections are derived, so until they are rebuilt the
     // read models still answer with the transactions whose events are gone — a
     // ledger that is empty in the log and populated on screen.
     state

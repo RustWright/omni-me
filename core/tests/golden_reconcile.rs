@@ -1,8 +1,8 @@
 //! Durability guardrail 1 — CI golden-reconcile.
 //!
-//! Imports a small **synthetic** fixture journal (fictional banks) through the
+//! Imports a small synthetic fixture journal (fictional banks) through the
 //! real production reconcile pipeline and asserts the projected per-account,
-//! per-commodity balances against a **frozen expected table**. Any future
+//! per-commodity balances against a frozen expected table. Any future
 //! parser / grammar / renderer / balance-engine drift that moves a balance fails
 //! this test in CI (it rides the existing `cargo test -p omni-me-core` step — no
 //! workflow change, no external `ledger` binary needed).

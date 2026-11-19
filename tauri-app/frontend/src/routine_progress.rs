@@ -39,7 +39,7 @@ pub struct DayProgress {
 /// fixture can feed both sides the same case without massaging it per side.
 ///
 /// The agreement this buys has limits, and they are worth naming:
-/// - the fixture pins agreement **on the cases it covers**, not on all inputs;
+/// - the fixture pins agreement on the cases it covers, not on all inputs;
 /// - nothing forces the screen to keep *calling* this function — inline a fresh
 ///   derivation in the component and no test fires;
 /// - `roll_up` also reports how many of `done` were skips, which this does not,

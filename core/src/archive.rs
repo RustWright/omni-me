@@ -3,7 +3,7 @@
 //! Why the archive is three events, how fields fold, and why text travels in
 //! the event: `docs/src/archive.md`.
 //!
-//! ⛔ **No model in here.** The line is the network, not the event type:
+//! No model in here. The line is the network, not the event type:
 //! deterministic work that needs nothing remote runs at ingest, and everything
 //! that reaches an endpoint is scheduled and batched elsewhere. So a PDF's text
 //! layer is lifted here, and a statement's fields are parsed here — but reading
@@ -25,14 +25,14 @@ use crate::statement::pdf;
 /// Where a document's text came from, as stored in
 /// [`DocumentArchivedPayload::text_source`].
 ///
-/// ⚠️ Kept distinct because the two are not equally trustworthy and a reader who
+/// Kept distinct because the two are not equally trustworthy and a reader who
 /// cannot tell them apart will trust both the same. Extracted text is what the
 /// file says; transcribed text is what a model thinks it says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextSource {
     /// Lifted from a text layer the file actually carried.
     Extracted,
-    /// Read off an image by a model. ⚠️ Never produced here — see the module note.
+    /// Read off an image by a model. Never produced here — see the module note.
     Transcribed,
     /// Nothing could read one. An ordinary outcome, not a failure.
     None,
@@ -60,12 +60,12 @@ impl TextSource {
         match source {
             // What the file itself states, above any reading of it.
             "extracted" => 2,
-            // ⚠️ Nothing may rank below `none`, or an un-transcribed scan could
+            // Nothing may rank below `none`, or an un-transcribed scan could
             // not be given text at all — which is the entire point of the
             // transcription pass.
             "none" => 0,
             // `transcribed`, and deliberately anything a later build introduces.
-            // ⚠️ An unrecognized source ranks **above** `none` on purpose. The
+            // An unrecognized source ranks above `none` on purpose. The
             // two errors are not symmetric: overwriting real text with `None`
             // makes a document unsearchable on every device and unrecoverable on
             // most, because blobs do not sync and only the capturing device
@@ -136,7 +136,7 @@ pub async fn derive_text(
                 // Not an ingest failure. An encrypted or oversized PDF is still a
                 // document worth keeping; it simply arrives without text.
                 //
-                // ⚠️ At `warn` when it is the password, because that one is fixable
+                // At `warn` when it is the password, because that one is fixable
                 // and used to be invisible: 140 of 765 corpus statements landed here
                 // and read as empty-but-fine.
                 match &e {
@@ -151,7 +151,7 @@ pub async fn derive_text(
             }
         }
     } else if is_email(mime) {
-        // ⚠️ **Its headers and body, not its raw source.** An `.eml` is mostly
+        // Its headers and body, not its raw source. An `.eml` is mostly
         // MIME scaffolding and base64 attachment payloads; indexing those bytes
         // makes every message match nothing a person would search for while
         // looking perfectly searchable. Three of the real fixtures carry their
@@ -222,7 +222,7 @@ pub struct Ingested {
     /// Append all of these, in this order.
     ///
     /// `DocumentArchived` first, then a `DocumentFieldsExtracted` if a parser
-    /// claimed the file. ⚠️ The projection tolerates either order — it has to,
+    /// claimed the file. The projection tolerates either order — it has to,
     /// since sync delivers by the authoring device's clock — but there is no
     /// reason to hand it a puzzle it only has to solve for the cross-device case.
     pub events: Vec<NewEvent>,
@@ -237,7 +237,7 @@ pub struct Ingested {
 ///
 /// One struct because the three travel together through every ingest entry point,
 /// and `ingest_one` crossed clippy's argument threshold the moment the passwords
-/// joined them. ⚠️ It replaces `auto_import::imap::ArchiveTarget`, which was the
+/// joined them. It replaces `auto_import::imap::ArchiveTarget`, which was the
 /// same triple built for one caller — two names for one idea is how the email path
 /// and the upload path end up disagreeing about what ingest needs.
 pub struct IngestContext<'a> {
@@ -249,15 +249,15 @@ pub struct IngestContext<'a> {
 
 /// Store one document's bytes and build the events that record it.
 ///
-/// ⛔ Returns them rather than appending them — see the module note.
+/// Returns them rather than appending them — see the module note.
 ///
 /// Fields are derived here, and only the parser's: it is deterministic and needs
-/// nothing remote. ⛔ **Here rather than in the callers**, because this is the
+/// nothing remote. Here rather than in the callers, because this is the
 /// one function that knows a document has just been created — `POST
 /// /documents/archive` is the only caller today, and the Tauri app links this
 /// crate directly, so a device capture would be the second. A derivation copied
 /// into each of them drifts apart the first time one is touched.
-/// ⚠️ If a large file ever makes [`document_fields::parser_fields`] block long
+/// If a large file ever makes [`document_fields::parser_fields`] block long
 /// enough to matter, move the call off this await — never back into the callers.
 pub async fn ingest_one(
     ctx: &IngestContext<'_>,
@@ -271,7 +271,7 @@ pub async fn ingest_one(
     let (text, text_source) = derive_text(bytes, mime, ctx.passwords).await;
 
     let payload = DocumentArchivedPayload {
-        // ⚠️ A fresh id per ingest, deliberately not the hash. The same file
+        // A fresh id per ingest, deliberately not the hash. The same file
         // arriving twice from two sources is two archive entries — see
         // `DocumentArchivedPayload::document_id`.
         document_id: ulid::Ulid::new().to_string(),
@@ -310,15 +310,15 @@ pub async fn ingest_one(
 pub struct IngestedEmail {
     /// Every event, message first then its attachments in order.
     pub events: Vec<NewEvent>,
-    /// The message's own document. ⚠️ **This is what a draft transaction should
-    /// reference**, not an attachment: the batch is per-message, and a reviewer
+    /// The message's own document. This is what a draft transaction should
+    /// reference, not an attachment: the batch is per-message, and a reviewer
     /// reaching the message can walk down to whatever came with it, while one
     /// starting at an attachment cannot see the envelope that carried it.
     pub email_document_id: String,
     /// One per `disposition: attachment` part, in the order they appeared.
     pub attachment_document_ids: Vec<String>,
     /// Parts deliberately left uncatalogued — the `cid:` images an HTML body
-    /// renders. ⚠️ Reported rather than dropped quietly, because "this email
+    /// renders. Reported rather than dropped quietly, because "this email
     /// had 6 parts and the archive shows 1" is otherwise unexplainable, and
     /// because a sender mislabelling a real file as inline would be invisible.
     pub inline_parts_skipped: usize,
@@ -326,7 +326,7 @@ pub struct IngestedEmail {
 
 /// Archive an email as a document, plus one document per real attachment.
 ///
-/// ⛔ **The message is archived WHOLE, raw bytes.** Three of the five real
+/// The message is archived WHOLE, raw bytes. Three of the five real
 /// fixtures carry no attachment at all — the receipt *is* the body — so an
 /// attachment-only rule files nothing for them. It is also what makes skipping
 /// the inline parts lossless: those images are still inside this document,
@@ -341,7 +341,7 @@ pub struct IngestedEmail {
 /// parsed it to decide whether the message was interesting at all, and parsing
 /// twice to save one argument would be the wrong trade.
 ///
-/// ⛔ Returns events rather than appending them, like every other ingest here.
+/// Returns events rather than appending them, like every other ingest here.
 pub async fn ingest_email(
     ctx: &IngestContext<'_>,
     raw: &[u8],
@@ -401,7 +401,7 @@ pub async fn ingest_email(
 
 /// Make a subject safe to use as a filename without making it unrecognisable.
 ///
-/// ⚠️ Path separators and control characters only. A subject is the one human
+/// Path separators and control characters only. A subject is the one human
 /// label the message has, so stripping punctuation or transliterating emoji
 /// would trade a real identifier for a tidy one — and `📫 isp invoice` is an
 /// actual fixture.
@@ -689,7 +689,7 @@ mod tests {
         assert_eq!(fields.fields[0].source, "parser:email");
     }
 
-    /// ⚠️ Three of five real fixtures are like this: the receipt IS the body.
+    /// Three of five real fixtures are like this: the receipt IS the body.
     /// Attachment-only archiving would file nothing at all for them.
     #[tokio::test]
     async fn an_email_with_no_attachments_is_still_one_document() {
@@ -735,7 +735,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_email_with_no_date_header_stays_dateless() {
-        // ⛔ No fallback to today. A guessed date files the message under the
+        // No fallback to today. A guessed date files the message under the
         // wrong month and nothing downstream can tell it was invented — the same
         // rule `document_prompt` states for `document_date`.
         let raw = b"From: a@b.test\r\nSubject: no date here\r\n\r\nBody.\r\n";
@@ -749,7 +749,7 @@ mod tests {
     #[test]
     fn a_subject_stays_recognisable_but_cannot_escape_its_directory() {
         assert_eq!(sanitize_filename("a/b\\c"), "a-b-c");
-        // ⚠️ An actual fixture is named `📫 isp invoice available.` — dropping
+        // An actual fixture is named `📫 isp invoice available.` — dropping
         // non-ASCII would trade a real identifier for a tidy one.
         assert_eq!(sanitize_filename("📫 isp invoice"), "📫 isp invoice");
         assert_eq!(sanitize_filename("  padded  "), "padded");

@@ -1,13 +1,13 @@
 //! Config-driven generic auto-import sources (3.6).
 //!
-//! The public engine ships with **zero** compiled-in sources. This module lets
+//! The public engine ships with zero compiled-in sources. This module lets
 //! a non-coding operator declare *generic* sources — a CSV file, or any
 //! subprocess helper — in a server-side `sources.toml`, which the public binary
 //! loads at boot and turns into live [`AutoImportSource`]s via
 //! [`build_generic_sources`]. Bank-specific adapters still live in the private
 //! overlay; this is the rail for everything that needs no code.
 //!
-//! `sources.toml` is **definitions, not secrets** — it is deliberately a
+//! `sources.toml` is definitions, not secrets — it is deliberately a
 //! separate file from `credentials.toml` (the design's "secrets referenced by
 //! name"): a CSV source needs no secret at all, and secret-bearing types name
 //! their secret rather than inlining it. Example:

@@ -1,7 +1,7 @@
 //! Per-tag retention: which archived documents are past the time their tags say
 //! to keep them.
 //!
-//! ⛔ **Nothing here deletes, and nothing here is allowed to.** It proposes groups
+//! Nothing here deletes, and nothing here is allowed to. It proposes groups
 //! into the purge queue, and the group confirm — every document listed, each one
 //! sparable — is the only thing that removes anything. That is the user's ruling
 //! of 2026-09-27, and it is why this module returns candidates rather than taking
@@ -9,22 +9,22 @@
 //!
 //! ## The rule, and why it fails toward keeping
 //!
-//! ⚠️ For a document with a retention category (`retain:<key>`, R4-6), the
+//! For a document with a retention category (`retain:<key>`, R4-6), the
 //! category's timer decides instead, unless a topic tag keeps it longer; see
 //! [`keep_days`]. What follows is the rule for a document without one.
 //!
-//! A document is a candidate only when **every tag it carries has a retention
-//! rule**, and then only once it is older than the **longest** of them.
+//! A document is a candidate only when every tag it carries has a retention
+//! rule, and then only once it is older than the longest of them.
 //!
 //! Both halves are the same instinct. Longest-wins is the user's: a document
 //! tagged `newsletter` (90 days) and `taxes` (never) must not go on the
 //! newsletter's clock. Requiring *every* tag to be governed is the same loss
 //! arriving through a gap instead of through a comparison — `taxes` with no rule
 //! at all would otherwise let the newsletter's 90 days decide. So an ungoverned
-//! tag means **kept**, which also means "never" needs no separate state: a tag
+//! tag means kept, which also means "never" needs no separate state: a tag
 //! with no rule is already a tag whose documents are never proposed.
 //!
-//! ⚠️ The cost of that choice, stated because it will look like a bug: retention
+//! The cost of that choice, stated because it will look like a bug: retention
 //! does nothing at all for a document carrying one tag you have not governed yet.
 //! Whatever surfaces this has to say so, or absence reads as unconfigured rather
 //! than as kept.
@@ -94,7 +94,7 @@ pub struct RetentionCandidate {
 
 /// Group candidates by the tag whose rule is the longest one they carry.
 ///
-/// ⛔ The grouping tag is the **deciding** one, not any tag they share. A group
+/// The grouping tag is the deciding one, not any tag they share. A group
 /// headed by a tag that did not decide the cutoff would invite a person to change
 /// that tag's rule and watch nothing happen.
 pub fn group_by_deciding_tag(
@@ -168,7 +168,7 @@ pub async fn candidates(
         return Ok(Vec::new());
     };
 
-    // ⚠️ A prefilter, not the rule. A candidate's cutoff is the longest rule among
+    // A prefilter, not the rule. A candidate's cutoff is the longest rule among
     // its own tags, which is at least the shortest rule anywhere — so nothing
     // older than that boundary can qualify, and asking the database to drop the
     // rest keeps the exact evaluation below off the whole archive.

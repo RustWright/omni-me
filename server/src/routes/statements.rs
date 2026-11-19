@@ -5,14 +5,14 @@
 //! The sibling route hands a document to an LLM and asks what it says. That is
 //! the right shape for a receipt, where the layout is whatever the shop's
 //! printer felt like. It is the wrong shape for a statement, because a
-//! statement **states figures about itself** — declared totals, transaction
+//! statement states figures about itself — declared totals, transaction
 //! counts, opening and closing balances — and a parse can therefore be
 //! *checked* rather than trusted. A model cannot offer that check, and it is
 //! the only reason a bulk import of a few hundred rows is verifiable at all.
 //!
 //! So this route runs no model. It extracts layout-preserved text, parses by
-//! column position, and returns the rows **together with everything it could
-//! not read and every check that failed**. It does not write anything — the
+//! column position, and returns the rows together with everything it could
+//! not read and every check that failed. It does not write anything — the
 //! caller decides — but it does state whether the statement is fit to import,
 //! because that judgement belongs with the parser rather than being re-derived
 //! by each client from the raw fields.

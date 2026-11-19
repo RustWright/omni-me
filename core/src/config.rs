@@ -123,13 +123,13 @@ pub const ACCENT_VALUES: &[&str] = &["blue", "violet", "teal", "green", "amber",
 
 /// The embedding models `assistant.embed_model` accepts, smallest first.
 ///
-/// ⚠️ **This list lives here, not beside the code that loads them**, because that
+/// This list lives here, not beside the code that loads them, because that
 /// code is behind the `embeddings` feature and this file compiles everywhere — the
 /// settings screen has to offer the choices on an Android build that can never run
 /// one. `assistant::embedding` holds a test asserting every name here resolves, so
 /// the two halves cannot drift apart silently.
 ///
-/// ⚠️ Changing this key **invalidates every stored vector**: two models of the same
+/// Changing this key invalidates every stored vector: two models of the same
 /// width still produce unrelated vector spaces. The sweep stores the model name
 /// alongside each row and re-embeds on a mismatch, so a change costs a full re-index
 /// rather than wrong answers — but it does cost that.
@@ -355,12 +355,12 @@ impl ConfigKey {
             // 384 dimensions and 133 MB: the largest embedder that leaves room for
             // a reranker beside it on a 3 GB host.
             ConfigKey::AssistantEmbedModel => ConfigValue::Text("bge-small-en-v1.5".to_string()),
-            // ⚠️ Off by default on the **measurement**, not on caution: three of the
+            // Off by default on the measurement, not on caution: three of the
             // four rerankers scored worse than not reranking at all, because fusion
             // alone already returns the right record every time and ranks it first
             // three times in four. `MODEL_BENCH.md` § Retrieval has the table.
             ConfigKey::AssistantRerank => ConfigValue::Bool(false),
-            // ⚠️ **Not the smallest model, deliberately.** `jina-turbo` fits any host
+            // Not the smallest model, deliberately. `jina-turbo` fits any host
             // and actively degrades ranking (MRR 0.865 → 0.756); a default that makes
             // things worse when switched on is the worst of the four. This one is the
             // only one that improved on fusion, and it needs a host bigger than the
@@ -369,8 +369,8 @@ impl ConfigKey {
             ConfigKey::AssistantRerankModel => {
                 ConfigValue::Text("jina-v2-multilingual".to_string())
             }
-            // ⚠️ **Off by default, and this one is a product decision rather than
-            // a measurement.** Every other default here leaves the app behaving
+            // Off by default, and this one is a product decision rather than
+            // a measurement. Every other default here leaves the app behaving
             // as it did before the key existed; this is the first that would let
             // the assistant act without being asked. Initiative is opt-in because
             // the user has to choose to be interrupted — a default-on check-in
@@ -564,7 +564,7 @@ impl ConfigKey {
     /// switch at all.
     pub fn feature(self) -> Option<Feature> {
         match self {
-            // ⚠️ The check-in keys return `None`: they configure the LLM
+            // The check-in keys return `None`: they configure the LLM
             // feature's behaviour but do not *switch* it, and a key that
             // reported a feature here would be treated as that feature's
             // on/off control by the settings screen.
@@ -668,8 +668,8 @@ impl ConfigKey {
 
     /// The inclusive range an [`ValueKind::Int`] key accepts.
     ///
-    /// ⚠️ [`ConfigKey::AssistantMaxTurns`] is the reason this exists, and its
-    /// **lower bound is a correctness property, not a preference**. The agent
+    /// [`ConfigKey::AssistantMaxTurns`] is the reason this exists, and its
+    /// lower bound is a correctness property, not a preference. The agent
     /// loop has no terminal verb — it ends when the model stops calling tools —
     /// so the turn budget is its only guarantee of halting. A key that could be
     /// set to zero, or left unbounded, would hand that guarantee to whoever last
@@ -701,7 +701,7 @@ impl ConfigKey {
 
     /// Reject a value whose type or domain doesn't fit the key.
     ///
-    /// Runs on the write path **and** again when the projection folds an event: a
+    /// Runs on the write path and again when the projection folds an event: a
     /// value written by some other build must not be able to wedge the read model.
     pub fn validate(self, value: &ConfigValue) -> Result<(), String> {
         if value.kind() != self.value_kind() {
@@ -874,13 +874,13 @@ impl ResolvedConfig {
     /// The effective value of an integer key, with the same fall-back reasoning
     /// as [`ResolvedConfig::bool_of`].
     ///
-    /// ⚠️ Range is **not** checked here. The bounds belong to whoever reads the
+    /// Range is not checked here. The bounds belong to whoever reads the
     /// value — an hour and a retry count have nothing in common — and enforcing a
     /// guess at this layer would silently rewrite a value the caller could have
     /// clamped meaningfully.
     /// An `Int` key's effective value, clamped to its own range.
     ///
-    /// ⚠️ **The clamp is here as well as in `validate`, deliberately.** Validation
+    /// The clamp is here as well as in `validate`, deliberately. Validation
     /// guards the write path and the projection fold, but neither runs over a
     /// value that was already stored — by an older build, or by one whose range
     /// was wider. For [`ConfigKey::AssistantMaxTurns`] that difference is the
@@ -921,7 +921,7 @@ mod tests {
     /// `ALL_KEYS` is hand-written, and a key missing from it is invisible to the
     /// settings screen and to the override file — so the omission is silent.
     ///
-    /// **This test narrows that gap rather than closing it.** The match below is
+    /// This test narrows that gap rather than closing it. The match below is
     /// exhaustive, so a new variant stops the build here and whoever adds it is
     /// standing in the right file; the length assertion then fails until they add
     /// it to `ALL_KEYS` too. What it cannot catch is someone updating both the
@@ -1066,7 +1066,7 @@ mod tests {
     /// A build that gains a key must behave as the build before it did for
     /// anyone who never opens the control.
     ///
-    /// ⚠️ That is **not** the same as "every boolean defaults on", which is what
+    /// That is not the same as "every boolean defaults on", which is what
     /// this test used to assert. It held only while every boolean key was a
     /// feature switch; `assistant.rerank` is a boolean whose backward-compatible
     /// default is *off*, because reranking did not exist before it. Asserting

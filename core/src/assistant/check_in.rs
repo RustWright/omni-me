@@ -8,8 +8,8 @@
 //! picks it up, and anything it wants to change goes through the ordinary
 //! proposal gate into the ordinary inbox.
 //!
-//! That is not only less code. It means initiative **inherits every property the
-//! ask path already has**: the answer is durable, it syncs to every device, the
+//! That is not only less code. It means initiative inherits every property the
+//! ask path already has: the answer is durable, it syncs to every device, the
 //! journal stays unwritable, nothing is applied without approval, and the whole
 //! exchange is readable in the same thread list as everything else. A parallel
 //! path would have had to re-earn each of those, and would have been the obvious
@@ -30,7 +30,7 @@ use crate::events::EventError;
 /// When the last scheduled check-in was raised, or `None` if there has never
 /// been one.
 ///
-/// ⚠️ **Derived from the log, not from a state file.** A file would have to be
+/// Derived from the log, not from a state file. A file would have to be
 /// written after each run and would then be wrong in three ordinary situations:
 /// a restart between raising the question and writing the file, a fresh data
 /// directory, and a second agent that never sees the first one's disk. The
@@ -194,8 +194,8 @@ pub fn is_due_now(policy: &CheckInPolicy, last_run: Option<DateTime<Utc>>) -> bo
 
 /// Whether a check-in should run now.
 ///
-/// ⚠️ **Once per calendar day, decided against the last run rather than against a
-/// countdown.** An agent restarted four times in an afternoon must not check in
+/// Once per calendar day, decided against the last run rather than against a
+/// countdown. An agent restarted four times in an afternoon must not check in
 /// four times, and an agent that was down at the scheduled hour should still
 /// check in when it comes back rather than skipping the day — a missed day is
 /// indistinguishable to the user from the feature being broken. Both fall out of
@@ -209,7 +209,7 @@ pub fn is_due(policy: &CheckInPolicy, last_run: Option<DateTime<Utc>>, now: Date
         return false;
     }
     match last_run {
-        // ⚠️ Compared by ordinal date, not by `now - last < 24h`. An interval test
+        // Compared by ordinal date, not by `now - last < 24h`. An interval test
         // makes the check-in drift later every day, because each run's clock
         // becomes the next one's baseline. Both dates are local, or an evening
         // run lands on tomorrow's UTC date and suppresses tomorrow's.
@@ -283,7 +283,7 @@ mod tests {
         );
     }
 
-    /// ⚠️ A restart must not re-run it. The agent is restarted casually — a
+    /// A restart must not re-run it. The agent is restarted casually — a
     /// deploy, an OOM, a config change — and each restart re-reads state.
     #[test]
     fn restarting_the_same_day_does_not_check_in_again() {
@@ -302,7 +302,7 @@ mod tests {
         assert!(is_due(&p, Some(ran), at("2026-09-12T07:00:00Z")));
     }
 
-    /// ⚠️ An agent that was down at the scheduled hour checks in when it returns,
+    /// An agent that was down at the scheduled hour checks in when it returns,
     /// rather than skipping the day. A silently missed check-in is
     /// indistinguishable from the feature being broken.
     #[test]
@@ -312,7 +312,7 @@ mod tests {
         assert!(is_due(&p, Some(ran), at("2026-09-11T22:00:00Z")));
     }
 
-    /// ⚠️ Compared by date, not by elapsed time. Under a 24h-interval test this
+    /// Compared by date, not by elapsed time. Under a 24h-interval test this
     /// case is *not* due, and the check-in drifts an hour later every day until
     /// it wanders out of the user's waking hours.
     #[test]

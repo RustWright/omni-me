@@ -19,7 +19,7 @@ const SOURCE_TREES: [&str; 7] = [
 
 /// The opening of a reference, backtick included so prose never matches.
 ///
-/// ⚠️ There is no escape for an *example* path: a backticked book path anywhere in
+/// There is no escape for an *example* path: a backticked book path anywhere in
 /// a comment is read as a real reference, including in this file. Illustrate the
 /// syntax without the leading backtick.
 const MARKER: &str = "`docs/src/";
@@ -47,7 +47,7 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
 
 /// Contiguous runs of comment lines, markers stripped and joined with a space.
 ///
-/// ⚠️ Joined per *run*, not per file. An anchor may wrap across two lines — as
+/// Joined per *run*, not per file. An anchor may wrap across two lines — as
 /// `agent/src/main.rs`'s does — so line-by-line scanning would miss it; joining a
 /// whole file would instead let two unrelated blocks form a reference that is not
 /// written anywhere.

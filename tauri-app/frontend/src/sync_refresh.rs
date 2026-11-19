@@ -11,7 +11,7 @@
 //! Read views subscribe by reading [`use_sync_epoch`] inside their fetch
 //! `use_effect`, so a pull makes them re-query automatically.
 //!
-//! Despite the name, the epoch means "**the local DB changed under you**", not
+//! Despite the name, the epoch means "the local DB changed under you", not
 //! strictly "a pull landed". A LOCAL write bumps it too when it commits data
 //! another mounted view is already displaying — see [`bump_sync_epoch`], which
 //! is the only way it should be done and carries the reason the inbound half
@@ -51,18 +51,18 @@ pub fn use_sync_epoch() -> Signal<u64> {
         .unwrap_or(fallback)
 }
 
-/// Announce that a **local** write changed data other mounted views are showing.
+/// Announce that a local write changed data other mounted views are showing.
 ///
-/// ⚠️ **The inbound half does not cover this, and the gap is silent.** The puller
+/// The inbound half does not cover this, and the gap is silent. The puller
 /// raises `PullEvent::Applied` only when `pulled > 0` (`core/src/sync/puller.rs`)
 /// — an empty poll sends `Idle`, which nothing here listens to. So the epoch does
 /// not tick on a timer; it ticks when *another device's* change arrives. A queue
 /// cleared on this device therefore never refreshes anything until unrelated
 /// remote traffic happens to land, which on a single idle device is never.
 ///
-/// Call it after any write that changes something a **different** view counts or
+/// Call it after any write that changes something a different view counts or
 /// lists: committing an import batch, deciding a proposal, correcting a document
-/// field. ⛔ Not needed for a write whose only reader is the view that made it —
+/// field. Not needed for a write whose only reader is the view that made it —
 /// that one already knows.
 ///
 /// Take the signal with [`use_sync_epoch`] at the top of the component and call

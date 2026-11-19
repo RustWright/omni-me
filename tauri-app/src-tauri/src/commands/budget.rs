@@ -4,7 +4,7 @@
 //! payload, calls `append_and_apply`, optionally returns the projected row.
 //! Reads go through `core::db::queries`.
 //!
-//! **This file covers eight unrelated feature areas across ~30 commands.**
+//! This file covers eight unrelated feature areas across ~30 commands.
 //! Splitting it is still owed; the order matters, because a refactor of
 //! untested code has nothing to tell you whether it preserved behaviour, and
 //! this file is reachable only through Tauri's IPC layer, so a mistake here
@@ -19,7 +19,7 @@
 //! those two rely on now lives in `core::reconciliation` next to its tests, and
 //! `golden_reconcile` renders a merge end-to-end.
 //!
-//! **Still untested, and the trip-wire for the split:** the read-side
+//! Still untested, and the trip-wire for the split: the read-side
 //! arithmetic — `dashboard_summary`, `budget_progress`, `account_summaries`,
 //! `net_worth_history`, `account_tag_breakdown` — and `import_chequing_csv`.
 //! Those mostly delegate to `core::{budget,balances,dashboard}`, which carry
@@ -1365,7 +1365,7 @@ fn build_statement_events(
 /// disappearing. The parser this replaced split on bare commas and silently
 /// dropped anything it did not understand.
 ///
-/// Like the document path, this **refuses to write anything** when
+/// Like the document path, this refuses to write anything when
 /// `StatementParse::import_blockers` is non-empty, unless `force` is set. Note
 /// what that is worth per format: the chequing export carries no balance
 /// column, so its only blocker is an unreadable line — `verifiability` on the
@@ -1531,7 +1531,7 @@ struct SkippedLineWire {
     reason: String,
 }
 
-/// Import a statement that arrives as a **document** rather than an export —
+/// Import a statement that arrives as a document rather than an export —
 /// a PDF, possibly encrypted.
 ///
 /// Parsing runs on the server, which is where the credentials live: the client

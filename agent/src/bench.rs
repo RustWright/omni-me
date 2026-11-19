@@ -1,6 +1,6 @@
 //! `--bench`: does the model pick the right verb, and what does constraining it cost?
 //!
-//! ⚠️ **Test scaffolding**, on the same terms as [`super::ask`].
+//! Test scaffolding, on the same terms as [`super::ask`].
 //!
 //! ## Why it is multi-turn
 //!
@@ -13,8 +13,8 @@
 //! ## What a scorecard reports, and why it is not only accuracy
 //!
 //! Verb accuracy alone cannot fill the model roles, because two of them are not
-//! defined by accuracy: the interactive reasoner is chosen on a **latency
-//! budget** and the high-volume structurer on **cost per call**. So each variant
+//! defined by accuracy: the interactive reasoner is chosen on a latency
+//! budget and the high-volume structurer on cost per call. So each variant
 //! also reports median and worst request latency, and prompt / completion /
 //! reasoning tokens summed across cases. Tokens rather than dollars —
 //! see [`Score::report_cost`].
@@ -27,40 +27,40 @@
 //! settles which one *this* tool surface gets. The difference between the two
 //! scores is the tax, and it is a measurement rather than an assumption.
 //!
-//! The two halves must differ in **one** thing: how a call travels back. Each
+//! The two halves must differ in one thing: how a call travels back. Each
 //! carries the same verb documentation — the constrained half in its prompt,
 //! since its request cannot carry `tools` — and offers exactly one channel. Open
 //! both and the model picks per its own training, which makes the score a
 //! property of the model rather than of the constraint; see
 //! `Session::constrained`.
 //!
-//! ⚠️ **A tax is only reported when the constrained half was actually
-//! constrained**, and there are two ways it silently is not. Providers differ on
+//! A tax is only reported when the constrained half was actually
+//! constrained, and there are two ways it silently is not. Providers differ on
 //! whether a response schema is enforced as a grammar or read as a strong hint;
 //! and a model trained to emit tool calls can have them parsed out of its
-//! completion by the serving stack **even though the request declared no tools**,
+//! completion by the serving stack even though the request declared no tools,
 //! which turns the constrained arm back into a free-form one while every visible
 //! signal still reads as success. Both are counted as off-schema, and a non-zero
 //! count withholds the number. Check the endpoint advertises `structured_outputs`
 //! *at the pinned quantization* before running: the same provider serves the same
 //! model with and without it depending on the tag.
 //!
-//! ⚠️ Not every endpoint can run the constrained half. One vendor's serving stack
+//! Not every endpoint can run the constrained half. One vendor's serving stack
 //! applies the grammar from token zero and never terminates with a reasoning
 //! model, which is a deployment-config fact about that vendor and not a property
-//! of the weights. A constrained score of zero **with errors** means that, and
+//! of the weights. A constrained score of zero with errors means that, and
 //! must not be read as the model failing.
 //!
-//! Both variants therefore run against **one** endpoint per invocation — whichever
+//! Both variants therefore run against one endpoint per invocation — whichever
 //! `[llm]` selects — and the tax is read off a run where both halves completed.
 //! Comparing a free-form score from one endpoint against a constrained score from
 //! another would attribute a serving-stack difference to the constraint.
 //!
-//! ⚠️ On a rate-capped endpoint, set `OMNI_AGENT_LLM_MIN_INTERVAL_MS`. Without it
+//! On a rate-capped endpoint, set `OMNI_AGENT_LLM_MIN_INTERVAL_MS`. Without it
 //! the cap returns errors that this scorecard would report as the model failing.
 //!
-//! ⚠️ **Run it as `cargo run -p omni-me-agent -- --bench`, never a prebuilt
-//! binary.** A run takes long enough that the source usually moves underneath it,
+//! Run it as `cargo run -p omni-me-agent -- --bench`, never a prebuilt
+//! binary. A run takes long enough that the source usually moves underneath it,
 //! and a stale binary produces a plausible scorecard measuring code that no longer
 //! exists — which happened: a "-20 point constraint tax" was recorded from a
 //! binary built eight minutes before the fix it was meant to be testing. `cargo
@@ -130,7 +130,7 @@ const ABSENCE_SIGNALS: &[&str] = &[
 ///
 /// Three, matching every other arm, because a single run cannot separate a model
 /// from the draw it happened to get (`MODEL_BENCH.md` R26) — and this arm is where
-/// two seats' ties were called. ⚠️ It multiplies the most expensive run in the
+/// two seats' ties were called. It multiplies the most expensive run in the
 /// project: a slate is 15 multi-turn cases per variant, so three runs of both
 /// halves is what the plan line prints before it starts.
 const REPEATS_ENV: &str = "OMNI_BENCH_SLATE_REPEATS";
@@ -318,9 +318,9 @@ struct Score {
     /// Counted apart from `correct` so a content regression cannot be misread
     /// as a routing regression.
     content_miss: usize,
-    /// Wall time of each **successful** multi-turn request.
+    /// Wall time of each successful multi-turn request.
     ///
-    /// **The request, not the call**, because the interactive role's budget is
+    /// The request, not the call, because the interactive role's budget is
     /// how long a person waits for an answer, and that is every turn plus the
     /// verb executions between them. A per-call median would flatter a model
     /// that answers fast but needs six turns to get there.
@@ -351,7 +351,7 @@ impl Score {
 
     /// Median and worst case of the successful requests, in seconds.
     ///
-    /// **Still not a p95, and the threshold file now says so too.** At this case
+    /// Still not a p95, and the threshold file now says so too. At this case
     /// count nearest-rank p95 *is* the maximum — `ceil(0.95 × 14) = 14` — so a
     /// "p95" column would be the worst case wearing a percentile's name, and
     /// computing it as the second-slowest (which is what reading the logs by
@@ -700,7 +700,7 @@ async fn run_variant(
         score.usage += outcome.usage;
         score.turns += outcome.trace.len();
 
-        // Reaching the right verb is necessary but **not sufficient**: the run
+        // Reaching the right verb is necessary but not sufficient: the run
         // also has to finish. Scoring on "the verb appeared somewhere" alone
         // marked a run that burned all six turns and never answered as correct —
         // it was "what routines do I have?", which no read verb can answer
@@ -917,7 +917,7 @@ mod tests {
         assert!(case.answer_ok(Some("anything at all")));
     }
 
-    /// **The failure lever 2 exists to catch.** A model that invents a journal
+    /// The failure lever 2 exists to catch. A model that invents a journal
     /// entry for a date with none reads as a confident, well-formed answer, and
     /// every path-based check passes it.
     #[test]

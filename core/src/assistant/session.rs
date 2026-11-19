@@ -66,7 +66,7 @@ fn today_line(config: &ResolvedConfig, now: chrono::DateTime<chrono::Utc>) -> St
 /// then the real work), so a budget below about five would score a model as
 /// failing for planning correctly.
 ///
-/// ⚠️ **This is the fallback, not the authority.** The live value is
+/// This is the fallback, not the authority. The live value is
 /// `ConfigKey::AssistantMaxTurns`, because the quality/cost balance is something
 /// to be found by trying rather than argued to once — see [`Session::new`]. The
 /// constant stays for tests and for callers with no config in hand.
@@ -79,7 +79,7 @@ pub const MAX_TURNS: usize = 15;
 
 /// Extra turns a request may spend on `propose`, beyond its budget.
 ///
-/// ⚠️ **Exempt, but bounded — and the bound is the point.** The turn budget is
+/// Exempt, but bounded — and the bound is the point. The turn budget is
 /// the loop's only halting guarantee: there is no terminal verb, so a model that
 /// never emits prose never finishes. Making `propose` free without a separate
 /// ceiling would hand that guarantee back.
@@ -106,7 +106,7 @@ pub const MAX_REPLY_TOKENS: u32 = 16_000;
 /// car insurance say?" — six turns of legitimate narrowing and widening, then
 /// silence. Rationale and the presence/absence asymmetry: `docs/src/assistant.md`.
 ///
-/// ⚠️ Note this is **not new advice**. [`LOOP_RULES`] already says "I could not
+/// Note this is not new advice. [`LOOP_RULES`] already says "I could not
 /// find it" is a correct answer, and the model read that on every turn and kept
 /// searching anyway. What changes the outcome is saying it at the moment it is
 /// actionable and withholding the tools, so there is nothing else to do.
@@ -123,7 +123,7 @@ const LAST_TURN_NUDGE: &str = "You have no lookups left. If the user asked for a
 const MAX_RESULT_CHARS: usize = 4000;
 
 /// How the loop runs, as opposed to what the assistant is.
-/// ⚠️ The leading `\n\n` is written explicitly rather than as a blank line after
+/// The leading `\n\n` is written explicitly rather than as a blank line after
 /// an escaped newline: `"\` swallows the newline *and* all following whitespace,
 /// so the rules would run straight on from the last sentence of the system
 /// prompt with no separator at all.
@@ -141,7 +141,7 @@ lookup researching, and do not describe the change instead of proposing it.";
 
 /// How to reply when the tool channel is closed and a grammar is in force.
 ///
-/// ⚠️ Load-bearing, and not obviously so: the schema is compiled into a token
+/// Load-bearing, and not obviously so: the schema is compiled into a token
 /// grammar by the serving stack and never shown to the model, so nothing else in
 /// the request describes the envelope the model is being held to. Without this
 /// the model is required to emit a shape it was never told about, and the run
@@ -175,7 +175,7 @@ pub struct TurnRecord {
     pub verb: Option<String>,
     /// The arguments as the model sent them.
     ///
-    /// Kept so an injection test can assert on **what was asked for** rather than
+    /// Kept so an injection test can assert on what was asked for rather than
     /// on the prose. A model can narrate an attacker's instruction harmlessly;
     /// what must never happen is that instruction becoming an argument.
     pub arguments: Value,
@@ -325,7 +325,7 @@ impl<'a> Session<'a> {
 
     /// Run with grammar-constrained decoding. See [`Session::response_schema`].
     ///
-    /// ⚠️ **Never let this request carry `tools` as well.** Two ways to call a
+    /// Never let this request carry `tools` as well. Two ways to call a
     /// verb means the model picks one per its own training, which makes the
     /// resulting score a property of the model rather than of the constraint —
     /// and comparing models is the only thing the number is for. One model
@@ -357,7 +357,7 @@ impl<'a> Session<'a> {
     /// Answer a question that continues a conversation.
     ///
     /// `history` is the thread's earlier turns, oldest first, as prose. It is
-    /// deliberately **not** the earlier runs' full message lists:
+    /// deliberately not the earlier runs' full message lists:
     ///
     /// - A prior assistant turn goes back with `tool_calls` empty. Its tool
     ///   *results* are long gone, and a provider handed a tool call with no
@@ -433,7 +433,7 @@ impl<'a> Session<'a> {
                 nudged = true;
             }
 
-            // ⚠️ Exactly one channel, never both. See `Session::constrained`.
+            // Exactly one channel, never both. See `Session::constrained`.
             let mut request = ChatRequest::new(messages.clone()).with_max_tokens(MAX_REPLY_TOKENS);
             if let Some(schema) = &self.response_schema {
                 request = request.with_response_schema(schema.clone());
@@ -480,7 +480,7 @@ impl<'a> Session<'a> {
             // hurts verb *selection* — the thing the constraint tax is about.
             let mut reply = reply;
             if self.response_schema.is_some() {
-                // ⚠️ A tool call under a schema is off-schema, and this is the
+                // A tool call under a schema is off-schema, and this is the
                 // subtler half of the canary. Closing our side of the two-channel
                 // problem — sending `tools` OR `response_format`, never both — does
                 // not close the model's: a request carrying no tool definitions at
@@ -649,7 +649,7 @@ impl<'a> Session<'a> {
                 });
             }
 
-            // ⚠️ Free only when the turn was *entirely* proposals. A reply mixing
+            // Free only when the turn was *entirely* proposals. A reply mixing
             // a `search` with a `propose` is a retrieval turn wearing a proposal,
             // and exempting it would let a model buy unlimited searches by
             // stapling a proposal to each one.
@@ -802,7 +802,7 @@ fn strip_fence(text: &str) -> &str {
 /// hint can, and the two are indistinguishable from a scorecard. Checking is the
 /// only way to tell a constrained run from a run that merely asked to be.
 ///
-/// Deliberately **not** expressed as `parse_constrained_call(..).is_none()`,
+/// Deliberately not expressed as `parse_constrained_call(..).is_none()`,
 /// whose `None` conflates prose with the `answer` exit. `answer` satisfies the
 /// schema; prose does not, and folding them together would report every
 /// constrained answer as a violation.
@@ -845,7 +845,7 @@ fn unwrap_constrained_answer(content: Option<String>) -> Option<String> {
 
 /// The pseudo-verb a constrained reply uses to stop.
 ///
-/// ⚠️ **Load-bearing for the constraint-tax measurement.** Free-form mode ends a
+/// Load-bearing for the constraint-tax measurement. Free-form mode ends a
 /// request by simply not calling a tool; a reply held to a verb-call schema has no
 /// such move, because every reply must satisfy the schema. Without an exit the
 /// model re-calls until the turn budget runs out — observed live as
@@ -856,7 +856,7 @@ const ANSWER_VERB: &str = "answer";
 
 /// A JSON-schema mirror of the tool surface, for the constrained variant.
 ///
-/// ⚠️ Not portable as written: `strict` is set while `arguments` stays an open
+/// Not portable as written: `strict` is set while `arguments` stays an open
 /// object, which vLLM-family stacks accept and OpenAI's strict mode rejects — it
 /// requires `additionalProperties: false` on every object and every property
 /// listed in `required`. `arguments` cannot satisfy that while holding a
@@ -1179,7 +1179,7 @@ mod tests {
         );
     }
 
-    /// **The guarantee, and the bug it closes.** The budget's exit carries no
+    /// The guarantee, and the bug it closes. The budget's exit carries no
     /// text, so a model still calling tools when it runs out leaves the user
     /// with nothing after N calls. Measured 2026-09-14: six turns of legitimate
     /// narrowing and widening on a record that did not exist, then silence.
@@ -1269,7 +1269,7 @@ mod tests {
         );
     }
 
-    /// ⚠️ The case that forced the exemption: a three-item routine costs three
+    /// The case that forced the exemption: a three-item routine costs three
     /// proposals, and charging each one a turn left nothing to answer with — the
     /// user got two cards out of three and no explanation. Observed live against
     /// `openai/gpt-oss-120b-Turbo` on 2026-09-11.
@@ -1360,7 +1360,7 @@ mod tests {
         assert_eq!(proposed.len(), 1, "the refused attempt is not a proposal");
     }
 
-    /// ⚠️ Exempt is not unbounded. The loop has no terminal verb, so without a
+    /// Exempt is not unbounded. The loop has no terminal verb, so without a
     /// separate ceiling a model that only ever proposes would never halt — and
     /// this one never emits prose.
     #[tokio::test]
@@ -1397,7 +1397,7 @@ mod tests {
         );
     }
 
-    /// ⚠️ A turn mixing retrieval with a proposal is a retrieval turn. Exempting
+    /// A turn mixing retrieval with a proposal is a retrieval turn. Exempting
     /// it would let a model buy unlimited searches by stapling a proposal to each.
     #[tokio::test]
     async fn a_turn_that_also_searches_is_not_free() {
@@ -1620,7 +1620,7 @@ mod tests {
         );
     }
 
-    /// ⚠️ A replayed assistant turn must carry **no** tool calls. Their results
+    /// A replayed assistant turn must carry no tool calls. Their results
     /// are long gone, and a provider handed a call with no matching result
     /// rejects the request — a failure that would surface only on the second
     /// question in a thread, never in a single-question test.
@@ -1833,7 +1833,7 @@ mod tests {
 
     /// The quiet half of the canary, and the one that cost a real bench run.
     ///
-    /// A constrained request carries **no** tool definitions, so a reply arriving
+    /// A constrained request carries no tool definitions, so a reply arriving
     /// as a native tool call means the serving stack answered on a channel we
     /// never opened. `openai/gpt-oss-120b` on DeepInfra does this — the verb
     /// still gets called and the run still succeeds, which is exactly why it is

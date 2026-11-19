@@ -290,7 +290,7 @@ pub const RECONCILE_ATTEMPTS: usize = 3;
 /// That is objective — the document supplies both figures — so a gap is evidence
 /// the extraction failed rather than a hunch about it.
 ///
-/// Deliberately does **not** retry on low confidence or on zero postings alone.
+/// Deliberately does not retry on low confidence or on zero postings alone.
 /// A marketing email legitimately has no line items, and nothing in it will ever
 /// reconcile, so retrying on absence would spend three calls on every newsletter
 /// to learn what the first one already said.
@@ -656,7 +656,7 @@ pub(crate) fn response_schema() -> serde_json::Value {
                     "required": ["commodity", "amount"]
                 }
             },
-            // ⚠️ String, not number — `total` deserializes through
+            // String, not number — `total` deserializes through
             // `rust_decimal::serde::str_option`, and a JSON float would have
             // already lost the precision the whole extractor exists to keep.
             // Its absence here is what kept `verify`'s arithmetic cross-check

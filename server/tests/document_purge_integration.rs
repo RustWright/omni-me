@@ -6,7 +6,7 @@
 //! document really keeps its bytes, and that a blob nothing references any more
 //! leaves the disk the server is serving from.
 //!
-//! ⚠️ Every assertion here goes over a real socket against the production router,
+//! Every assertion here goes over a real socket against the production router,
 //! because the ticket lives in server state rather than in the engine — an
 //! in-process call to `purge::apply` cannot reach it.
 
@@ -200,7 +200,7 @@ async fn a_confirm_purges_what_was_kept_and_spares_the_bytes_of_what_was_not() {
 
 #[tokio::test]
 async fn a_previews_byte_figure_counts_a_shared_blob_once() {
-    // ⚠️ The figure a person decides on. Two selected rows sharing one blob free
+    // The figure a person decides on. Two selected rows sharing one blob free
     // that blob's bytes once, so a per-row sum would promise twice what a confirm
     // can deliver — and the report, which dedupes, would then contradict it.
     let (url, _db, _blobs, _h) = common::start_full_server_with_blobs().await;
@@ -280,7 +280,7 @@ async fn a_confirm_may_shrink_the_previewed_set_but_never_widen_it() {
     let widened = confirm(&client, &url, &token, &[&junk, &keep]).await;
     assert_eq!(widened.status(), 400, "a stray id is refused");
 
-    // ⚠️ Refusal is total: neither id was purged, including the one that was in
+    // Refusal is total: neither id was purged, including the one that was in
     // the ticket. The ticket is also spent — the handler takes it before it
     // validates, so a rejected confirm still costs a re-preview.
     let taxes = preview(&client, &url, "taxes").await;
@@ -295,7 +295,7 @@ async fn a_confirm_may_shrink_the_previewed_set_but_never_widen_it() {
 #[tokio::test]
 async fn a_retention_group_previews_only_what_is_past_the_cutoff() {
     // The shape `retention` forms: the group is "tagged X and older than X's rule",
-    // not the whole tag. ⛔ It has to narrow the *same* selection the confirm acts
+    // not the whole tag. It has to narrow the *same* selection the confirm acts
     // on, or the preview and the purge would be looking at different sets.
     let (url, db, _blobs, _h) = common::start_full_server_with_blobs().await;
     let client = reqwest::Client::new();

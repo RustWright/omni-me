@@ -122,7 +122,7 @@ async fn tick_handler(
 /// Log the real failure, return a generic one.
 ///
 /// `ImportError`'s Display carries whatever the failing layer produced —
-/// including a subprocess helper's raw **stderr** (python tracebacks and all)
+/// including a subprocess helper's raw stderr (python tracebacks and all)
 /// and `io::Error` strings with absolute box paths. Handing that to the caller
 /// is free reconnaissance: the box's directory layout, which helpers exist, and
 /// what they are written in. The operator still gets the full detail, in the
@@ -140,7 +140,7 @@ fn upstream_err(
 }
 
 /// `POST /auto_import/reauth` — drive interactive re-auth for one source. The
-/// OTP lives in the JSON **body** (not the query string) so it never lands in
+/// OTP lives in the JSON body (not the query string) so it never lands in
 /// access logs. The response is the `ReauthOutcome` verbatim
 /// (`{"status":"active"|"invalid_otp"|"not_supported"|"error",…}`); only an
 /// unknown source name is a transport error (404).
@@ -182,7 +182,7 @@ pub struct CursorResetRequest {
 /// `POST /auto_import/sources/{name}/cursor/reset` — rewind one source so its
 /// next pull re-fetches from the beginning, or from `since`.
 ///
-/// ⚠️ Not a restore. Re-fetched mail is archived again, so every message this
+/// Not a restore. Re-fetched mail is archived again, so every message this
 /// rewinds past gains a second document record — one blob each, since blobs are
 /// addressed by content. That is the price of getting the batches back, and it
 /// is why this is not folded into the wipe.
@@ -191,7 +191,7 @@ async fn reset_cursor_handler(
     Path(name): Path<String>,
     Json(req): Json<CursorResetRequest>,
 ) -> Result<Json<CursorResetOutcome>, (StatusCode, String)> {
-    // ⛔ An undeclared deployment refuses, exactly as it does for a wipe: a
+    // An undeclared deployment refuses, exactly as it does for a wipe: a
     // half-provisioned box must not be mistakable for the dev one.
     let Some(declared) = state.instance else {
         return Err((

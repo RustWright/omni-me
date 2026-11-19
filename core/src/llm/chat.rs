@@ -8,12 +8,12 @@
 //!
 //! ## Instrumentation is part of the contract here, not an add-on
 //!
-//! Every call records latency and token counts, with **reasoning tokens counted
-//! separately** from completion tokens. They are billed and rate-limited like any
+//! Every call records latency and token counts, with reasoning tokens counted
+//! separately from completion tokens. They are billed and rate-limited like any
 //! other output token and were roughly 95% of output on the model this was first
 //! measured against, so folding them together misreports both cost and latency.
 //!
-//! ⚠️ **Message content is never logged.** A model quotes the user's records back,
+//! Message content is never logged. A model quotes the user's records back,
 //! and a log is the easiest place for that to escape — the promise is written down
 //! in `docs/src/assistant.md` § "What leaves your machine". Counts and timings
 //! only.
@@ -105,7 +105,7 @@ pub struct ChatRequest {
     pub tools: Vec<ToolDef>,
     /// Constrain the reply to a JSON schema instead of free-form tool calling.
     ///
-    /// Present so the constraint tax can be **measured on our own tool surface**
+    /// Present so the constraint tax can be measured on our own tool surface
     /// rather than assumed: structured decoding is reported both as a large
     /// accuracy win and as a suppressor of tool calling, and only running it both
     /// ways settles which one we get.

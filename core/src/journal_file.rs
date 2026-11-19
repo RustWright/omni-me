@@ -35,7 +35,7 @@ use crate::events::{
 
 pub struct JournalFile {
     path: PathBuf,
-    /// Serializes every write **and** carries the idempotence state, so holding
+    /// Serializes every write and carries the idempotence state, so holding
     /// the lock is the same thing as being allowed to consult it.
     ///
     /// `None` means "not scanned yet" — the set is rebuilt lazily from the file
