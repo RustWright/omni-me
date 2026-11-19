@@ -176,6 +176,10 @@ pub struct PersistedWorkspace {
     /// means changing it needs no Tauri command round-trip.
     #[serde(default)]
     pub editor_font_px: Option<u32>,
+    /// The privacy eye. Kept here as well as in `localStorage`, because the
+    /// WebView flushes `localStorage` seconds late and a kill in that gap loses it.
+    #[serde(default)]
+    pub privacy: Option<crate::money::PersistedPrivacy>,
 }
 
 /// Does this session hold anything a reader would act on?
@@ -230,6 +234,8 @@ pub struct ContinuityStore {
     /// Not persisted, and not a version number anyone reads — only its
     /// *changing* matters.
     revision: Signal<u64>,
+    /// True once the boot read succeeded; gates every write-back.
+    load_succeeded: Signal<bool>,
 }
 
 impl ContinuityStore {
@@ -423,7 +429,25 @@ impl ContinuityStore {
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
             editor_font_px: *self.editor_font_px.peek(),
+            privacy: Some(crate::money::persisted()),
         }
+    }
+
+    /// Write the workspace now, skipping the debounce, for a change that must
+    /// survive the app being killed straight after it.
+    pub fn persist_now(&self) {
+        if !*self.load_succeeded.peek() {
+            return;
+        }
+        let snapshot = self.snapshot_for_persist();
+        spawn(async move {
+            if let Ok(json) = serde_json::to_string(&snapshot) {
+                let _ = crate::bridge::invoke_save_workspace(&json).await;
+            }
+        });
+        // A debounced write already in flight carries an older snapshot; this
+        // queues a fresher one behind it.
+        self.bump();
     }
 
     /// Replace all maps + nav from a persisted snapshot (boot rehydrate, 1.8a/1.8b).
@@ -440,6 +464,9 @@ impl ContinuityStore {
         *statement_labels.write() = w.statement_labels.into_iter().collect();
         let mut editor_font_px = self.editor_font_px;
         *editor_font_px.write() = w.editor_font_px;
+        if let Some(p) = w.privacy {
+            crate::money::restore(p);
+        }
     }
 
     /// Editor font size in px, or `None` for the stylesheet default.
@@ -502,6 +529,7 @@ pub fn use_continuity_provider() -> ContinuityStore {
         loaded,
         reads,
         revision,
+        load_succeeded,
     };
     use_context_provider(|| store);
 

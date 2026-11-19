@@ -811,6 +811,7 @@ fn EditorSection() -> Element {
 /// How far the header's eye reaches.
 #[component]
 fn PrivacySection() -> Element {
+    let store = use_continuity();
     let current = crate::money::scope();
     let note = match current {
         MaskScope::Amounts => {
@@ -839,6 +840,7 @@ fn PrivacySection() -> Element {
                     on_select: move |key: String| {
                         if let Some(s) = MaskScope::ALL.into_iter().find(|s| s.key() == key) {
                             crate::money::set_scope(s);
+                            store.persist_now();
                         }
                     },
                 }

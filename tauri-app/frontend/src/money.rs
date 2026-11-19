@@ -43,8 +43,9 @@ struct Privacy {
 const HIDDEN_KEY: &str = "omni.privacy.hidden";
 const SCOPE_KEY: &str = "omni.privacy.scope";
 
-// Read from localStorage synchronously at first use, not from the debounced
-// continuity store, which loads after the first render and would flash amounts.
+// First read from localStorage, synchronously, so the first frame is already
+// masked. The continuity store's copy then overrides it at boot, before any page
+// mounts: the WebView flushes localStorage seconds late, so a kill can lose it.
 static PRIVACY: GlobalSignal<Privacy> = Signal::global(load);
 
 fn storage() -> Option<web_sys::Storage> {
@@ -60,6 +61,35 @@ fn load() -> Privacy {
             .and_then(MaskScope::from_key)
             .unwrap_or(MaskScope::Everything),
     }
+}
+
+/// The eye as the continuity store writes it to disk.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct PersistedPrivacy {
+    pub hidden: bool,
+    pub scope: String,
+}
+
+pub fn persisted() -> PersistedPrivacy {
+    let p = *PRIVACY.peek();
+    PersistedPrivacy {
+        hidden: p.hidden,
+        scope: p.scope.key().to_string(),
+    }
+}
+
+/// Apply the disk copy at boot. It wins over `localStorage`, which can lag.
+pub fn restore(saved: PersistedPrivacy) {
+    let scope = MaskScope::from_key(&saved.scope).unwrap_or(MaskScope::Everything);
+    let next = Privacy {
+        hidden: saved.hidden,
+        scope,
+    };
+    if *PRIVACY.peek() != next {
+        *PRIVACY.write() = next;
+    }
+    save(HIDDEN_KEY, if saved.hidden { "1" } else { "0" });
+    save(SCOPE_KEY, scope.key());
 }
 
 fn save(key: &str, value: &str) {

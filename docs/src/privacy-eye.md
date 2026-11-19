@@ -19,9 +19,13 @@ When amounts are hidden, an amount shows as `•••• CAD`. The commodity st
 does not. Amounts no longer render as hand-written `"{amount} {commodity}"` strings, and a new
 money render should not bring that pattern back.
 
-The setting is stored in `localStorage` and read on the first render. It is not stored in the
-continuity store, because that store loads after the first frame, so amounts would flash on
-every launch before the mask applied.
+The setting is stored in two places, because neither is enough alone:
+
+- `localStorage` is read synchronously on the first render, so the first frame is already masked.
+  The Android WebView, though, writes it to disk a few seconds late. On the S9, a kill one second
+  after tapping the eye lost the tap.
+- The continuity workspace file is written by a Tauri command the moment you tap the eye, with no
+  debounce. The boot read applies it before any page mounts, and it overrides `localStorage`.
 
 ## How far it reaches
 

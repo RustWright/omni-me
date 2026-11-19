@@ -6,6 +6,7 @@ use crate::money;
 /// The header's eye: one tap hides every amount, another shows them.
 #[component]
 pub fn PrivacyEye() -> Element {
+    let store = crate::continuity::use_continuity();
     let hidden = money::hidden();
     let (icon, label) = if hidden {
         (IconName::EyeOff, "Show amounts")
@@ -22,7 +23,10 @@ pub fn PrivacyEye() -> Element {
             "aria-label": "{label}",
             "aria-pressed": "{hidden}",
             title: "{label}",
-            onclick: move |_| money::toggle_hidden(),
+            onclick: move |_| {
+                money::toggle_hidden();
+                store.persist_now();
+            },
             Icon { name: icon, class: "w-5 h-5" }
         }
     }
