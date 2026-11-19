@@ -5,7 +5,7 @@ live in `RULINGS.md`, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`
 `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
 ## ▶ NEXT ACTION — [0102], the UI design session, in a fresh session with him
-[0053] (the privacy eye) is built and on the dev S9 as 1.1.51-dev (design: `docs/src/privacy-eye.md`).
+[0053] (the privacy eye) is done and he is happy with it; it reaches live with the next release (his go).
 Between sessions: [0101].
 
 ⛔ Live is the pause: every live step waits for his go, one at a time.
@@ -13,8 +13,6 @@ Between sessions: [0101].
 page is the one exception.
 
 ## ⛔ Waiting on him
-- **[0053] on his hands:** try the eye on the S9 and step it down in Settings → Privacy if it annoys.
-  It reaches his own phone only with the next release, which is his go.
 - **His actions:** [0006] the R2 account (he chose later), [0010] the OpenRouter privacy setting,
   which now gates OpenRouter's next use (ruling 107).
 - [0013] is parked until a real blank delivery item appears in review; ask with it on screen.
