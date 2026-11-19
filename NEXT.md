@@ -1,16 +1,16 @@
 # NEXT
 
 ⛔ **Next action, and what is blocked on him. Nothing else.** (His instruction, 2026-09-27.) Rulings
-live in `project.md` § Decisions in force, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`),
-rationale in `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
+live in `RULINGS.md`, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`), rationale in
+`docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
-## ▶ NEXT ACTION — [0073], the last item before Cycle 5 closes
-1.2.6 is live (server and apps, 11-18). The review is triaged in full; deferrals are [0098],
-[0099], [0100] and `project.md` § Carried to Cycle 6 Planning. Remaining, in order:
-1. [0073] the comment-convention revision: its own design-first session (fresh session). The
-   bloat review's comment-density table (`reviews/2026-11-16-bloat.md`, gitignored) is its data.
-2. Then bump `.omni/tasks.toml` to cycle 6, and [0074]'s planning session starts the next push
-   from `PUSH_0074_RESEARCH.md` (§0, then the §6 questions one at a time, §6.20 first).
+## ▶ NEXT ACTION — [0074]'s planning session (Cycle 6 is open)
+Cycle 5 closed 2026-11-18 with [0073]. Start the next push from `PUSH_0074_RESEARCH.md`: §0, then
+the §6 questions one at a time, §6.20 first. Planning also resets `tasks.md` for Cycle 6 and takes
+`project.md` § Carried to Cycle 6 Planning.
+
+Between sessions of other work: [0101], comment sweep tier 2, one crate per commit. He ruled no
+proposals on it (2026-11-18): apply the `CLAUDE.md` § Comments convention and commit.
 
 ⛔ Live is the pause: every live step waits for his go, one at a time.
 ⛔ **Never `cargo build`/`test` on this box** (`project-dev-machines-and-build-limits`); the mock demo

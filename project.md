@@ -8,7 +8,9 @@ sources and credentials.
 
 **Status (2026-11-18):** **v1.2.6 is live** (server and apps released 11-18; the agent stays on its
 1.2.4 image). 1.2.5 (11-17) and 1.2.6 carry the Cycle 5 review's fixes; the review is triaged in
-full. Cycle 5 closes once [0073] lands. v1.2.4 went live 2026-11-16.
+full. **Cycle 5 closed 2026-11-18** with [0073]: the comment convention is ruled (`CLAUDE.md`), the
+rulings moved to `RULINGS.md`, and sweep tier 1 landed. Cycle 6 opens with [0074]'s planning;
+[0101], sweep tier 2, runs alongside. v1.2.4 went live 2026-11-16.
 **v1.2.3 went live 2026-11-11.** The go-live sequence
 finished 2026-11-11: server 1.2.3 on the box, the agent running there, both devices on
 1.2.3, the Finances tab on, the historical ledger (11,048 transactions) and the document

@@ -1,9 +1,9 @@
 schema  = 1
 project = "omni-me"
-cycle   = 5
-updated = 2026-11-12
+cycle   = 6
+updated = 2026-11-18
 
-# Narrative lives in tasks.md (Cycle 5). Contract: ../../setup_files/TASK_HUB_CONTRACT.md
+# Narrative lives in tasks.md (Cycle 5's file until Cycle 6 Planning resets it). Contract: ../../setup_files/TASK_HUB_CONTRACT.md
 # Public repo: titles are public. Keep private identity out.
 
 [[task]]
@@ -529,7 +529,7 @@ ref    = "tasks.md § Owed at cycle close"
 [[task]]
 id     = "omni-me-0073"
 title  = "Revise the comment convention"
-status = "todo"
+status = "done"
 size   = "L"
 ref    = "tasks.md § Owed at cycle close"
 
@@ -718,3 +718,10 @@ title  = "Revoked IMAP password never becomes needs-you (review T1)"
 status = "todo"
 size   = "M"
 ref    = "tasks.md § Bugs"
+
+[[task]]
+id     = "omni-me-0101"
+title  = "Comment sweep tier 2: blocks of 8+ lines, crate by crate"
+status = "todo"
+size   = "L"
+ref    = "tasks.md § Alongside Cycle 6"

@@ -184,10 +184,11 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 a PaddleOCR sidecar · email auto-fetch, self-employment dashboards, tax-form validation · a
 generic IMAP config source.
 
-## Owed at cycle close
+## Alongside Cycle 6
 
-- [0073] **Revise the comment convention** (own session, design-first), then the sweep it
-  gates. The routing is right; the length and voice failed. [L]
+- [0101] **Comment sweep tier 2** (`CLAUDE.md` § Comments): the 645 blocks of 8+ lines, one crate
+  per commit (core 385, frontend 135, src-tauri 58, agent 36, server 30). No proposals to him: apply
+  and commit. Also replace pre-reset IDs (`R3-7`, `R4-6`: 15 sites) with ruling numbers. [L]
 
 ## Later cycles
 
