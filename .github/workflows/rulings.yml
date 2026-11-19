@@ -1,0 +1,18 @@
+name: Rulings
+
+# No paths filter: ci.yml ignores *.md, and a RULINGS.md-only cleanup is exactly
+# the change that can leave a citation dangling.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  citations:
+    name: Ruling citations resolve
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/check-rulings.py

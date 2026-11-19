@@ -60,7 +60,7 @@ still has to decide.
 
 Standing rulings that bind all three: approval lives with the domain, review queues are never
 merged into the inbox, irreversible actions are never grantable, beliefs are ask-only, the three
-notification tiers and the code-built 19:00 summary (`project.md` § Decisions in force and
+notification tiers and the code-built 19:00 summary (`RULINGS.md` 2, 3, 4 and
 § Notifications); LLM tools bind to `core`, not Tauri commands (`architecture.md:170`); the hub
 never writes into a repo (`TASK_HUB_CONTRACT.md`).
 

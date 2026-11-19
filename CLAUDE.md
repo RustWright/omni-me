@@ -11,7 +11,7 @@ This project follows the structured process defined in `../../setup_files/PROJEC
 2. Read `project.md` to find current state and next session. Confirm with user before proceeding.
 3. If resuming mid-session, also read `tasks.md` and `architecture.md` for context.
 
-**Session end:** Logging and git sync are **automatic** (the session hooks — see `~/.claude/CLAUDE.md` § Session Sync): the transcript is rendered into `.log/`, `.log/` + `.curiosities/` are synced to the parent, and work is committed + pushed. Your jobs are the content updates in `PROJECT_PROCESS.md` § End-of-Session Protocol: **rewrite `NEXT.md` wholesale as soon as a stretch of work completes** — before reporting it done, not saved for session end (⛔ **next action + what is blocked on him, and nothing else** — user, 2026-09-27. Rulings go to `project.md` § Decisions in force, open work to `tasks.md` (one item, at most three lines; capped at 400 lines / 40 KB, because uncapped it reached 5,800), rationale to `docs/src/` or the edit site, and `NEXT.md` **points** at them. A line that could be derived from either does not belong in it, and reflowing it to fit a cap is the symptom of having crammed it), and at a phase boundary also update `project.md`'s session log and `tasks.md`. No `/export`, no manual parent-sync.
+**Session end:** Logging and git sync are **automatic** (the session hooks — see `~/.claude/CLAUDE.md` § Session Sync): the transcript is rendered into `.log/`, `.log/` + `.curiosities/` are synced to the parent, and work is committed + pushed. Your jobs are the content updates in `PROJECT_PROCESS.md` § End-of-Session Protocol: **rewrite `NEXT.md` wholesale as soon as a stretch of work completes** — before reporting it done, not saved for session end (⛔ **next action + what is blocked on him, and nothing else** — user, 2026-09-27. Rulings go to `RULINGS.md`, open work to `tasks.md` (one item, at most three lines; capped at 400 lines / 40 KB, because uncapped it reached 5,800), rationale to `docs/src/` or the edit site, and `NEXT.md` **points** at them. A line that could be derived from either does not belong in it, and reflowing it to fit a cap is the symptom of having crammed it), and at a phase boundary also update `project.md`'s session log and `tasks.md`. No `/export`, no manual parent-sync.
 
 **Also end every session with the roadmap to completion**, until the current push ships (user,
 2026-09-26). Not a status dump: the Definition of Ready chain with each link's state, what was
@@ -48,17 +48,22 @@ Four destinations, and the bucket decides:
 Be aggressive on chronicle and in-function narration, conservative on anything that reads as a
 warning.
 
-**Routing was right; length and voice were not** (user, 2026-09-14). Code written under this
-convention came out denser than the baseline it was meant to fix — three new files at 23–51%
-comment lines. Two interim constraints on new code. They are my proposal, not his ruling, and
-the real revision is its own session (`tasks.md`, design-first):
+**Length and voice** (ruled in [0073], 2026-11-18). Routing alone left density at 22%: the
+excess was prose, not facts.
 
-- Three lines per comment. Past that it is documentation, so it goes to `docs/` and leaves a
-  pointer. A trap at the edit site may take a fourth.
-- No warning markers and no bold inside code comments — plain sentences. The markers made
-  length read as diligence. They belong in `NEXT.md` and `tasks.md`, which are scanned.
+- **One line per fact.** Explanation and rationale take at most three lines; past that they go
+  to `docs/` and leave a pointer. A list of traps at the edit site takes one line per item, no
+  narration (the payee sanitiser in `journal_file.rs` is the model: five cases, five lines).
+- **Plain sentences.** No warning markers, no bold, no capitals for emphasis. Markers belong in
+  `NEXT.md` and `tasks.md`, which are scanned; code is read in order.
+- **No attribution or dates.** A line that encodes a product ruling cites it as
+  `ruling N (RULINGS.md)`, which keeps the "do not simplify this" signal and points at where the
+  ruling can change. A ruling cited in code but not in `RULINGS.md` gets added there.
+  `scripts/check-rulings.py` fails CI on a citation whose number is gone.
 
-The codebase-wide sweep waits for that revision rather than applying the old convention harder.
+The sweep is tiered: attribution, markers and bold codebase-wide first, then blocks of eight
+lines or more crate by crate. Blocks of four to seven lines are fixed when their code is next
+edited.
 
 ## Current Project State
 

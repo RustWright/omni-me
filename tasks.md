@@ -2,8 +2,7 @@
 
 **Reset 2026-11-12 at the Cycle 4 close-out** (pre-reset file: `git show 7ef0e55:tasks.md`).
 Each open item was checked against the code before it carried. "Verified open" means the
-reset read the code, and "unverified" means it did not. Rulings moved to `project.md`
-§ Decisions in force.
+reset read the code, and "unverified" means it did not. Rulings live in `RULINGS.md`.
 
 ## How to read this file
 
