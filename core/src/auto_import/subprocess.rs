@@ -1,19 +1,10 @@
 //! Generic subprocess auto-import source — the engine side of the
 //! `SUBPROCESS_SOURCE_CONTRACT.md` boundary.
 //!
-//! A [`SubprocessSource`] spawns a configured helper executable, sends it a
-//! one-line JSON [`HelperRequest`] on stdin, reads a one-line JSON
-//! [`HelperResponse`] on stdout, and (for a successful `pull`) wraps the
-//! returned drafts into an `AutoImportBatchProposed` event via
-//! [`crate::auto_import::to_proposed_event`] — exactly the generic tail that
-//! used to live inside each bank adapter. The helper owns everything
-//! bank-specific (its credentials, its upstream, its account mapping); the
-//! engine never sees a secret.
-//!
-//! The `HelperRequest` / `HelperResponse` / `HelperStatus` types ARE the
-//! contract in code: the engine deserializes responses with them and Rust
-//! helpers serialize with them, so any drift is a compile error. The prose
-//! companion (for non-Rust plugin authors) is `SUBPROCESS_SOURCE_CONTRACT.md`.
+//! Spawns a helper, sends a one-line JSON [`HelperRequest`], reads a one-line
+//! [`HelperResponse`], and wraps a pull's drafts with [`crate::auto_import::to_proposed_event`].
+//! The helper owns everything bank-specific. These types are the contract in code; the prose
+//! version is `SUBPROCESS_SOURCE_CONTRACT.md`.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -112,15 +103,9 @@ pub enum HelperStatus {
 
 /// Helper → engine response: one JSON line on the helper's stdout.
 ///
-/// `#[serde(default)]` on every field but `status` keeps the shape forgiving at
-/// the *deserialization* layer, and the engine ignores unknown fields, so a
-/// helper may carry extra keys without breaking older engines.
-///
-/// Forgiveness stops at [`Self::disposition`]. A successful pull must account
-/// for its rows: `{"status":"ok"}` alone used to be a valid "nothing happened"
-/// response, which is indistinguishable from "I discarded everything I fetched"
-/// — the ambiguity this whole type now exists to remove. It deserializes, then
-/// fails at ingest with an error naming what is missing.
+/// Forgiving to deserialize (defaults, unknown keys ignored), strict at [`Self::disposition`]:
+/// a successful pull must account for its rows, since a bare `{"status":"ok"}` cannot be told
+/// from "discarded everything". It fails at ingest, naming what is missing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HelperResponse {
     pub status: HelperStatus,
@@ -202,18 +187,9 @@ fn select_unproposed(
 
 /// A helper's account of what it did with every row it fetched.
 ///
-/// This is the process-boundary half of the [`ImportTally`] invariant. It has
-/// to be a typed field rather than a corner of `source_metadata` because the
-/// engine must *read* it: the brokerage helper had been reporting
-/// `skipped_unmapped_ids` in opaque metadata since the open-core split, and
-/// since the contract says the engine "stores but never reads" that blob, 295
-/// dropped rows a tick surfaced nowhere. Typing it is what turns the helper's
-/// self-report into something the engine can act on.
-///
-/// The helper reports counts; the engine re-derives the identity
-/// (`fetched == drafts + drops`) rather than trusting it, so a helper that
-/// miscounts is caught at the boundary instead of propagating a plausible
-/// number.
+/// The process-boundary half of [`ImportTally`], typed because the engine must read it (opaque
+/// `source_metadata` hid hundreds of dropped rows a tick). The engine re-derives
+/// `fetched == drafts + drops` rather than trusting the helper.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct HelperDisposition {
     /// Rows the upstream handed the helper, before any filtering.
@@ -223,16 +199,9 @@ pub struct HelperDisposition {
     /// Rows below the helper's `import_since` floor.
     #[serde(default)]
     pub out_of_window: usize,
-    /// Upstream keys with no account mapping — one entry per dropped row,
-    /// repeats included. The engine counts these against its row identity, so
-    /// collapsing to a distinct set here would report 6 unmapped rows for 295
-    /// dropped ones and break the arithmetic. Consumers that want the distinct
-    /// list (to paste into a config map) use [`ImportSummary::unmapped_ids`],
-    /// which de-duplicates for display.
-    ///
-    /// Carried as ids rather than a bare count because the count alone leaves
-    /// the fix undiscoverable: these keys are upstream-internal and appear
-    /// nowhere else the user can reach.
+    /// One entry per dropped row, repeats included, since the row identity counts them;
+    /// [`ImportSummary::unmapped_ids`] dedupes for display. Ids, not a count, so the user can find
+    /// the fix.
     #[serde(default)]
     pub unmapped_ids: Vec<String>,
     /// Rows the helper could not turn into a draft, as `[id, reason]` pairs.
@@ -310,18 +279,9 @@ impl SubprocessSource {
         let request_json = serde_json::to_string(request)
             .map_err(|e| ImportError::Parse(format!("serialize request: {e}")))?;
 
-        // `.env_clear()` + an explicit allow-list, not inheritance.
-        //
-        // The module doc above says "the engine never sees a secret". That was
-        // true one way and false the other: the server reads API keys from its
-        // own environment, and every helper it spawned inherited those plus
-        // whatever else the compose `.env` injected. For a boundary whose
-        // whole point is third-party plugin authors, inheritance handed each
-        // plugin the engine's credentials for free.
-        //
-        // The allow-list is what a helper legitimately needs to find its OWN
-        // config: `HOME`/`XDG_CONFIG_HOME` locate `credentials.toml`, `PATH`
-        // resolves interpreters, and the locale vars keep text handling sane.
+        // `.env_clear()` plus an allow-list, never inheritance, which handed every third-party
+        // helper the engine's API keys. Allowed is what a helper needs for its own config: `HOME`,
+        // `XDG_CONFIG_HOME`, `PATH`, and the locale vars.
         let mut cmd = Command::new(&self.command);
         cmd.args(&self.args).env_clear().kill_on_drop(true);
         for key in [

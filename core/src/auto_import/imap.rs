@@ -1,33 +1,7 @@
-//! IMAP poller infrastructure.
-//!
-//! ## Architecture
-//!
-//! Three traits + a dispatch loop, designed so the actual IMAP protocol
-//! implementation can be swapped or stubbed without touching the routing
-//! logic:
-//!
-//! - `ImapFetcher` — abstracts the wire protocol. Pulls new messages from a
-//!   single mailbox since the last-seen UID. `imap_real.rs` implements it over
-//!   `async-imap` + `tokio-rustls`; tests use a mock.
-//! - `ImapHandler` — per-source extractor. Declares which messages it claims
-//!   via `accepts(envelope)` and produces zero-or-more events via `handle()`.
-//!   `ReceiptHandler` (`receipts.rs`) is the only production handler today.
-//! - `dispatch(message, handlers)` — pure routing helper: matches the message
-//!   against each handler's `accepts` filter, calls the first match.
-//!
-//! ## Per-account / per-message state
-//!
-//! Each account has its own `last_seen_uid` checkpoint stored in SurrealDB
-//! (table TBD — leave as a function parameter for now so this module stays
-//! storage-agnostic). On startup, the poller fetches UIDs > checkpoint;
-//! after each successful dispatch, it advances the checkpoint.
-//!
-//! ## Why the per-handler `accepts` instead of a central dispatch table
-//!
-//! Each handler is the source-of-truth for which senders it covers. Adding a
-//! new sender pattern means editing the handler, not a shared registry that
-//! grows hard to navigate. The dispatch loop just asks each handler "is this
-//! yours?" in order.
+//! IMAP poller: `ImapFetcher` (the wire protocol; `imap_real.rs`, or a mock), `ImapHandler`s
+//! that each claim messages through `accepts`, and a pure dispatch to the first taker. Each
+//! handler owns its senders, so no central table. The cursor arrives as a parameter, so this
+//! stays storage-agnostic (`imap_source.rs` persists it).
 
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
@@ -56,12 +30,9 @@ pub struct FetchCursor {
     pub last_seen_uid: Option<u32>,
     /// The mailbox's `UIDVALIDITY` when `last_seen_uid` was recorded.
     ///
-    /// A UID only means anything paired with the validity it was issued under.
-    /// When the server changes it — a mailbox recreated, migrated, or restored —
-    /// the numbering restarts and the old cursor points into a space that no
-    /// longer exists, so the poller sits forever on a range that matches nothing.
-    /// `None` for a cursor stored before this was recorded, which is treated as
-    /// "unknown, do not act on it" rather than as a mismatch.
+    /// A UID means nothing without its validity: a recreated mailbox restarts numbering and an old
+    /// cursor matches nothing forever. `None` (stored before this existed) means unknown, not a
+    /// mismatch.
     pub uid_validity: Option<u32>,
 }
 
@@ -83,15 +54,9 @@ pub trait ImapFetcher: Send + Sync {
     /// Account display name (for tracing). Matches the credentials.toml key.
     fn name(&self) -> &str;
 
-    /// Pull messages with `UID > cursor.last_seen_uid` from the configured
-    /// label/folder. Returns them in ascending UID order. On first run with
-    /// `cursor.last_seen_uid == None`, real impls should return an empty
-    /// list AND the current max UID so the next tick has a starting point —
-    /// avoids accidentally back-importing the entire historical inbox.
-    ///
-    /// An impl that can observe `UIDVALIDITY` reports it, and treats a change
-    /// from `cursor.uid_validity` as a reset rather than as a gap: the stored UID
-    /// belongs to a numbering that no longer exists.
+    /// Messages with `UID > cursor.last_seen_uid`, ascending. On first run, return none plus the
+    /// current max UID, so the inbox is never back-imported. A `UIDVALIDITY` change is a reset,
+    /// not a gap.
     async fn fetch_new(&self, cursor: &FetchCursor) -> Result<FetchOutcome, ImportError>;
 
     /// At most `limit` messages with `cursor < UID <= upto`, oldest first: the window
@@ -166,16 +131,6 @@ pub fn dispatch_to<'a>(
 /// this const is the only thing keeping writer and reader on the same spelling.
 pub const EMAIL_DOCUMENT_ID_KEY: &str = "email_document_id";
 
-/// Record which archived document a proposed batch was derived from.
-///
-/// Merges into `source_metadata` rather than replacing it — the handler
-/// has already put `from`/`subject`/`uid` there, and the review UI reads those.
-/// A non-object or absent value is replaced with a fresh object; anything else
-/// would mean dropping the link rather than the label, and the link is the half
-/// that cannot be reconstructed later.
-///
-/// Silently does nothing for any other event type: a handler may legitimately
-/// return events that are not batch proposals.
 /// The event filing an email's document as a receipt, because a transaction
 /// was extracted from it.
 fn receipt_retention_event(device_id: &str, document_id: &str) -> Option<NewEvent> {
@@ -192,6 +147,9 @@ fn receipt_retention_event(device_id: &str, document_id: &str) -> Option<NewEven
     NewEvent::document_fields_extracted(device_id, &payload).ok()
 }
 
+/// Record which archived document a proposed batch came from, merged into `source_metadata`
+/// (the review UI reads the handler's `from`, `subject`, `uid` there). A non-object is replaced,
+/// since the link cannot be rebuilt later. Other event types pass untouched.
 fn stamp_email_document(event: &mut NewEvent, document_id: &str) {
     if event.event_type != EventType::AutoImportBatchProposed.to_string() {
         return;
@@ -215,14 +173,8 @@ fn stamp_email_document(event: &mut NewEvent, document_id: &str) {
 
 /// Where to file fetched messages, when they are being archived.
 ///
-/// Archiving happens here, not in a handler. Whether a message is kept is
-/// a property of the *message*, not of whichever handler happened to claim it —
-/// and the handlers differ per deployment (the overlay adds its own). Put this
-/// in `ReceiptHandler` and a bank statement claimed by another handler would go
-/// unarchived, which is exactly backwards: those are the ones most worth having.
-///
-/// The same type every other ingest entry point takes: this was its own struct
-/// until the PDF passwords made the two identical.
+/// Archiving happens here, not in a handler: keeping a message is the message's property, and
+/// handlers differ per deployment. The same type every ingest entry point takes.
 pub type ArchiveTarget<'a> = crate::archive::IngestContext<'a>;
 
 /// What the archive already holds for one message's exact bytes.
@@ -284,24 +236,11 @@ pub fn is_skipped_sender(from: &str, skip: &[String]) -> bool {
         .any(|d| domain == *d || domain.ends_with(&format!(".{d}")))
 }
 
-/// Run one polling pass for one account: fetch new messages, dispatch each to
-/// the first willing handler, and return a [`PollOutcome`] accounting for every
-/// message fetched. The caller is responsible for persisting the cursor +
-/// appending events — keeps this function pure-ish + testable without an
-/// EventStore handle.
-///
-/// With `archive` set, every fetched message is archived as a document plus
-/// one per real attachment, before dispatch and regardless of its outcome.
-/// Including the ones no handler claims: everything here is in a label the
-/// user deliberately applied, and an unrouted message is precisely the one they
-/// will later want to look at to ask why it produced nothing.
-///
-/// Mail from the senders in `skip` is left out: not archived and not offered to
-/// any handler: social notifications are not records, ruling 39 (RULINGS.md).
-/// Counted in [`PollOutcome::skipped`], never dropped silently.
-///
-/// Bytes `known` already holds are not filed again, purged ones included, but
-/// the message is still dispatched: ruling 83 (RULINGS.md).
+/// One pass for one account, returning a [`PollOutcome`] for every message; the caller persists
+/// the cursor and appends. With `archive`, every message and attachment is archived before
+/// dispatch, unclaimed ones too (the user labelled them). `skip` senders are neither archived
+/// nor dispatched, ruling 39 (RULINGS.md), and counted in [`PollOutcome::skipped`]. Known bytes
+/// are not filed again but still dispatched, ruling 83 (RULINGS.md).
 pub async fn poll_once_skipping(
     fetcher: &dyn ImapFetcher,
     handlers: &[Box<dyn ImapHandler>],
@@ -443,22 +382,9 @@ pub async fn poll_once_skipping(
                     }
                     events.append(&mut handler_events);
                 }
-                // A per-message failure must NOT abort the pass.
-                //
-                // This used to be `handler.handle(msg).await?`, and the cursor
-                // advance below is unreachable once that returns early — so a
-                // single message the handler couldn't parse (a receipt with no
-                // extractable text is enough) left the cursor pinned, and every
-                // later tick refetched the same message, failed the same way,
-                // and backed off to the one-hour maximum. Auto-import for that
-                // mailbox was then dead permanently, with every subsequent
-                // statement queued behind it and no recovery short of editing
-                // `imap_cursors` by hand.
-                //
-                // Note the asymmetry that gave the bug away: the `None` arm
-                // below — a message no handler claimed — has always counted it
-                // and moved on. A message a handler claimed but choked on is no
-                // more re-processable than one nobody wanted.
+                // Never abort the pass on one message: an early return skips the cursor advance,
+                // and one unparseable message then pins the mailbox forever. Count it and move
+                // on, as the unclaimed arm below does.
                 Err(e) => {
                     failed.push((msg.uid, e.clone()));
                     tracing::warn!(
@@ -516,16 +442,8 @@ pub async fn poll_once_skipping(
 
 /// One IMAP pass, with every fetched message accounted for.
 ///
-/// `poll_once` used to return `(events, cursor)`, which made two very different
-/// mailboxes indistinguishable: one with no new mail, and one where every
-/// message failed to parse and was skipped. Both yielded an empty `events`.
-/// The counts existed already — they were computed and then dropped into a log
-/// line — so this returns them rather than deriving anything new.
-///
-/// `unrouted` is deliberately *not* a loss: mail no handler claims is unrelated
-/// mail, and reading-but-discarding it is the privacy design. It is reported so
-/// the distinction stays visible, but the caller counts it as `Deduped`-style
-/// noise rather than as a dropped transaction.
+/// Counts, so "no new mail" and "every message failed" stay distinguishable. `unrouted` is not
+/// a loss: discarding unclaimed mail is the privacy design, reported but counted as noise.
 #[derive(Debug)]
 pub struct PollOutcome {
     pub messages_seen: usize,

@@ -1,16 +1,8 @@
 //! Generic auto-import source spawner.
 //!
-//! After the open-core split this module knows nothing about any specific
-//! upstream. The composition root (the private overlay binary, or any other
-//! caller) builds the `Vec<Arc<dyn AutoImportSource>>` and hands it here to be
-//! registered + spawned. Keeping this fully generic is what lets the public
-//! engine ship with zero bank-specific code — a caller that supplies no sources
-//! gets a working server with auto-import simply idle.
-//!
-//! Interval defaults to 30 minutes (`DEFAULT_INTERVAL`) — a reasonable balance
-//! for per-day-tx-volume use. Callers pass the effective *global* interval; a
-//! source can override it for itself via `AutoImportSource::poll_interval`
-//! (config-declared sources carry their own `schedule_secs`).
+//! Registers and spawns whatever sources the composition root built, knowing no upstream, so
+//! none means auto-import idles. `DEFAULT_INTERVAL` is 30 minutes; a source may override it
+//! through `AutoImportSource::poll_interval`.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -21,22 +13,9 @@ use crate::auto_import_scheduler::{AutoImportSource, SourceRegistry};
 /// Default poll interval when the caller doesn't override it.
 pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(30 * 60);
 
-/// Register + spawn each source on the `registry`, which then *owns* each
-/// scheduler task's handle — that ownership is what lets a source be torn down
-/// live (the in-app remove / edit flow) via [`SourceRegistry::remove`]. Each
-/// source's effective interval is its own `poll_interval()` if it declares one,
-/// else `interval`.
-///
-/// `paused` is the persisted off-switch set (#367): a source whose name is in it
-/// is registered but not spawned — it appears in the status snapshot flagged
-/// `paused`, ready to be resumed, but never spawns a scheduler task, so it does
-/// not even tick once at boot. That "not even once" matters for a bank source:
-/// re-arming a source the user switched off — if only for a single login at
-/// startup — is exactly the runaway hammering the pause exists to prevent. Pass
-/// an empty set to spawn everything.
-///
-/// An empty `sources` vec is a no-op — startup still succeeds (graceful
-/// zero-config).
+/// The registry owns each task handle, so [`SourceRegistry::remove`] tears one down live. A name
+/// in `paused` is registered but never spawned, not even one boot tick: a single login can be
+/// the hammering the pause stops. No sources is a no-op.
 pub async fn spawn_sources(
     sources: Vec<Arc<dyn AutoImportSource>>,
     interval: Duration,
