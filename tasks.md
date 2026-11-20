@@ -26,8 +26,9 @@ and design sessions need him; builds follow them.
   locally, find the record shape with him, import as the seed. Before [0107]'s data model. [USER, M]
 - [0104] **Reminder spike** (ruling 96): does `tauri-plugin-notification` `Schedule::At` with
   `allow_while_idle` fire on his phone with the app killed? Plugin 2.8.1 needs tauri ^2.12 and the
-  stack is held below it (deep-link pin): an older plugin, or the upgrade. Also: can a reminder
-  carry a Start action button (the timer, ruling 93)? [S]
+  stack is held below it (deep-link pin): an older plugin, or the upgrade. Also: does a scheduled
+  reminder carry a Start action, and does its tap reach a killed app (timer, ruling 93; docs are
+  silent on both, `PUSH_0074_RESEARCH.md` Appendix B)? [S]
 - [0105] **Test gaps before the summary and tier changes** (Cycle 5 review, `reviews/2026-11-16-
   test-gaps.md`, this machine only): T3, T7, T10, T11, T12, T13, T17. Before [0106]. [M]
 - [0106] **`CheckInPolicy` into named scheduled prompts**, each with its own tier, due-check and
