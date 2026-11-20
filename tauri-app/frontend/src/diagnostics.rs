@@ -1,38 +1,9 @@
-//! What went wrong recently — read only when a problem report is filed.
-//!
-//! Nothing else in this app records failures where a human can reach them.
-//! `tracing_subscriber::fmt()` in the Tauri host writes to stdout, which on
-//! Android is logcat: invisible in the app and gone with the process. On the
-//! frontend side a thrown exception from the CodeMirror bundle, a rejected
-//! promise, or a failed `invoke` reaches the devtools console and nowhere else —
-//! and nobody has devtools attached to a phone at the moment something breaks.
-//! So a report said "it broke" and the user's memory was the error trail.
-//!
-//! This is a bounded ring of the last [`CAPACITY`] failures, attached to a
-//! report by [`crate::components::feedback`].
-//!
-//! Why a `thread_local!` and not a Dioxus signal. Three of the four
-//! producers fire outside any Dioxus scope — a panic hook, two JS event
-//! listeners, and a patched `console.error` — where a signal write panics (the
-//! same constraint `sync_refresh.rs` hit). That module bridged back in with an
-//! mpsc channel because it had to wake the UI; nothing here does. The buffer is
-//! read once, on demand, by a modal that is mounting anyway. wasm is
-//! single-threaded, so a thread-local is effectively a global.
-//!
-//! Why a panic flushes to `localStorage` and nothing else does. wasm has no
-//! unwinding: a panic traps the module and there is no running app left to open
-//! the capture modal. The single most valuable entry is therefore the one an
-//! in-memory ring structurally cannot deliver, so the panic hook — and only the
-//! panic hook — writes the buffer out synchronously on its way down.
-//! [`install`] reads that key back at next boot and clears it, so a crash trail
-//! survives exactly one relaunch: long enough to be reported, not long enough to
-//! accumulate. Every other producer stays memory-only, because a debounced disk
-//! write per console line is the churn `screen_context.rs` was written to avoid.
-//!
-//! Everything here is truncated. Entries are capped in count and each one in
-//! length, because this text is bound for a synced event. A stack trace or a
-//! serialized request body is exactly how something unbounded ends up in the
-//! event log.
+//! A ring of the last [`CAPACITY`] failures, attached to problem reports by
+//! [`crate::components::feedback`]; otherwise they reach only logcat or a devtools console.
+//! - `thread_local!`, not a signal: most producers run outside any Dioxus scope.
+//! - Only the panic hook writes `localStorage`, since a wasm panic leaves no app to report
+//!   from; [`install`] reads it back once at next boot and clears it.
+//! - Everything is capped in count and length, because it ends up in a synced event.
 
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
@@ -159,21 +130,9 @@ fn record(kind: Kind, text: &str) {
 
 /// Record a command that came back `Err`.
 ///
-/// Called from the three `bridge.rs` IPC helpers that every backend call
-/// funnels through. The command name matters as much as the message: "failed"
-/// with no `cmd` cannot be told apart from the twenty other things that also
-/// failed.
-///
-/// Genuinely unused under `mock`, where the `#[cfg(feature = "mock")]` branches
-/// return canned data without reaching those helpers — the browser loop has no
-/// IPC to fail. `expect` rather than `allow` so that if the mock half ever does
-/// start recording, the now-unfulfilled expectation says so instead of leaving a
-/// stale exemption behind.
-///
-/// `not(test)` because the tests below do call it, so under
-/// `--all-targets --features mock` the expectation is fulfilled in the bin and
-/// unfulfilled in the test target — which failed the lint for a reason that has
-/// nothing to do with the mock half.
+/// Called from the three `bridge.rs` IPC helpers, with the command name, without which the
+/// failure is anonymous. Unused under `mock`; `expect` rather than `allow` so a stale exemption
+/// shows, and `not(test)` because the tests call it.
 #[cfg_attr(all(feature = "mock", not(test)), expect(dead_code))]
 pub fn record_invoke_failure(cmd: &str, err: &str) {
     record(Kind::Invoke, &format!("{cmd}: {err}"));
@@ -181,13 +140,8 @@ pub fn record_invoke_failure(cmd: &str, err: &str) {
 
 /// A boot-race invoke that failed and then succeeded on retry.
 ///
-/// Recorded as a warning, not a failure: the call ultimately worked, so it
-/// is not a defect the user experienced. It is kept because the retry would
-/// otherwise erase the only evidence that the race still happens — and the race
-/// getting slower (a bigger log, a slower device) is exactly the thing worth
-/// noticing before it outruns the deadline and starts failing open again.
-/// No `not(test)` here, unlike `record_invoke_failure` above: no test calls
-/// this one, so under `mock` it is dead in the test target too.
+/// A warning, not a failure: kept as the only evidence the race still happens, and worth
+/// seeing before it outruns the deadline. No `not(test)`: no test calls this one.
 #[cfg_attr(feature = "mock", expect(dead_code))]
 pub fn record_invoke_recovery(cmd: &str, attempts: u32, waited_ms: f64) {
     record(
@@ -299,14 +253,9 @@ fn install_window_listeners() {
 
 /// Wrap one `console` method so its calls are recorded as well as printed.
 ///
-/// The wrapper is built in JS, not as a Rust closure bound directly.
-/// `console.error` is variadic and a Rust closure cannot reach JS `arguments` —
-/// binding one would silently drop every argument past the first and change what
-/// the console prints. The factory below forwards `arguments` untouched to the
-/// original and hands Rust a joined string.
-///
-/// The `try/catch` around the sink is load-bearing: a throw inside it would
-/// otherwise turn every `console.error` in the app into a second failure.
+/// Built in JS because a Rust closure cannot reach the variadic `arguments` and would drop all
+/// but the first. The `try/catch` around the sink is load-bearing: a throw there would turn
+/// every `console.error` into a second failure.
 #[cfg(target_arch = "wasm32")]
 fn patch_console(method: &str, kind: Kind) {
     use wasm_bindgen::prelude::*;

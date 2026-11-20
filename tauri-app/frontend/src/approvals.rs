@@ -1,15 +1,8 @@
 //! What is waiting on the user, as app-wide context.
 //!
-//! Two renderers share it: the nav badges, so a queue is visible from
-//! wherever the user is, and the assistant's reminder row, for a stretch
-//! spent entirely in that window. One fetch, one set of numbers — a badge and
-//! a sentence disagreeing about how much is waiting is worse than either alone.
-//!
-//! Refreshed, unlike [`crate::features`]. The feature set is a boot
-//! snapshot on purpose; a count is the opposite — it is stale the moment a
-//! proposal lands or the user decides one, so this subscribes to
-//! [`crate::sync_refresh`], which fires for an inbound pull *and* for a local
-//! write that changed data another view is showing.
+//! One fetch for both the nav badges and the assistant's reminder row, so they never disagree.
+//! Refreshed through [`crate::sync_refresh`], unlike the boot-snapshot [`crate::features`]:
+//! a count is stale the moment a proposal lands or is decided.
 
 use dioxus::prelude::*;
 

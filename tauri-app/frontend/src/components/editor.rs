@@ -4,15 +4,9 @@ use wasm_bindgen::prelude::*;
 
 use crate::bridge::{js_create_editor, js_destroy_editor};
 
-/// Build the base `{ journalMode, readOnly, initialCursor, entryDate }` options
-/// object for `createEditor`. Returned as an `Object` (not `JsValue`) so the
-/// caller can attach the `onCursor` callback before forwarding it.
-///
-/// `entry_date` (YYYY-MM-DD) is the journal day being edited; the editor's
-/// reveal-on-select timestamps compare a line's finish date against it so a
-/// same-day line shows a bare time and a line finished on another day carries
-/// its date (#344). `None`/empty for non-journal surfaces (notes) → the
-/// timestamp feature stays off.
+/// The base options for `createEditor`, as an `Object` so the caller can attach `onCursor`.
+/// `entry_date` lets a timestamp show a bare time on its own day and a date otherwise; `None`
+/// (notes) turns timestamps off.
 fn editor_options(
     journal_mode: bool,
     read_only: bool,
@@ -66,20 +60,8 @@ const EDITOR_BUNDLE_SRC: &str = "/assets/js/editor.bundle.js";
 /// Inject `editor.bundle.js` (once) and resolve when `window.createEditor` is
 /// defined. Returns `false` if it never appeared within the polling window.
 ///
-/// Why this is separate from [`Editor`], and why the root calls it too.
-/// This used to run only on Editor mount, which meant the ~1 MB bundle didn't
-/// start downloading until a page containing an editor rendered. That was fine
-/// while the app painted Journal immediately — the bundle parsed *in parallel*
-/// with the continuity store's boot read. Once `main.rs` gained the boot gate
-/// (no page mounts until the restored tab is known), mounting became the thing
-/// that gates the injection, so the two costs would have run back to back
-/// instead of overlapping — a straight regression on the Journal path, and the
-/// code below is explicit that a cold parse can exceed 5s.
-///
-/// So the root warms the bundle at app mount, independent of which tab wins the
-/// restore, and this function dedupes: the Editor's own call finds the script
-/// already in the DOM and usually finds `createEditor` already defined, so it
-/// proceeds straight to creating the editor.
+/// Separate from [`Editor`] so the root can warm the bundle at mount, overlapping the boot
+/// read (see `main.rs`); it dedupes, so the Editor's own call finds it loaded.
 pub async fn ensure_editor_bundle() -> bool {
     // ~20s of polling: a cold parse of this bundle can exceed 5s (see
     // `ensure_js_bundle`). A remount — navigate away and back — re-runs the

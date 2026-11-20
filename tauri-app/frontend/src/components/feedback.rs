@@ -1,17 +1,8 @@
 //! The capture modal — one sentence, visible context, send.
 //!
-//! Mounted only while open, rather than rendered always and class-toggled
-//! the way `NavDrawer` is. The drawer needs the always-rendered form so its
-//! slide can animate from off-screen; this needs the opposite, because mounting
-//! *is* the snapshot: the description of the screen underneath is taken in
-//! `use_hook` at mount and never re-read, so what the user sees listed is
-//! exactly what gets sent even if a background sync changes the page beneath the
-//! scrim while they are typing.
-//!
-//! No category picker, no severity, no triage state. Those are reading-side
-//! concerns, and the reader here is a person at a terminal working through a
-//! markdown list. Every field a capture form adds is another reason to close it
-//! and carry on being annoyed instead.
+//! Mounted only while open, unlike `NavDrawer`: mounting is the snapshot, so what the user sees
+//! listed is exactly what is sent even if sync changes the page underneath. No category,
+//! severity or triage: each field is another reason not to file.
 
 use dioxus::prelude::*;
 
@@ -26,12 +17,8 @@ struct ContextLine {
     /// The signal governing whether this line is sent, or `None` when the line
     /// is not droppable.
     ///
-    /// Per-line rather than one shared flag because there is now more than one
-    /// droppable line, and they are dropped for different reasons — a draft is
-    /// the user's own prose, a console error may have quoted it. Only content
-    /// that can carry the user's writing is droppable at all; build identity is
-    /// not, because a report that hides which version it came from is not worth
-    /// filing.
+    /// Per line, since each is dropped for its own reason. Only content that can carry the
+    /// user's writing is droppable; build identity never is.
     include: Option<Signal<bool>>,
 }
 

@@ -1,24 +1,6 @@
-//! Root-held continuity store.
-//!
-//! Per-page editing state used to die whenever a page component unmounted. The
-//! shell in `main.rs` swaps pages with `match *active_tab.read()`, so switching
-//! tabs *drops* the old page component — and with it `content`,
-//! `last_saved_content`, and any in-flight debounced auto-save (see
-//! `pages/journal.rs` `DayView` and `pages/notes.rs` `NoteEditor`). The result:
-//! lost keystrokes and reset scroll position on navigation.
-//!
-//! This store lifts that recoverable state to the app root via
-//! `use_context_provider` (joining the existing `tz` / `pending_share`
-//! contexts), so it survives page unmount. Disk-level persistence — surviving an
-//! Android app-kill / restart — is layered on top later (task 1.8); this module
-//! is the in-memory tier only.
-//!
-//! The journal editor and the generic-notes editor share the same editing-
-//! session shape (`EditSession`), so one `sessions` map backs both (see
-//! `feedback_shared_ui_shape_is_a_tell`). Surfaces with a different shape get
-//! their own parallel map keyed by the same `ContinuityKey`: `captures` holds
-//! in-flight finances capture drafts (`CaptureDraft`, task 1.4); transaction-
-//! list pagination state (task 1.5) will be added the same way.
+//! Root-held continuity store: switching tabs drops the old page, so recoverable editing state
+//! lives here and survives unmount (disk persistence is layered on top). Journal and notes share
+//! `EditSession` in one `sessions` map; other shapes get parallel maps on the same key.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -28,20 +10,9 @@ use dioxus::prelude::*;
 /// One editing session's *recoverable* state — the slice that must outlive an
 /// unmount.
 ///
-/// - `content`: the live editor buffer (what the user has typed).
-/// - `last_saved_content`: mirror of what's persisted to the backend; auto-save
-///   diffs `content` against it to decide whether a save is needed.
-/// - `save_generation`: monotonic counter so a newer keystroke cancels an older
-///   pending debounced save (each scheduled save bails if this has moved on).
-/// - `title`: the note title. Used by the generic-notes editor (which has a
-///   title field); the journal editor leaves it empty — journal entries are
-///   keyed by date, not titled.
-/// - `cursor`: char offset of the selection head when the page was last left
-///   (1.8b). Restored into CodeMirror on remount so returning to a note drops
-///   the caret — and, via `scrollIntoView`, the viewport — back where it was.
-///
-/// Transient UI (loading / error / llm-result / "Saving…" flags) deliberately
-/// stays page-local — losing it on unmount is harmless and re-derives on remount.
+/// `last_saved_content` mirrors the backend for auto-save's diff; `save_generation` lets a newer
+/// keystroke cancel an older pending save; `title` is empty for journal entries; `cursor` puts
+/// caret and viewport back on remount. Transient UI flags stay page-local on purpose.
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct EditSession {
     pub title: String,
@@ -112,15 +83,9 @@ pub struct ListState {
     pub filter: crate::types::TxnFilter,
 }
 
-/// Restorable navigation position (1.8b): which top-level tab the user last had
-/// open, plus each feature's sub-position, so a boot — or an Android app-kill —
-/// returns them where they were instead of the default Journal/Today.
-///
-/// Stored as plain strings (not the page-local `Tab` / view enums) so this
-/// foundational module stays dependency-free, mirroring `CaptureDraft`'s
-/// primitive typing. Each page owns the string⇆enum mapping at its boundary.
-/// Every field is optional: a fresh install (or a pre-1.8b on-disk blob) leaves
-/// them `None`, and each page falls back to its own default.
+/// The last tab and each feature's sub-position, restored on boot. Plain strings keep this
+/// module dependency-free; each page maps them to its enums. Every field is optional, and a
+/// page falls back to its default.
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct NavState {
     /// Top-level tab key: "journal" | "notes" | "routines" | "finances" | "settings".
@@ -159,14 +124,8 @@ pub struct PersistedWorkspace {
     /// `#[serde(default)]` so a pre-1.8b blob (no `nav` key) still loads.
     #[serde(default)]
     pub nav: NavState,
-    /// Last statement label used per source account, so a monthly import
-    /// prefills `<remembered prefix>-<current period>` instead of asking the
-    /// user to retype it. Keyed by account because the account *path* cannot
-    /// identify an institution here — the grammar is
-    /// `Assets:<Registration>:<Commodity>` with institutions in posting tags,
-    /// so two institutions holding the same registration share a path.
-    ///
-    /// `#[serde(default)]` for the same reason as `nav`: older blobs lack the key.
+    /// Last statement label per source account, prefilling `<prefix>-<period>`. Keyed by
+    /// account, not institution, which lives in posting tags. `serde(default)` for older blobs.
     #[serde(default)]
     pub statement_labels: Vec<(String, String)>,
     /// Editor body font size in px. `None` ⇒ the stylesheet default (16px).
@@ -184,19 +143,9 @@ pub struct PersistedWorkspace {
 
 /// Does this session hold anything a reader would act on?
 ///
-/// The one predicate, shared by the two hydrate paths (`journal.rs`,
-/// `notes.rs`) and by [`ContinuityStore::put`]'s eviction. Deliberately one
-/// function rather than three copies of `content != last_saved_content`: the
-/// readers discard clean sessions and `put` therefore declines to store them,
-/// and those two behaviours are only safe together. If a reader started
-/// accepting clean sessions while `put` kept dropping them, the store would
-/// silently lose live data — and the bug would look like a sync fault, not a
-/// caching one. Sharing the function makes that divergence unrepresentable.
-///
-/// "Clean" means saved: `last_saved_content` is what the backend last
-/// acknowledged, so equality means the backend copy is at least as fresh, and
-/// the fresh copy must win — otherwise a session stored at first open
-/// permanently shadows edits synced in from another device.
+/// The one predicate for both hydrate paths and [`ContinuityStore::put`]'s eviction: readers
+/// discard clean sessions and `put` declines them, safe only together, so never copy it.
+/// Clean must yield to the backend copy, or it shadows edits synced from another device.
 pub fn session_is_recoverable(session: &EditSession) -> bool {
     session.content != session.last_saved_content
 }
@@ -271,29 +220,9 @@ impl ContinuityStore {
     /// Insert or replace the session for `key` — unless it is clean, in
     /// which case any existing session for that key is dropped instead.
     ///
-    /// `&self` (not `&mut self`) because `Signal` is a `Copy` interior-mutable
-    /// handle — call sites needn't hold a mutable binding.
-    ///
-    /// Why clean sessions are dropped rather than stored. Both readers —
-    /// `journal.rs` and `notes.rs`, the only two in the app — hydrate with
-    /// `store.get(&key).filter(|s| s.content != s.last_saved_content)`. A clean
-    /// session is therefore *already* discarded at every read, deliberately: it
-    /// must yield to the fresh backend copy or it permanently shadows edits that
-    /// synced in from another device. Storing one buys nothing and costs a great
-    /// deal, because a session is inserted the first time a day or note is
-    /// opened — read-only, no edits — and `remove` was wired for exactly one
-    /// transient key (`NewNote`). In a daily journalling app that is one
-    /// full-text entry per day accumulating for the life of the install, each
-    /// one re-serialised into the persisted workspace blob and re-parsed at
-    /// every cold start.
-    ///
-    /// So the eviction predicate is not a new retention policy to tune — it is
-    /// the readers' own filter, applied at write time. Behaviour is unchanged by
-    /// construction: nothing can observe a session that every reader rejects.
-    ///
-    /// Enforced here rather than at the three call sites for the same reason
-    /// `box_request` exists: a rule at the call site is a rule that the fourth
-    /// writer forgets.
+    /// Clean sessions are dropped because every reader already rejects them
+    /// ([`session_is_recoverable`]); storing them grew the persisted blob by one entry per day
+    /// opened. The readers' own filter at write time, enforced here so no writer forgets it.
     pub fn put(&self, key: ContinuityKey, session: EditSession) {
         let mut sessions = self.sessions;
         if !session_is_recoverable(&session) {
@@ -392,15 +321,9 @@ impl ContinuityStore {
 
     /// Snapshot all three maps for on-disk persistence (1.8a).
     ///
-    /// `peek`, not `read` — this deliberately does *not* subscribe. It used
-    /// to, which was how the persist effect knew to re-run; the effect now
-    /// subscribes to the cheap `revision` counter instead and calls this only
-    /// after its debounce has elapsed. Subscribing here would drag the deep
-    /// clone back onto the per-change path, which is the whole thing being
-    /// fixed: this clones every session, capture and — via `ListState` — the
-    /// entire accumulated Ledger list with each row's `postings` JSON. Only the
-    /// `to_string` + disk write were ever debounced, so typing one character in
-    /// today's journal entry deep-cloned all of that, on every keystroke.
+    /// `peek`, never `read`: the persist effect subscribes to `revision` and calls this after its
+    /// debounce. Subscribing here would deep-clone everything, the whole Ledger list included,
+    /// on every keystroke.
     pub fn snapshot_for_persist(&self) -> PersistedWorkspace {
         PersistedWorkspace {
             sessions: self
@@ -537,21 +460,9 @@ pub fn use_continuity_provider() -> ContinuityStore {
     // read *error* we leave the writer disabled so a transient failure can't
     // overwrite a good file with an empty one.
     use_future(move || async move {
-        // Boot read with *timeout-bounded* retry (cold-start readiness race). On a
-        // fresh/empty DB the backend `setup` runs a slow `init_all()` *before* it
-        // `manage`s AppState. A very early `get_workspace` invoke can hit unmanaged
-        // state and return Err — but on genuine first-open (Android) it can also be
-        // dropped by the not-yet-ready IPC so its promise NEVER settles. The
-        // previous retry-on-Err loop awaited the invoke directly, so a dropped
-        // invoke parked here forever: `loaded` never flipped and every
-        // `loaded_peek` waiter (journal fetch, `main.rs` tab-restore) hung on
-        // "Loading…" indefinitely (the fresh-install cold-open hang, root-caused
-        // on-device 2026-07-05 — the shell + wasm actually render in ~85ms; only
-        // this boot read stalled). `invoke_get_workspace_timed` races each attempt
-        // against a `setTimeout`, so a hung attempt fails like an Err and we retry.
-        // Deadline is a wall-clock fail-open cap covering both failure modes (fast
-        // Err spin and silent hang) so a broken backend degrades to an empty
-        // session instead of a dead UI.
+        // Boot read, each attempt bounded: an early invoke can fail on unmanaged state or be
+        // dropped and never settle (`bridge::invoke_timed`), and either one stalled every
+        // `loaded_peek` waiter. The deadline fails open to an empty session, never a dead UI.
         const ATTEMPT_TIMEOUT_MS: i32 = 500;
         const RETRY_GAP_MS: i32 = 100;
         const DEADLINE_MS: i32 = 15_000; // setup finishes in <1s; generous fail-open

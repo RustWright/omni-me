@@ -1,13 +1,6 @@
-//! Obsidian import/export UI — lives inside the Settings page as a
-//! self-contained section. Own state machine (Idle → Scanning → Previewing
-//! → Committing → Done) keeps the flow scoped to this one component.
-//!
-//! Still hand-rolls its buttons and panels instead of using the shared
-//! `components::primitives`, so it drifts visually from the rest of the app as
-//! the token layer moves. Deliberately not migrated as its own errand: it is a
-//! pure appearance change to a flow whose value is in what it does, and it
-//! cannot be verified without a browser pass. Trip-wire: convert it the next
-//! time this file is opened for a real reason — do not make a special trip.
+//! Obsidian import and export, a self-contained Settings section with its own state machine.
+//! Trip-wire: it still hand-rolls its controls; move it to `components::primitives` the next
+//! time this file is opened for a real reason, never as a special trip.
 
 use std::collections::HashSet;
 

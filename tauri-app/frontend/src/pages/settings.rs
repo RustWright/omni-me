@@ -710,13 +710,8 @@ fn ConfigRow(
 
 /// A bounded number control for an `Int` config key.
 ///
-/// Emits the same `String` the segmented control does, so
-/// [`segment_to_value`] and the row's `on_change` are untouched — a second
-/// encoding of a config value is a second place for it to be wrong.
-///
-/// The bounds come from the entry, which gets them from `ConfigKey::int_range`.
-/// They are not restated here: the backend refuses an out-of-range value, and a
-/// control that could offer one would produce an error the user did not earn.
+/// Emits the segmented control's `String`, so a config value has one encoding. Bounds come from
+/// the entry (`ConfigKey::int_range`), never restated, so it cannot offer a refused value.
 #[component]
 fn Stepper(
     value: i64,
@@ -1771,14 +1766,8 @@ fn AccountOverrideRow(
 
 /// Read-only report of the server's LLM endpoint.
 ///
-/// Deliberately not editable. This was a form that wrote `[llm]` —
-/// including an API key — to the server's `credentials.toml`. Three things were
-/// wrong with that: it is deployment configuration rather than a preference, it
-/// was restart-to-apply so it never behaved like a setting, and model selection
-/// is becoming per-role and benchmark-driven, which leaves a single "Model"
-/// textbox with no well-defined meaning. What remains is the one genuinely
-/// useful thing it did: answering "is a model wired, and which one" when note
-/// processing appears to do nothing. Change it in `credentials.toml` on the host.
+/// Not editable on purpose: the endpoint is per-role deployment config, set in
+/// `credentials.toml` on the host. It answers "is a model wired, and which one".
 #[component]
 fn LlmProviderSection() -> Element {
     let mut cfg = use_signal(|| None::<bridge::LlmConfigView>);

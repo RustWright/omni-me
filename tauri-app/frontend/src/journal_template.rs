@@ -14,13 +14,9 @@ const PROMPT: &str = "\n## What happened today? (Add as much detail as you want)
 /// Render the default journal-entry template for a given date string
 /// (expected format: `YYYY-MM-DD`), with one blank line per declared property.
 ///
-/// Built through `serialize_journal` rather than as a format string, and
-/// that is load-bearing. `core/.../notes_projection.rs::is_complete` stops its
-/// single-pass scan at the first non-`key: value` line, so a `tags:` block list
-/// — or a declared key written any other way — would leave every entry
-/// permanently incomplete and break auto-close. The serializer is where those
-/// invariants are stated and tested; a hand-written template here would be a
-/// second, untested copy of them, free to drift. Change the shape there.
+/// Through `serialize_journal`, never a format string: `is_complete` stops at the first
+/// non-`key: value` line, so a `tags:` block list leaves every entry incomplete and breaks
+/// auto-close. Change the shape in the serializer, where it is tested.
 pub fn render(date: &str, declared: &[&str]) -> String {
     let props = JournalProps {
         date: date.to_string(),

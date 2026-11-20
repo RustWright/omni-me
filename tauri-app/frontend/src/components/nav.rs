@@ -76,14 +76,8 @@ pub const ALL_TABS: &[Tab] = &[
     Tab::Settings,
 ];
 
-/// Mobile slide-in navigation drawer (1.11). Replaces the bottom tab bar on
-/// small screens: opened by the header hamburger button (and, in 1.12, a
-/// left-edge swipe), it slides over the content with a tap-to-dismiss scrim.
-/// Hidden at `md+`, where `SideNav` is the persistent nav.
-///
-/// Both the scrim and the panel are *always* rendered (their visibility is
-/// class-toggled, not `if`-gated) so the open/close transition can animate —
-/// a conditionally-mounted node would just pop in.
+/// Mobile slide-in drawer with a tap-to-dismiss scrim; hidden at `md+`, where `SideNav` shows.
+/// Scrim and panel are always rendered and class-toggled, so the transition can animate.
 #[component]
 pub fn NavDrawer(
     active: Tab,
@@ -176,13 +170,8 @@ pub fn NavDrawer(
 
 /// How much is waiting on a tab, drawn on its nav row.
 ///
-/// Renders nothing at zero, rather than a `0` pill. A badge is a call to
-/// act; one that is permanently present stops being read, and that costs the
-/// badges that *do* mean something.
-///
-/// The number is capped in the display only. Three digits break the row's
-/// layout, and past a point the exact count stops changing what the user does —
-/// but the underlying total stays honest for anything that reads it.
+/// Nothing at zero: a badge that is always present stops being read. Capped in the display
+/// only (three digits break the row); the total stays honest.
 #[component]
 fn NavBadge(count: usize) -> Element {
     if count == 0 {
@@ -205,12 +194,8 @@ fn NavBadge(count: usize) -> Element {
 
 /// "Report a problem", pinned to the foot of either nav.
 ///
-/// Deliberately not a sixth entry in `ALL_TABS`. It does not navigate — it
-/// opens a modal over wherever the user already is, which is the whole point,
-/// since the report's value is the screen underneath. Putting it in the tab loop
-/// would give it the active-state styling and teach the eye to read it as a
-/// destination. `mt-auto` pushes it to the bottom of the flex column, which on
-/// mobile also lands it in thumb reach at the base of the drawer.
+/// Not in `ALL_TABS`: it opens a modal over the current screen, whose content is the report's
+/// value, and tab styling would read as a destination.
 #[component]
 fn FeedbackRow(on_activate: EventHandler<()>) -> Element {
     rsx! {

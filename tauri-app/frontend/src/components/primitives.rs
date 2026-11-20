@@ -1,15 +1,7 @@
 //! Shared UI primitives — the app's building blocks.
 //!
-//! Before this, every card/button/banner/tile was an inline Tailwind class
-//! string copy-pasted across `pages/*.rs` and drifted apart (4+ primary-button
-//! variants, card radius `lg` vs `xl`, surface opacity `/30`–`/60`–full, border
-//! `white/5` vs `white/10`). These primitives are the single source of truth so
-//! the whole app reads as one system. They consume the design tokens from
-//! `tailwind.config.js` / `input.css` (`obsidian-*`, `success/warn/error`,
-//! `rounded-card`, `shadow-card`) — change a token, every primitive follows.
-//!
-//! Each takes an optional `class` appended last, so a call site can still tune
-//! spacing/width without forking the base look.
+//! The single source for cards, buttons and banners, built on the `input.css` tokens, so the
+//! app reads as one system. Each takes an optional `class`, appended last, for spacing and width.
 
 use dioxus::prelude::*;
 

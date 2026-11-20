@@ -1,13 +1,7 @@
 //! Rendering a stored document inline, from bytes already on the device.
 //!
-//! Every branch renders client-side. `core::attachments` keeps a bounded
-//! cache so a captured document stays viewable offline; a viewer that reached
-//! for the server would defeat the thing the cache exists for.
-//!
-//! No download link, in any branch. A download is what the old fallback
-//! did for every type it did not understand, and on Android WebView it silently
-//! does nothing — so the user sees a button that looks like an answer and is
-//! not one. An honest "no preview, here is what this is" is worth more.
+//! Client-side only, so cached documents stay viewable offline. No download link anywhere: on
+//! Android WebView it silently does nothing; say "no preview" and what the file is instead.
 
 use dioxus::prelude::*;
 use wasm_bindgen::{JsCast, JsValue};
@@ -142,13 +136,8 @@ pub struct AttachmentMeta {
 
 /// The same four fields off an archived document.
 ///
-/// `None` when the row has no `sha256` — a fields event can fold before the
-/// archive event that carries the hash, so a document can legitimately exist
-/// with nothing to render yet.
-///
-/// Lives here rather than beside either caller: the archive detail view and the
-/// finances review panel both draw archived documents, and a second copy is how
-/// the two drift on what a missing hash means.
+/// `None` without a `sha256`, which is legitimate: fields can fold before the archive event.
+/// Shared by the archive and the finances review so they never disagree on a missing hash.
 pub fn document_meta(doc: &crate::types::DocumentItem) -> Option<AttachmentMeta> {
     Some(AttachmentMeta {
         sha256: doc.sha256.clone()?,
@@ -565,12 +554,6 @@ fn PdfView(url: String, #[props(default)] full: bool) -> Element {
     }
 }
 
-/// Call `window.renderPdf(containerId, url)` and read back `{pages, rendered}`.
-///
-/// Reached through `Reflect` rather than a `#[wasm_bindgen]` extern: the
-/// bundle is loaded on demand, so the global is genuinely absent until it lands
-/// and a direct extern binding would trap instead of returning an error we can
-/// show.
 /// A captured photo made upright, at most 2400px long edge, JPEG 85%: a 3.9 MB
 /// receipt became 588 KB and stayed legible. `None` keeps the original (no
 /// bundle, undecodable, or no smaller).
@@ -595,6 +578,8 @@ pub async fn shrink_photo(bytes: &[u8], mime: &str) -> Option<Vec<u8>> {
         .map(|a| a.to_vec())
 }
 
+/// Call `window.renderPdf(containerId, url)` and read back `{pages, rendered}`. Through
+/// `Reflect`, because the bundle loads on demand and an extern binding would trap.
 async fn render_pdf(container_id: &str, url: &str) -> Result<(u32, u32), String> {
     let window = web_sys::window().ok_or("no window")?;
     let func = js_sys::Reflect::get(&window, &JsValue::from_str("renderPdf"))

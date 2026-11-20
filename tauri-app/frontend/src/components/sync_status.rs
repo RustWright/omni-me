@@ -4,15 +4,8 @@ use crate::bridge;
 use crate::timer::sleep_ms;
 use crate::types::{SyncState, SyncStatusSnapshot};
 
-/// Small header chip that reflects the Track D (Phase 2.6) background sync
-/// status. Polls every 5s — the command is cheap (reads a single in-memory
-/// state variable) and a short poll keeps the UI honest without a dedicated
-/// event stream. When Track D lands an `events` channel, this can switch to
-/// `tauri-plugin-event` subscriptions.
-///
-/// If the backend command is unregistered (Track D hasn't merged), we treat
-/// the error as `Idle` so the UI doesn't flash a spurious red state — the
-/// actual sync still works through the manual Settings -> Sync Now button.
+/// Header chip for background sync status, polled every 5 s (the command reads one in-memory
+/// value). An error reads as `Idle` rather than flashing red.
 #[component]
 pub fn SyncStatusIndicator() -> Element {
     let mut snapshot = use_signal(SyncStatusSnapshot::default);
@@ -27,14 +20,9 @@ pub fn SyncStatusIndicator() -> Element {
         }
     });
 
-    // Inbound restore takes precedence over the polled push status. The two
-    // report different pipelines, and during a backfill the push side is
-    // genuinely `Idle` — so without this the chip cheerfully says "Synced" while
-    // 12k events project behind an empty UI. See `main.rs::RestoreProgress`.
-    //
-    // The count is what is LEFT and it ticks down per apply chunk, so a restore
-    // that has stopped dead reads as a frozen number rather than as an animation
-    // that means nothing. A phone spent eight hours on the latter.
+    // Inbound restore outranks push status, which is `Idle` during a backfill
+    // (`main.rs::RestoreProgress`). Show what is left, ticking down, so a stalled restore reads
+    // as a frozen number rather than an animation that means nothing.
     let restoring = *use_context::<crate::RestoreProgress>().0.read();
     if restoring > 0 {
         return rsx! {

@@ -1,15 +1,6 @@
-//! Single icon primitive — dedupes the heroicons-outline `<svg><path>` blocks
-//! that were copy-pasted inline across `pages/*.rs`.
-//!
-//! Every icon in the app was the same 24×24 `fill:none stroke:currentColor`
-//! outline shape with a one-off `d` string repeated per call site (the
-//! chevron-right alone appeared 14×). This collapses them to one typed name so a
-//! call site is `Icon { name: IconName::ChevronRight, class: "w-4 h-4" }` and the
-//! stroke/viewBox boilerplate lives in exactly one place.
-//!
-//! Paths are heroicons v1 outline (integer 24-grid coords) to match the set
-//! already in the codebase — don't mix in v2 paths, whose decimal coords read at
-//! a visibly different weight next to these.
+//! The one icon primitive: `Icon { name: IconName::ChevronRight, class: "w-4 h-4" }`.
+//! Paths are heroicons v1 outline; never mix in v2, whose decimal coords draw at a visibly
+//! different weight.
 
 use dioxus::prelude::*;
 

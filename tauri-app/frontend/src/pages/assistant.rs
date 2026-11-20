@@ -1,13 +1,7 @@
 //! Asking omni-me a question and reading the answer.
 //!
-//! Nothing here waits on a model. Asking appends an event and returns; the
-//! answer arrives later, through sync, from the agent that holds the database.
-//! So the screen has exactly two states — a question with an answer behind it,
-//! and one without — and "without" is not an error until the user decides it is.
-//!
-//! That shape is why the poll below exists rather than a request that blocks.
-//! It also means a question survives the app being closed: the event is durable
-//! the moment it is appended, and the answer is waiting on the next launch.
+//! Nothing waits on a model: asking appends an event, and the answer arrives through sync, hence
+//! the poll. "Unanswered" is not an error, and a question survives the app closing.
 
 use dioxus::prelude::*;
 
@@ -285,28 +279,8 @@ fn NoticeRow(
     }
 }
 
-/// Queues waiting on the user somewhere other than this screen, with a tap
-/// that goes there.
-///
-/// This is the half of "notify and route" the nav badges cannot do. A badge is
-/// visible while the user is moving between tabs; someone who opens the app,
-/// asks the assistant something and closes it again never looks at the nav, and
-/// for them an approval queue on another tab is invisible indefinitely.
-///
-/// Excludes the assistant's own inbox, which the suggestions banner above
-/// already shows. Two rows for one queue, each with its own count, is a
-/// disagreement waiting to happen — and the banner is the one that can open the
-/// inbox without leaving the screen.
-///
-/// Renders nothing when there is nothing waiting, rather than an
-/// all-clear line: a permanent row on the assistant's landing screen costs
-/// attention every visit and pays it back only occasionally.
-/// Where a "N items waiting" row should land inside the tab it names.
-///
-/// `None` is a landing at the tab root, which for a queue row is the bug this
-/// exists to fix — so a tab that grows a review queue must be added here. There
-/// is no warning if it is not: the row still navigates, it just arrives nowhere
-/// useful.
+/// Where a "N items waiting" row lands inside its tab. A tab that grows a review queue must be
+/// added here: `None` lands at the root, silently.
 fn intent_for(tab: Tab) -> Option<crate::NavIntent> {
     match tab {
         Tab::Finances => Some(crate::NavIntent::FinancesReview),
@@ -315,6 +289,9 @@ fn intent_for(tab: Tab) -> Option<crate::NavIntent> {
     }
 }
 
+/// Queues waiting on another tab, each with a tap there: someone who only opens the assistant
+/// never sees the nav badges. Excludes the assistant's own inbox, which the banner shows, and
+/// renders nothing when nothing waits.
 #[component]
 fn ApprovalsElsewhere() -> Element {
     let approvals = crate::approvals::use_pending_approvals();
@@ -1124,14 +1101,8 @@ mod tests {
     }
     use crate::NavIntent;
 
-    /// Every tab that can appear in a reminder row needs a destination inside
-    /// it. Without one the row switches tabs and stops, which is what it did
-    /// before: "12 items waiting in Archive" landed on an unfiltered list of the
-    /// newest hundred documents, with no way to tell which twelve it meant.
-    ///
-    /// Not asserted over `ALL_TABS` — Journal and Notes have no review queue
-    /// and correctly map to `None`. The list below is the set `core::approvals::
-    /// summary` can actually produce a count for.
+    /// Every tab a reminder row can name needs a destination inside it. Not over `ALL_TABS`:
+    /// the list is what `core::approvals::summary` can count, and Journal and Notes have no queue.
     #[test]
     fn every_tab_with_a_review_queue_names_where_to_land() {
         assert_eq!(
