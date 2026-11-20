@@ -1,0 +1,7 @@
+{
+  "identifier": "mobile",
+  "description": "Spike [0104]: local notifications, driven over DevTools",
+  "platforms": ["android", "iOS"],
+  "windows": ["main"],
+  "permissions": ["notification:default"]
+}

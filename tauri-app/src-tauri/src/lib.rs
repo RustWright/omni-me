@@ -438,6 +438,7 @@ pub fn run() {
     #[cfg(mobile)]
     {
         builder = builder.plugin(tauri_plugin_deep_link::init());
+        builder = builder.plugin(tauri_plugin_notification::init());
     }
 
     builder
