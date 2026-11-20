@@ -1,11 +1,7 @@
 //! Pure helpers for the budget feature.
 //!
-//! The W4 budget setup screen (5.1) stores each budget target's cadence
-//! as a free-form string in `BudgetSetPayload.period` — `"weekly"`,
-//! `"biweekly"`, `"monthly"`, and (per the schema comment) future
-//! `"custom:N"`. This module owns the canonical parse from that string
-//! to a day count, which 5.2's actual-vs-planned view uses to normalize a
-//! target against a spending window of arbitrary length.
+//! Owns the canonical parse of `BudgetSetPayload.period` into days, which normalizes a target
+//! against any spending window.
 
 use super::routines::last_day_of_month;
 use crate::db::queries::TxnPostingsRow;
@@ -14,16 +10,8 @@ use ledger_utils::prices::Prices;
 use rust_decimal::Decimal;
 use serde::Serialize;
 
-/// Normalize a budget period string to its equivalent in days. Returns
-/// `None` for unknown / malformed input.
-///
-/// Supported forms:
-///   - `"weekly"` → `Some(7)`
-///   - `"biweekly"` → `Some(14)`
-///   - `"monthly"` → `Some(30)` (calendar-month approximation; matches the
-///     30-day normalizer already in `dashboard::next_month_recurring_total`)
-///   - `"custom:N"` where N is a positive integer → `Some(N)`
-///   - anything else → `None`
+/// `weekly` 7, `biweekly` 14, `monthly` 30 (as `dashboard::next_month_recurring_total`
+/// approximates), `custom:N` N for positive N, anything else `None`.
 pub fn period_to_days(period: &str) -> Option<u32> {
     match period {
         "weekly" => Some(7),
@@ -57,14 +45,8 @@ pub struct BudgetProgress {
     pub over_budget: bool,
 }
 
-/// Resolve the current period window for a budget cadence as of `as_of`.
-/// Returns `None` for unparseable period strings (delegates the vocabulary
-/// to [`period_to_days`]).
-///
-/// The choice of window shape is a policy call — see the function body for
-/// the convention this codebase commits to. Window endpoints are inclusive
-/// (`[start, end]`), matching how the rest of the codebase uses date ranges
-/// (e.g., `TxnFilter.date_from`/`date_to` and `list_transactions_since`).
+/// The current window for a cadence as of `as_of`, `None` if unparseable ([`period_to_days`]).
+/// The shape is policy (see the body); endpoints are inclusive, as elsewhere in the codebase.
 pub fn current_period_window(period: &str, as_of: NaiveDate) -> Option<(NaiveDate, NaiveDate)> {
     let interval = period_to_days(period)? as u64 - 1;
     match period {
@@ -92,20 +74,8 @@ pub struct DatedPosting {
     pub amount: Decimal,
 }
 
-/// Compute per-budget progress for the current period window. Budgets whose
-/// `period` doesn't parse are skipped (caller is responsible for surfacing
-/// them — typically via a "this budget is misconfigured" UI row).
-///
-/// `postings` should be pre-filtered to expense legs only (other-side legs
-/// like `Assets:*` shouldn't be summed against a category budget) and to
-/// the broadest window the caller is willing to scan — this fn is happy to
-/// receive more than it needs and filters internally on the per-budget
-/// window.
-/// Tauri-boundary entry: reshape `TxnPostingsRow`s into `DatedPosting`s,
-/// filtered to expense-account legs and converted to `base_currency` via
-/// the supplied `Prices` table. Same DbValue → serde_json detour pattern
-/// as `dashboard::bucket_postings_by_month` — keeps the inner pure-fn
-/// testable without constructing DbValues in tests.
+/// Reshape `TxnPostingsRow`s into expense-leg `DatedPosting`s in `base_currency`, through
+/// serde_json as `dashboard::bucket_postings_by_month` does, so the inner function stays pure.
 pub fn collect_expense_postings(
     rows: &[TxnPostingsRow],
     base_currency: &str,
@@ -166,17 +136,9 @@ fn collect_expense_parsed(
     out
 }
 
-/// High-level entry that orchestrates the full progress computation: parses
-/// the journal for `Prices`, flattens postings, and computes per-budget
-/// progress. The Tauri layer just supplies raw inputs — keeps the
-/// `ledger-utils` dep contained to core.
-///
-/// Prefer [`budget_progress_summary_from`] when a `Prices` table is already
-/// to hand. The entire parse here exists to build one — nothing else touches
-/// `parsed` — so a caller holding a cached `Prices` (as the Tauri layer's
-/// `journal_artifacts()` does) is paying a full nom parse of the whole journal
-/// to rebuild a table it is already holding. This entry stays for callers that
-/// genuinely only have the text.
+/// Parses the journal for `Prices`, then computes progress. Prefer
+/// [`budget_progress_summary_from`] with a cached `Prices`; this exists for callers holding only
+/// the text.
 pub fn budget_progress_summary(
     journal_content: &str,
     budgets: &[(String, Decimal, String)],
@@ -283,6 +245,8 @@ pub fn sum_cleared_postings(rows: &[TxnPostingsRow], account: &str, commodity: &
     total
 }
 
+/// Per-budget progress for the current window; unparseable periods are skipped for the caller to
+/// surface. `postings` must be expense legs only, any window wide enough; each budget filters it.
 pub fn compute_budget_progress(
     budgets: &[(String, Decimal, String)],
     postings: &[DatedPosting],
@@ -589,18 +553,9 @@ mod budget_progress_entry_tests {
 
     /// The cached price table must equal the one the full entry parses.
     ///
-    /// This is the whole basis of the `budget_progress` change: the Tauri
-    /// command stopped re-parsing `budget.journal` and now hands
-    /// [`budget_progress_summary_from`] the `Prices` from `journal_artifacts()`.
-    /// That substitution is sound only because the parse in the full entry
-    /// contributes *nothing else* — the two entries share the identical
-    /// `collect_expense_postings` + `compute_budget_progress` tail, so `Prices`
-    /// is the only place they can diverge.
-    ///
-    /// Pin it here rather than end-to-end because `TxnPostingsRow.postings` is a
-    /// surreal `DbValue` and surrealdb-types v3 exposes no clean
-    /// `from_json_value` for FLEXIBLE objects — the same reason
-    /// `dashboard::bucket_postings_by_month` keeps a pure inner fn.
+    /// The two entries share their tail, so `Prices` is the only place they can diverge, which
+    /// makes passing the cached table sound. Pinned here, not end to end, as `DbValue` has no
+    /// clean JSON constructor.
     #[test]
     fn the_cached_price_table_matches_what_the_full_entry_would_parse() {
         // The `00:00:00` is not decoration: ledger-parser's P grammar requires a

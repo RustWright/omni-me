@@ -3,17 +3,9 @@
 //! Why the archive is three events, how fields fold, and why text travels in
 //! the event: `docs/src/archive.md`.
 //!
-//! No model in here. The line is the network, not the event type:
-//! deterministic work that needs nothing remote runs at ingest, and everything
-//! that reaches an endpoint is scheduled and batched elsewhere. So a PDF's text
-//! layer is lifted here, and a statement's fields are parsed here — but reading
-//! a scan needs a model, and its answer arrives later as
-//! `DocumentTextTranscribed`.
-//!
-//! Doing either remotely at ingest would put a round-trip in the path that files
-//! a document: a capture taken offline would fail to archive, and every document
-//! filed before the feature existed would stay unreadable anyway, because
-//! `DocumentArchived` is written once and never revised.
+//! No model here: the line is the network. Local deterministic work (text layers, statement
+//! fields) runs at ingest; a scan's reading arrives later as `DocumentTextTranscribed`, so an
+//! offline capture still archives.
 
 use std::path::Path;
 
@@ -49,13 +41,8 @@ impl TextSource {
 
     /// How far one origin for a document's text outranks another.
     ///
-    /// The counterpart to `DocumentField::rank`, and load-bearing for the same
-    /// reason: `documents_projection::write_text_if_it_outranks` compares this
-    /// before arrival order, so two events racing over one row settle by where
-    /// their text came from rather than by which device's clock ran ahead.
-    ///
-    /// Takes `&str` rather than `Self` because the value it compares against is
-    /// read back out of the projection as a column.
+    /// `DocumentField::rank`'s counterpart, compared before arrival order, so racing events settle
+    /// by provenance, not clock. `&str`, since the projection reads it back as a column.
     pub fn rank(source: &str) -> u8 {
         match source {
             // What the file itself states, above any reading of it.
@@ -158,16 +145,9 @@ pub async fn derive_text(
         // receipt *in the body*, so this is the only text those documents have.
         match crate::mime::parse_eml(bytes) {
             Ok(parsed) => {
-                // The sent date reaches nothing else. `DocumentArchivedPayload`
-                // carries `archived_at`, which is when this filed it, and the
-                // blob holds the raw header nobody reads — so without this line
-                // an archived email has no date any reader or search can use.
-                //
-                // Date only, not the timestamp: this text is a search index and
-                // the anchor a reader copies `document_date` from, and that
-                // wants YYYY-MM-DD. An omitted line when the header is absent or
-                // unparseable is deliberate — a dateless email must stay
-                // dateless rather than gain today's.
+                // The only place an email's sent date becomes searchable. Date only, the shape
+                // `document_date` is copied from; a missing or bad header omits the line, never
+                // inventing today's date.
                 let date = parsed
                     .date
                     .map(|d| format!("Date: {}\n", d.format("%Y-%m-%d")))
@@ -249,16 +229,9 @@ pub struct IngestContext<'a> {
 
 /// Store one document's bytes and build the events that record it.
 ///
-/// Returns them rather than appending them — see the module note.
-///
-/// Fields are derived here, and only the parser's: it is deterministic and needs
-/// nothing remote. Here rather than in the callers, because this is the
-/// one function that knows a document has just been created — `POST
-/// /documents/archive` is the only caller today, and the Tauri app links this
-/// crate directly, so a device capture would be the second. A derivation copied
-/// into each of them drifts apart the first time one is touched.
-/// If a large file ever makes [`document_fields::parser_fields`] block long
-/// enough to matter, move the call off this await — never back into the callers.
+/// Returns events rather than appending them. Parser fields are derived here, the one place a
+/// new document is known, never copied into callers. If [`document_fields::parser_fields`] ever
+/// blocks too long, move it off this await, never back into the callers.
 pub async fn ingest_one(
     ctx: &IngestContext<'_>,
     bytes: &[u8],
@@ -326,22 +299,10 @@ pub struct IngestedEmail {
 
 /// Archive an email as a document, plus one document per real attachment.
 ///
-/// The message is archived WHOLE, raw bytes. Three of the five real
-/// fixtures carry no attachment at all — the receipt *is* the body — so an
-/// attachment-only rule files nothing for them. It is also what makes skipping
-/// the inline parts lossless: those images are still inside this document,
-/// they just do not each get a catalogue entry.
-///
-/// Attachments become documents in their own right — own text, own parser
-/// fields, correctable on their own — linked back by
-/// [`DocumentArchivedPayload::parent_document_id`].
-///
-/// `raw` is the `.eml` as fetched; `parsed` is [`crate::mime::parse_eml`]'s
-/// reading of those same bytes. Both are taken because the caller has already
-/// parsed it to decide whether the message was interesting at all, and parsing
-/// twice to save one argument would be the wrong trade.
-///
-/// Returns events rather than appending them, like every other ingest here.
+/// The message is archived whole, since many receipts are the body itself, which also keeps
+/// inline parts. Attachments become documents of their own, linked by
+/// [`DocumentArchivedPayload::parent_document_id`]. `parsed` is passed in, as the caller parsed
+/// already. Returns events.
 pub async fn ingest_email(
     ctx: &IngestContext<'_>,
     raw: &[u8],

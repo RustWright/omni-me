@@ -1,16 +1,8 @@
 //! Content-addressed blob storage — one directory, files named by sha256.
 //!
-//! What content-addressing does and does not buy here: `docs/src/archive.md`.
-//!
-//! Identical bytes are one blob, never one document. A statement that
-//! arrives by email and the same statement scanned from paper are one file here
-//! and two archive entries, which is why `DocumentArchivedPayload` keys on its
-//! own `document_id` rather than on this hash.
-//!
-//! Blobs are not synced. They live on whichever host wrote them; devices
-//! keep a bounded LRU cache and re-fetch on miss. Anything that must be
-//! searchable on a device that never opened the file has to travel in an event
-//! instead — see `DocumentArchivedPayload::text`.
+//! (`docs/src/archive.md`.) Identical bytes are one blob but can be two documents, so documents
+//! key on `document_id`. Blobs never sync; devices cache and re-fetch, so anything searchable
+//! everywhere travels in an event (`DocumentArchivedPayload::text`).
 
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -65,18 +57,9 @@ pub fn path_for(dir: &Path, hash: &str) -> Result<PathBuf, BlobError> {
 
 /// Delete a blob. `Ok(false)` when it was already gone.
 ///
-/// Never call this without first proving nothing else references the hash.
-/// Blobs are content-addressed and therefore *shared*: a statement that arrived
-/// by email and the same statement scanned from paper are one file here and two
-/// archive entries, and a transaction attachment can point at it as well. See
-/// `queries::blob_reference_counts`, which is the only sanctioned way to decide.
-///
-/// Absent is success, not an error. Purge is a batch over documents that may
-/// share bytes, so the second document to release a hash finds it already gone —
-/// which is the normal path, not a failure to report.
-///
-/// Derived copies go with it, even when the blob was already gone: an encrypted
-/// PDF's preview is its unlocked copy, and a purge that left it reclaimed nothing.
+/// Never call it without proving nothing else references the hash: blobs are shared, and
+/// `queries::blob_reference_counts` is the only way to decide. Already gone is success. Derived
+/// copies (an encrypted PDF's unlocked preview) go too, even then.
 pub async fn delete(dir: &Path, hash: &str) -> Result<bool, BlobError> {
     let path = path_for(dir, hash)?;
     let deleted = remove_if_present(&path).await?;

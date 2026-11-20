@@ -1,26 +1,8 @@
 //! Account-balance aggregation for the account-list screen.
 //!
-//! Pulls together three sources:
-//! - The per-device journal file (source of truth for postings + `P`
-//!   directives) — fed through [`ledger::balances`] for per-(account,
-//!   commodity) quantities.
-//! - The `accounts` projection table — for declared-account metadata
-//!   (`display_name`, `hidden`, `is_liquid`).
-//! - `ledger-utils::Prices` over the same parsed journal — for converting
-//!   foreign-commodity balances into the user's base currency.
-//!
-//! The journal's `P` directives come from two converging paths:
-//! - Frankfurter daily-rate fetcher writes CAD/USD/EUR.
-//! - Auto-import batch commit writes manual AED rates entered at review
-//!   time.
-//!
-//! Both paths land as the same hledger `P` directive shape, so this module
-//! consumes them uniformly through `Prices::insert_from`.
-//!
-//! Account-set policy is the caller-supplied roster passed to
-//! [`account_summaries`] — a list of account names to surface. The public
-//! engine defaults to an empty roster; the user's real roster is delivered at
-//! the client via the settings-file rail (`tauri-app` `ROSTER_FILE`).
+//! Balances from the journal file ([`ledger::balances`]), metadata from the `accounts` table, and
+//! base-currency conversion from its `P` directives (daily fetched rates and manual review-time
+//! rates, read alike). Which accounts show is the caller's roster, empty in the public engine.
 
 use std::collections::BTreeMap;
 
@@ -63,24 +45,12 @@ pub struct AccountSummary {
     pub is_liquid: bool,
 }
 
-// Account-set policy is now the `roster` argument to `account_summaries` (a
-// caller-supplied list of account names). Drop-by-default still holds: any
-// account not named in the roster is filtered out, so auto-import-discovered
-// accounts never appear silently. The public engine passes an empty roster;
-// the user's real roster lives in the private overlay and is delivered to the
-// client via the settings-file rail (`tauri-app` ROSTER_FILE). `Unmatched`
-// (the one-word clearing account from project_unmatched_account_pattern.md)
-// surfaces only when the roster includes it.
+// Drop by default: accounts outside the roster never show, so imported ones cannot appear
+// silently. The real roster arrives through the client's `ROSTER_FILE`; `Unmatched` shows only
+// when listed.
 
-/// Compute account summaries from journal content + declared-account
-/// metadata. Pure function — no file I/O, no DB access — so it's
-/// straightforward to unit-test against fixture strings.
-///
-/// `as_of` is the date used for FX conversion (latest rate ≤ that date wins
-/// per `Prices::get_rate` semantics). Callers typically pass "today".
-///
-/// `roster` is the drop-by-default allowlist of account names to surface; an
-/// empty roster yields an empty list (the public engine's default).
+/// Pure. `as_of` picks the latest rate on or before it; `roster` is the allowlist, so empty
+/// yields nothing.
 pub fn account_summaries(
     journal_content: &str,
     declared: &[AccountRow],
@@ -209,15 +179,8 @@ pub fn account_type(name: &str) -> &str {
     name.split_once(':').map_or(name, |(top, _)| top)
 }
 
-/// Accounts that hold real money and belong on the Accounts screen / in net
-/// worth: `Assets` and `Liabilities`, plus the single `Unmatched` clearing
-/// account (`project_unmatched_account_pattern`). Excludes `Expenses` /
-/// `Income` / `Equity`, which are flow/category accounts, not balances.
-///
-/// Public because `commands::budget` filters the legacy roster file with the
-/// same rule. It kept a private copy of this line until 2026-08-28; had the two
-/// drifted, the Accounts screen and net worth would have disagreed about which
-/// accounts count, in opposite directions and with nothing to flag it.
+/// `Assets`, `Liabilities` and `Unmatched`: what the Accounts screen and net worth count. Public
+/// so `commands::budget` shares the rule rather than a copy that could drift.
 pub fn is_balance_bearing(name: &str) -> bool {
     matches!(account_type(name), "Assets" | "Liabilities") || is_unmatched(name)
 }
@@ -235,16 +198,8 @@ fn insert_with_ancestors(set: &mut std::collections::BTreeSet<String>, name: &st
     }
 }
 
-/// Derive the Accounts-screen roster automatically (3.9 "auto-include by
-/// type"). Replaces the hand-maintained allowlist with: every balance-bearing
-/// account *seen in the journal*, unioned with declared balance-bearing
-/// accounts (so a just-declared, zero-balance account still shows), minus any
-/// the user has hidden. The result is the same drop-by-default allowlist that
-/// [`account_summaries`] already consumes — so its signature is unchanged.
-///
-/// Tolerant of a malformed journal: an unparseable file yields no *seen*
-/// accounts (declared ones still surface) and [`account_summaries`] reports the
-/// real parse error.
+/// The roster, derived: balance-bearing accounts seen in the journal plus declared ones, minus
+/// hidden. An unparseable journal contributes none seen; [`account_summaries`] reports the error.
 pub fn auto_roster(
     journal_content: &str,
     declared: &[AccountRow],
@@ -319,14 +274,9 @@ pub struct AccountTagBreakdown {
     pub total_in_base: Option<Decimal>,
 }
 
-/// Break one account's holdings down by a posting tag (`tag_key`, e.g.
-/// `"institution"`). Sums the account's postings per (tag value, commodity) via
-/// [`crate::query::group_account_by_tag`], then values each commodity in
-/// `base_currency` using the journal's `P` directives — the same `Prices` path
-/// [`account_summaries`] uses, so the slices reconcile to the account's own
-/// base total. Postings come from the caller's projection-derived `txns`; the
-/// journal is read only for FX rates, so an empty/rate-free journal still
-/// returns native quantities (with `value_in_base = None`).
+/// One account by posting tag ([`crate::query::group_account_by_tag`]), valued through the same
+/// `Prices` as [`account_summaries`] so slices reconcile. The journal supplies rates only;
+/// without them `value_in_base` is `None`.
 pub fn account_tag_breakdown(
     journal_content: &str,
     txns: &[QueryTxn],

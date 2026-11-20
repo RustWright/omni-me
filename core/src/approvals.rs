@@ -1,21 +1,8 @@
 //! What is waiting on the user, and which screen it is waiting on.
 //!
-//! One summary with two consumers: the nav badges, so a queue is visible from
-//! wherever the user happens to be, and the assistant's reminder row, so a
-//! stretch spent entirely in the assistant window still surfaces them. Both
-//! render *these* numbers. A second count computed in the frontend is a second
-//! thing that can be wrong, and the one that disagrees is the one nobody notices.
-//!
-//! This module counts; it never decides where a thing is reviewed. That is
-//! [`inbox::DOMAIN_REVIEWED`]'s job, read here through
-//! [`inbox::is_domain_reviewed`]. A second copy of that routing would be free to
-//! drift, and what it produces is a badge pointing at a screen that does not list
-//! the item — the user taps it, sees nothing, and learns to ignore the badge.
-//!
-//! No deep-link protocol, deliberately. A [`Feature`] *is* the destination:
-//! the frontend's `Tab::feature()` already maps every tab to the feature that owns
-//! it, so naming the feature names the screen. A link type invented here would be
-//! a second routing table serving one caller.
+//! One summary for the nav badges and the assistant's reminder row, so they never disagree. It
+//! counts; routing is [`inbox::DOMAIN_REVIEWED`]'s, via [`inbox::is_domain_reviewed`], never a
+//! copy. A [`Feature`] is the destination (`Tab::feature()` maps it), so no deep-link type.
 
 use serde::Serialize;
 
@@ -48,12 +35,8 @@ pub enum ReviewedAt {
 impl ReviewedAt {
     /// The name this travels under.
     ///
-    /// A feature crosses as its config key (`feature.documents`), which is
-    /// the string both sides already agree on — `ConfigKey`'s `Display` here and
-    /// `types::Feature::key()` in the frontend. Not the Rust variant name: that
-    /// would be a *second* wire spelling for a type that already has one, and the
-    /// frontend mirror's own test comment records that a feature-name mismatch
-    /// fails silently, because an unrecognised feature falls back to *on*.
+    /// Its config key (`feature.documents`), the spelling both sides already share, never the
+    /// variant name: a mismatch fails silently, since an unknown feature falls back to on.
     pub fn wire(self) -> String {
         match self {
             ReviewedAt::Feature(feature) => feature.key().to_string(),
@@ -82,18 +65,9 @@ pub struct PendingApprovals {
 /// Everything waiting on the user right now, by surface. Surfaces with nothing
 /// waiting are absent rather than zero, so a caller renders what it is given.
 ///
-/// Takes the boot feature snapshot, NOT a live `ResolvedConfig` — the same
-/// set `EventWriter::features()` hands the command guards. Tabs are decided at
-/// startup, so a badge computed from the live config would disagree with what is
-/// on screen for the whole window between a toggle and the next relaunch: a count
-/// on a tab that is no longer rendered, or silence on one that is. Sharing the
-/// snapshot makes that disagreement impossible rather than merely unlikely. Same
-/// reasoning as `ConfigKey::applies_immediately` being `false` for every feature.
-///
-/// A disabled feature contributes nothing, because its screen is not
-/// rendered and a badge for a tab that does not exist is unreachable. The
-/// assistant inbox follows the same rule through [`Feature::Llm`], which owns the
-/// assistant tab.
+/// Takes the boot feature snapshot (`EventWriter::features()`), never live config, so badges
+/// match the tabs boot drew. A disabled feature, the assistant's via [`Feature::Llm`] included,
+/// contributes nothing.
 pub async fn summary(
     db: &Database,
     enabled: &BTreeSet<Feature>,
@@ -289,11 +263,7 @@ mod tests {
     /// Every feature this module can name must have a screen that lists the
     /// thing being counted.
     ///
-    /// Spelled out rather than derived, for the reason
-    /// `nothing_is_routed_away_from_the_inbox_without_a_screen_to_route_it_to`
-    /// gives: a list derived from the code under test agrees with it by
-    /// construction and asserts nothing. This is the independent second
-    /// statement — "and somewhere shows it".
+    /// Spelled out, not derived: a list derived from the code under test asserts nothing.
     #[test]
     fn every_badgeable_feature_has_a_screen_that_lists_its_queue() {
         const HAS_A_REVIEW_SCREEN: &[Feature] = &[Feature::Finances, Feature::Documents];

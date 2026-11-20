@@ -1,18 +1,8 @@
 //! Account-name + posting helpers for the budget feature.
 //!
-//! Three concerns live here:
-//! - A2 business/personal separation — `BUSINESS_HIERARCHY_PREFIX` const +
-//!   `strip_business_prefix` helper for the journal-import rewriter.
-//! - `Unmatched` placeholder account — top-level clearing account used by
-//!   auto-import sources that lack the other half of a transaction.
-//! - `Posting` validation — commodity required, FX rate's `quote_commodity`
-//!   must equal the configured base currency when present.
-//!
-//! The A2 decision uses a posting tag (`type:business`) rather than an
-//! account-hierarchy prefix — see `MEMORY.md::project_a2_business_hierarchy_finding.md`.
-//! The existing journal still encodes business via `Expenses:Business:*`;
-//! the import rewriter walks parsed postings, strips that segment, and
-//! emits the tag.
+//! Business is a `type:business` posting tag, not an account segment: the import rewriter strips
+//! `Expenses:Business:*` and emits the tag (`strip_business_prefix`). Also the `Unmatched`
+//! clearing account and posting validation against the base currency.
 
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
@@ -21,14 +11,9 @@ use crate::events::{FxRate, Posting, Tag};
 
 pub const BUSINESS_HIERARCHY_PREFIX: &str = "Expenses:Business:";
 
-/// Top-level clearing account for auto-imported transactions where only one
-/// side is known (e.g., a Northwind withdrawal where the destination Globepay deposit
-/// hasn't been imported yet). Steady-state invariant: `Unmatched.balance == 0`
-/// — non-zero balance signals reconciliation pending OR a hidden fee that
-/// needs a balancing posting (wire fee, FX spread).
-///
-/// Deliberately has no `Assets:` / `Expenses:` prefix — it isn't either; it's
-/// a pending-reconciliation marker.
+/// Clearing account for the unknown side of an imported transaction. Steady state is zero; a
+/// balance means reconciliation pending or a hidden fee. No `Assets:`/`Expenses:` prefix: it is
+/// a marker, neither.
 pub const UNMATCHED_ACCOUNT: &str = "Unmatched";
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -64,14 +49,8 @@ pub fn strip_business_prefix(account: &str) -> (String, bool) {
 
 /// Validate a posting against the configured base currency.
 ///
-/// Rules:
-/// - `commodity` must be non-empty (serde enforces presence; this enforces
-///   non-trivial value — `""` is a frontend-side bug we want surfaced at the
-///   command layer).
-/// - If `posting.commodity == base`, `fx_rate` must be `None` — converting
-///   CAD to CAD is meaningless and almost always a frontend mistake.
-/// - If `posting.commodity != base`, `fx_rate.quote_commodity` must equal
-///   `base` when present (the rate is the conversion *into* base).
+/// `commodity` must be non-empty; a base-currency posting carries no `fx_rate`; any other
+/// posting's rate, when present, must quote into `base`.
 pub fn validate_posting(p: &Posting, base: &str) -> Result<(), PostingError> {
     if p.commodity.is_empty() {
         return Err(PostingError::EmptyCommodity);
@@ -122,14 +101,8 @@ pub fn unmatched_posting(amount: Decimal, commodity: &str) -> Posting {
 
 /// Build the `institution` / `product` posting tags.
 ///
-/// One helper rather than five hand-rolled `Tag::KeyValue` literals, because
-/// the tag *spelling* is load-bearing: under the MECE grammar
-/// (`Assets:<Registration>:<Commodity>`) one balance-bearing account pools
-/// every institution's money, and these tags are the only thing that can
-/// separate it again. A source that spells the key differently doesn't fail —
-/// it silently drops out of the per-institution drill-down.
-///
-/// Empty / whitespace-only values are skipped rather than emitted blank.
+/// One helper because the spelling is load-bearing: these tags alone separate the institutions
+/// an account pools, and a misspelt key silently drops out of the drill-down. Blanks are skipped.
 pub fn institution_tags(institution: Option<&str>, product: Option<&str>) -> Vec<Tag> {
     [("institution", institution), ("product", product)]
         .into_iter()
@@ -157,20 +130,9 @@ pub struct CounterLegContext<'a> {
 
 /// The seam for deciding an auto-imported transaction's balancing leg.
 ///
-/// Three tiers eventually fill that leg, and this trait is only the second:
-///
-/// 1. Receipts pair *asynchronously* — a receipt draft carries its own
-///    `Unmatched` leg that cancels against the bank row's, and
-///    `reconciliation::find_match_candidates` merges them. Nothing here.
-/// 2. Determinate at import — fees, interest, transfers between the user's
-///    own accounts. No receipt exists or ever will, and the account is knowable
-///    from the transaction itself. That is what an implementation of this trait
-///    decides.
-/// 3. The no-receipt residue — open, and downstream of the LLM work.
-///
-/// No implementation ships today; every source passes `None` and every
-/// balancing leg is `Unmatched`, exactly as before the trait existed. It is
-/// here so tier 2 lands in one place instead of reopening five emitters.
+/// Tier 2 of three: receipts pair later through `find_match_candidates` (1); this decides legs
+/// knowable at import, like fees and own transfers (2); the residue is open (3). No implementation
+/// ships yet; it exists so tier 2 lands in one place.
 pub trait CounterLeg: Send + Sync {
     /// Account for the balancing leg, or `None` to leave it `Unmatched`.
     fn resolve(&self, ctx: &CounterLegContext<'_>) -> Option<String>;
@@ -202,18 +164,9 @@ pub fn make_counter_leg(
 
 /// Configured account names that no real posting uses.
 ///
-/// The failure this exists to catch is silent: an account name is just a
-/// string, so a stale one stays well-formed and simply matches nothing. It
-/// surfaces as an empty row on a screen, or as a source importing into a name
-/// no report reads — never as an error. The pattern that produces it is the
-/// grammar move: when institutions left the account path for posting tags,
-/// every configured `Assets:<Institution>:<Commodity>` name kept parsing and
-/// stopped matching, because the real history had become
-/// `Assets:<Registration>:<Commodity>` plus an `institution:` tag.
-///
-/// Pure and set-based so the caller decides what a miss means — a boot-time
-/// `warn!` for a roster the user can fix, a hard error for a source about to
-/// import into nowhere.
+/// A stale name stays well-formed and silently matches nothing (as every
+/// `Assets:<Institution>:...` did after institutions moved to tags). Pure, so the caller decides:
+/// a boot `warn!`, or a hard error for a source about to import into nowhere.
 pub fn unknown_accounts<'a>(
     configured: impl IntoIterator<Item = &'a str>,
     known: &std::collections::HashSet<&str>,

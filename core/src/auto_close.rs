@@ -1,13 +1,7 @@
 //! Auto-close scheduler for stale, complete journal entries.
 //!
-//! A journal entry is eligible to auto-close when:
-//!   - `complete = true` (all three manual properties are filled), AND
-//!   - `closed = false` (not already closed), AND
-//!   - `date < today` (the day has passed)
-//!
-//! The "fill next morning" case is covered because `complete` is recomputed
-//! on every `JournalEntryUpdated`, so a user filling properties after midnight
-//! still triggers close on the *next* tick.
+//! Closes entries that are complete, not closed, and dated before today. `complete` is
+//! recomputed on every update, so filling properties after midnight closes on the next tick.
 
 use chrono::{NaiveDate, Utc};
 
@@ -18,11 +12,7 @@ use crate::events::{EventType, EventWriter, NewEvent};
 /// `JournalEntryClosed { trigger: Auto }` for each. Returns the number of
 /// entries closed so the caller can log / surface it.
 ///
-/// Writes through [`EventWriter`] rather than a bare store: this used to take
-/// the store, the projection runner and the device id as three separate
-/// parameters, which made it invisible to the client's "nothing appends
-/// directly" scan and left the feature guard to a hand-written check at the
-/// scheduler's spawn site.
+/// Through [`EventWriter`], so the feature guard and the append scan cover it.
 pub async fn auto_close_stale_journals(
     db: &Database,
     writer: &EventWriter,
@@ -38,14 +28,8 @@ pub async fn auto_close_stale_journals(
         .await
         .map_err(AutoCloseError::Db)?;
 
-    // TOCTOU note: between this snapshot and each append below, a user could
-    // manually close a candidate journal — the audit log would then contain
-    // both `trigger: "manual"` and `trigger: "auto"` events for the same
-    // journal. Accepted as-is: realistic likelihood is near zero (midnight
-    // scheduler + active user clicking close in the same millisecond), the
-    // projection's observable state (`closed = true`) is idempotent either
-    // way, and journals can already be closed→reopened→closed legitimately
-    // so the projection cannot reject duplicate close events outright.
+    // TOCTOU, accepted: a manual close racing this logs both triggers, but `closed = true` is
+    // idempotent, and close-reopen-close is legitimate, so duplicates cannot be refused.
     let mut closed = 0usize;
     for entry in candidates {
         writer

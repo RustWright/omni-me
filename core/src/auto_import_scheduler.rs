@@ -1,25 +1,8 @@
-//! Background scheduler for auto-import sources (Northwind, Globepay, IMAP).
-//!
-//! One tokio task per source — independent intervals, independent backoff.
-//! Mirrors the autonomous-tick pattern from `auto_close_scheduler` but lives
-//! in core (not tauri-app) because auto-import runs server-side, not on the
-//! Tauri client (per `feedback_llm_server_side.md`).
-//!
-//! Per-tick contract:
-//! - `pull()` returns `Ok(ImportSummary)` → reset backoff, sleep for the
-//!   configured interval, then tick again.
-//! - `pull()` returns `Err(ImportError::NeedsReauth(_))` → halt this source's
-//!   loop (circuit-breaker). The credential is expired and only the user can
-//!   fix it, so re-`pull()`-ing on a schedule would just re-attempt login on
-//!   every tick — for a bank source that means repeated real login attempts
-//!   (lockout / fraud-flag risk). The source goes dormant in `NeedsReauth`; a
-//!   successful `Reconnect` (`SourceRegistry::reauth`) re-arms the loop.
-//! - `pull()` returns any other `Err(...)` → sleep for the current backoff
-//!   (1s start, doubling, capped at 1h), then retry. Transient upstream blips
-//!   are worth retrying; an expired credential is not.
-//!
-//! Real sources plug in by impl-ing `AutoImportSource`. `NullSource` exists
-//! for tests + as a placeholder when a real source isn't yet configured.
+//! One task per source, with its own interval and backoff, server-side. Per tick:
+//! - `Ok`: reset backoff, sleep the interval;
+//! - `NeedsReauth`: halt (repeated real bank logins risk lockout) until `SourceRegistry::reauth`;
+//! - any other `Err`: back off from 1 s, doubling to 1 h, and retry.
+//! `NullSource` is for tests and unconfigured placeholders.
 
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
@@ -37,11 +20,8 @@ use crate::jobs::spend::Spend;
 /// land in exactly one of these, which is what makes a silent drop impossible
 /// to write (see [`ImportTally`]).
 ///
-/// The variants are separated by what the user would have to do about it,
-/// not by where in the code the row was discarded — `Deduped` and
-/// `OutOfWindow` are both "working as intended", `Unmapped` is a config fix,
-/// `Failed` is a bug or bad upstream data. Blurring them is what let a
-/// completely unconfigured source read as "up to date" for months.
+/// Split by what the user must do (`Deduped`/`OutOfWindow` nothing, `Unmapped` config, `Failed`
+/// a bug), never by code location; blurred, an unconfigured source read as up to date for months.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DropReason {
@@ -79,21 +59,9 @@ pub struct DroppedRow {
 
 /// What a source did with every row it fetched.
 ///
-/// The invariant this type exists to enforce:
-///
-/// ```text
-/// fetched == appended + deduped + out_of_window + ignored + unmapped + failed
-/// ```
-///
-/// Before this, `ImportSummary` was a single `events_appended: usize`. A source
-/// that fetched 295 rows and mapped none of them returned `0` — bit-identical
-/// to a source that was simply up to date. That ambiguity is the root cause
-/// behind every incident recorded in the overlay's `ACCOUNT_MAPPING.md`, so the
-/// fix is to remove the *ability* to under-report rather than to audit each
-/// source for the discipline to self-report.
-///
-/// Construct via [`ImportTally`] — the identity is checked at `finish()`, so a
-/// row that is never classified fails loudly instead of disappearing.
+/// Enforces `fetched == appended + deduped + out_of_window + ignored + unmapped + failed`, so a
+/// source cannot report zero for rows it dropped. Build it through [`ImportTally`], whose
+/// `finish()` fails an unclassified row loudly.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ImportSummary {
     /// Rows the upstream actually handed us this tick. Recorded independently
@@ -226,21 +194,9 @@ impl ImportTally {
 
     /// Check the identity and produce the summary.
     ///
-    /// Two distinct failures, both of which used to be silent successes:
-    ///
-    /// - `Unaccounted` — the classifications don't sum to `fetched`. This is
-    ///   an engine bug (a code path that discards a row without saying so), and
-    ///   it is worth failing the tick over: the alternative is shipping a count
-    ///   the user is being asked to trust.
-    /// - `NothingMapped` — rows were fetched and *every one* of them lacked
-    ///   an account mapping. Always a misconfiguration, never a legitimate
-    ///   quiet tick, so it must not be reported as success. Previously this
-    ///   guard existed in one source's helper binary only; hoisting it here
-    ///   gives it to every source, per the fix-the-class rule.
-    ///
-    /// A *partial* unmapped count is not an error — real data is still flowing
-    /// and halting would make things worse — but it does force the source out
-    /// of `Healthy` (see [`classify_source_health`]).
+    /// Fails on `Unaccounted` (an engine bug dropping rows silently) and `NothingMapped` (every row
+    /// unmapped, always misconfiguration). Partly unmapped is not an error, since data still
+    /// flows, but leaves `Healthy` ([`classify_source_health`]).
     pub fn finish(self) -> Result<ImportSummary, ImportError> {
         let mut deduped = 0;
         let mut out_of_window = 0;
@@ -321,15 +277,9 @@ pub enum ImportError {
     NothingMapped { fetched: usize, ids: Vec<String> },
 }
 
-/// Whether a source can refresh an expired credential interactively, and — once
-/// it can't import — whether it's waiting on the user. Serialized into
-/// `GET /auto_import/status` so the client can render a "Reconnect {source}"
-/// affordance. Tagged `kind` to match `TickOutcome`'s wire shape.
-///
-/// `AwaitingOtp` (the provider-sends-a-code two-step) is intentionally absent:
-/// the one real consumer authenticates with TOTP, which collapses re-auth to a
-/// single `submit` (see `SOURCE_REAUTH_DESIGN.md`). Adding it later is a
-/// non-breaking enum extension if an SMS/email-2FA source ever appears.
+/// Whether a source can re-auth interactively and is waiting on the user, for the client's
+/// "Reconnect" control. No `AwaitingOtp`: TOTP makes re-auth one `submit`
+/// (`SOURCE_REAUTH_DESIGN.md`); add it if an SMS or email 2FA source appears.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, Default)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AuthState {
@@ -427,14 +377,9 @@ pub trait AutoImportSource: Send + Sync {
         ReauthOutcome::NotSupported
     }
 
-    /// Forget how far this source has read, so its next pull starts from the
-    /// beginning, or from the first message on or after `since`. Default
-    /// `NotSupported`: most sources are handed their material and keep no place
-    /// in a stream.
-    ///
-    /// This is not the inverse of a wipe. What returns is re-fetched, not
-    /// restored, so whatever the source archives on the way past it archives a
-    /// second time. `docs/src/features.md` § Three things this does not cover.
+    /// Rewind to the start, or to `since`; `NotSupported` by default. Not a wipe's inverse: what
+    /// returns is re-fetched and archived again (`docs/src/features.md` § "Three things this
+    /// does not cover").
     async fn reset_cursor(
         &self,
         _since: Option<NaiveDate>,
@@ -717,16 +662,9 @@ impl SourceRegistry {
         );
     }
 
-    /// Register a source, spawn its perpetual scheduler task, and store the task
-    /// handle so the source can be torn down live via [`remove`]. The effective
-    /// interval is the source's own [`AutoImportSource::poll_interval`] if it
-    /// declares one, else `default_interval`.
-    ///
-    /// Replaces cleanly: any prior source of the same name is aborted + dropped
-    /// first, so a live re-add (an edit) never leaks a detached task still
-    /// polling the old config. The entry is inserted *before* the task spawns so
-    /// the first `record_tick` lookup finds it; the handle is written back in a
-    /// second lock acquisition (the `task` field isn't read during ticks).
+    /// Register and spawn a source, keeping the handle for [`remove`]. A same-name source is
+    /// aborted first, so an edit never leaks a task polling old config. The entry precedes the
+    /// spawn, so the first `record_tick` finds it.
     pub async fn spawn_one(&self, source: Arc<dyn AutoImportSource>, default_interval: Duration) {
         let source: Arc<dyn AutoImportSource> = Arc::new(OneAtATime {
             inner: source,
@@ -775,18 +713,9 @@ impl SourceRegistry {
         true
     }
 
-    /// Pause a source live: abort its scheduler task but keep its registry
-    /// entry (and thus its config). Returns whether a source by that name was
-    /// registered. This is the runtime off-switch (#367) — for a compiled
-    /// overlay bank source it's the only way to stop it from the app, and for a
-    /// config source it stops polling without touching `sources.toml`.
-    ///
-    /// The handle is dropped (set to `None`) rather than kept-aborted on
-    /// purpose: `rearm_if_dormant` treats a *finished* handle as "resume me",
-    /// so leaving an aborted handle here would let a later Reconnect silently
-    /// un-pause the source. `None` means "no loop, and none wanted" — a
-    /// successful reauth clears `auth_state` but won't spawn a loop for a paused
-    /// source. [`resume`] is the only path back to running.
+    /// Abort the task, keep the entry and config; the only app off-switch for overlay sources.
+    /// The handle becomes `None`, never kept aborted: `rearm_if_dormant` resumes a finished handle,
+    /// so a Reconnect would un-pause it. Only [`resume`] restarts.
     pub async fn pause(&self, name: &str) -> bool {
         let mut guard = self.inner.write().await;
         match guard.get_mut(name) {
@@ -1058,15 +987,8 @@ pub enum SourceHealth {
 
 /// Classify a source's health from its current status snapshot.
 ///
-/// Policy: the UI uses this to render the dot/badge next to each source
-/// (green/yellow/red/grey). The classification deliberately ignores
-/// `appended` — zero events is a legitimate Healthy outcome (no new data
-/// upstream) — but it does not ignore `lost()`. A tick that succeeded
-/// while discarding rows for want of a mapping is precisely the state that
-/// previously rendered green for months, so it gets its own badge.
-///
-/// `now` is injected so tests can pin time without freezing the clock; in
-/// production callers pass `Utc::now()`.
+/// The source's badge colour. Zero `appended` is healthy, but `lost()` is not: a tick dropping
+/// unmapped rows once showed green for months. `now` is injected for tests.
 pub fn classify_source_health(status: &SourceStatus, now: DateTime<Utc>) -> SourceHealth {
     // Stale cutoff: after 3× the configured interval without a completed
     // tick, a previously-successful source flips Healthy → Stale. Survives

@@ -123,16 +123,9 @@ pub const ACCENT_VALUES: &[&str] = &["blue", "violet", "teal", "green", "amber",
 
 /// The embedding models `assistant.embed_model` accepts, smallest first.
 ///
-/// This list lives here, not beside the code that loads them, because that
-/// code is behind the `embeddings` feature and this file compiles everywhere — the
-/// settings screen has to offer the choices on an Android build that can never run
-/// one. `assistant::embedding` holds a test asserting every name here resolves, so
-/// the two halves cannot drift apart silently.
-///
-/// Changing this key invalidates every stored vector: two models of the same
-/// width still produce unrelated vector spaces. The sweep stores the model name
-/// alongside each row and re-embeds on a mismatch, so a change costs a full re-index
-/// rather than wrong answers — but it does cost that.
+/// Here, not with the loader behind `embeddings`, so every build's settings can list them;
+/// `assistant::embedding` tests each resolves. Changing the key costs a full re-index (rows record
+/// their model and re-embed on mismatch), never wrong answers.
 pub const EMBED_MODEL_VALUES: &[&str] = &[
     "bge-small-en-v1.5-q",
     "bge-small-en-v1.5",

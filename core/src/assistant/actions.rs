@@ -367,10 +367,10 @@ const NOTE_APPEND: ActionType = ActionType {
 /// Changing text in the middle of a note the user already has.
 ///
 /// Under ruling 9 (RULINGS.md) the model sends only the region it touched, and the system
-/// splices it at approval, so nothing that could reword a paragraph sees the untouched ones. The anchor is
-/// text, since an offset into a rewritten body points elsewhere. Never move resolution into the
-/// projection: devices fold in different orders, so an anchor could match on one and miss on
-/// another, forever. The log holds the outcome. Last-write-wins is inherited, not added.
+/// splices it at approval, so nothing that could reword a paragraph sees the untouched ones.
+/// The anchor is text, since an offset into a rewritten body points elsewhere. Never move
+/// resolution into the projection: devices fold in different orders, so an anchor could match
+/// on one and miss on another, forever. The log holds the outcome. Last-write-wins is inherited.
 const NOTE_REVISE: ActionType = ActionType {
     name: "note.revise",
     kind: ActionKind::NoteRevise,
