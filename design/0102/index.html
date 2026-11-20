@@ -126,14 +126,16 @@ ul.plain li.done span:first-child { text-decoration: line-through; color: rgb(va
 .hz span { font-size: 11px; font-weight: 400; color: rgb(var(--muted)); }
 .ask { font-size: 13px; display: flex; justify-content: space-between; padding: 10px 12px; border-radius: 8px; background: rgb(var(--accent) / .1); color: rgb(var(--text)); }
 .ask .link { font-weight: 600; }
+.timer { display: flex; align-items: center; gap: 6px; font-size: 12px; color: rgb(var(--success)); margin-top: 4px; }
+.timer .dot { width: 8px; height: 8px; border-radius: 50%; background: rgb(var(--success)); }
 </style>
 </head>
 <body>
 <div class="page">
 <h1>[0102] Planning and people: rendered for reaction</h1>
 <p class="lede">Phone width, dark theme, the app's own colour tokens. All names and data are made up.
-Sections 1 to 3 are one design each, to react to and change. Section 4 is the open fork from ruling 100,
-rendered as three candidates.</p>
+Sections 1 to 3 are one design each, to react to and change. Section 4 was the open fork from ruling 100,
+ruled C in the session (110).</p>
 
 <!-- ═════════════════════════ 1. PLAN CARD ═════════════════════════ -->
 <section class="topic">
@@ -142,21 +144,24 @@ rendered as three candidates.</p>
 It is changed by saying so, and a re-plan replaces the old card.</p>
 <div class="row">
 <div class="col">
-<div class="label">First proposal, 07:30</div>
+<div class="label">First proposal, drafted 09:42 when you ticked Brilliant</div>
 <div class="phone">
   <div class="bar"><div class="menu"></div><div class="title">Assistant</div><div class="right">Thu 19 Nov</div></div>
   <div class="screen">
     <div class="msg-a">Morning. Here's a plan for today. It's tight: the reference email is the thing I'd protect.</div>
     <div class="card">
-      <div class="kicker"><b>Plan for Thursday</b><span>expires at noon</span></div>
-      <div class="fit">About 6 h 20 of work in 5 h 45 free. Your estimates usually run 1.3× long.</div>
+      <div class="kicker"><b>Plan for Thursday</b><span>until 11:00</span></div>
+      <div class="xs muted">From 11:00 (up 09:40, morning routine about 1 h 20) to 22:30 (bed 23:30, less dinner and reflection)</div>
+      <div class="xs muted">All day: Mum's birthday</div>
+      <div class="fit">About 5 h 50 of work in 5 h 15 free. Your blocks usually run 1.3× long, breaks included.</div>
       <div class="sec">Blocks</div>
       <div class="agenda">
-        <div class="slot"><div class="t">08:30–10:00</div><div class="blk">Thesis ch. 2: methods draft<div class="sub">est 1 h 30</div></div></div>
-        <div class="slot"><div class="t">10:00–11:00</div><div class="blk cal">Lab meeting<div class="sub">calendar</div></div></div>
-        <div class="slot"><div class="t">11:15–12:45</div><div class="blk">omni-me: reminder spike<div class="sub">est 1 h · project task, sized S</div></div></div>
-        <div class="slot"><div class="t">13:00–13:30</div><div class="blk cal">Call with Dr. Lee<div class="sub">calendar</div></div></div>
-        <div class="slot"><div class="t">14:00–15:00</div><div class="blk">Write the masters reference request<div class="sub">est 45 min · due Mon</div></div></div>
+        <div class="slot"><div class="t">11:00–12:10</div><div class="blk">Thesis ch. 2: methods draft<div class="sub">est 1 h · home</div></div></div>
+        <div class="slot"><div class="t">12:15–13:00</div><div class="blk cal">Bus to campus<div class="sub">travel, from your estimate</div></div></div>
+        <div class="slot"><div class="t">13:00–14:00</div><div class="blk cal">Lab meeting<div class="sub">calendar · campus</div></div></div>
+        <div class="slot"><div class="t">14:15–15:45</div><div class="blk">omni-me: reminder spike<div class="sub">est 1 h · project task, sized S</div></div></div>
+        <div class="slot"><div class="t">16:00–16:30</div><div class="blk cal">Call with Dr. Lee<div class="sub">calendar</div></div></div>
+        <div class="slot"><div class="t">16:45–17:45</div><div class="blk">Write the masters reference request<div class="sub">est 45 min · due Mon</div></div></div>
       </div>
       <div class="sec">Today, any time</div>
       <ul class="plain">
@@ -170,7 +175,7 @@ It is changed by saying so, and a re-plan replaces the old card.</p>
         <li><span class="due">Hydro bill, $84.20</span><span class="est">due Fri · penalty from 28 Nov</span></li>
         <li><span>Masters reference request</span><span class="est">due Mon 23</span></li>
       </ul>
-      <div class="xs muted">Routines take 1 h 15 today (gym, reading), already counted.</div>
+      <div class="xs muted">Morning and evening routines sit outside the day. No other routine falls in it today.</div>
       <div class="chips"><span class="xs muted">From:</span><span class="chip">Google Calendar</span><span class="chip">6 tasks</span><span class="chip">2 routines</span><span class="chip">your estimate history</span></div>
       <div class="btns"><span class="btn primary">Accept plan</span><span class="btn ghost">Skip today</span><span class="xs muted">or tell me what to change</span></div>
     </div>
@@ -180,23 +185,24 @@ It is changed by saying so, and a re-plan replaces the old card.</p>
 </div>
 
 <div class="col">
-<div class="label">After "change it": the re-plan, 08:12</div>
+<div class="label">After "change it": the re-plan, 10:05</div>
 <div class="phone">
   <div class="bar"><div class="menu"></div><div class="title">Assistant</div><div class="right">Thu 19 Nov</div></div>
   <div class="screen">
-    <div class="collapsed"><span>Plan for Thursday, 07:30</span><span>replaced by 08:12</span></div>
+    <div class="collapsed"><span>Plan for Thursday, 09:42</span><span>replaced by 10:05</span></div>
     <div class="msg-u">Swap them: omni-me first, I think better on thesis after the lab meeting. And drop the library books.</div>
     <div class="msg-a">Done. Swapped, and the books roll to tomorrow.</div>
     <div class="card">
-      <div class="kicker"><b>Plan for Thursday</b><span>08:12 · expires at noon</span></div>
-      <div class="fit">About 6 h 05 of work in 5 h 45 free.</div>
+      <div class="kicker"><b>Plan for Thursday</b><span>10:05 · until 11:00</span></div>
+      <div class="fit">About 5 h 35 of work in 5 h 15 free.</div>
       <div class="sec">Blocks</div>
       <div class="agenda">
-        <div class="slot"><div class="t">08:30–10:00</div><div class="blk">omni-me: reminder spike<span class="chg">moved</span><div class="sub">est 1 h</div></div></div>
-        <div class="slot"><div class="t">10:00–11:00</div><div class="blk cal">Lab meeting<div class="sub">calendar</div></div></div>
-        <div class="slot"><div class="t">11:15–12:45</div><div class="blk">Thesis ch. 2: methods draft<span class="chg">moved</span><div class="sub">est 1 h 30</div></div></div>
-        <div class="slot"><div class="t">13:00–13:30</div><div class="blk cal">Call with Dr. Lee<div class="sub">calendar</div></div></div>
-        <div class="slot"><div class="t">14:00–15:00</div><div class="blk">Write the masters reference request<div class="sub">est 45 min · due Mon</div></div></div>
+        <div class="slot"><div class="t">11:00–12:10</div><div class="blk">omni-me: reminder spike<span class="chg">moved</span><div class="sub">est 1 h · home</div></div></div>
+        <div class="slot"><div class="t">12:15–13:00</div><div class="blk cal">Bus to campus<div class="sub">travel</div></div></div>
+        <div class="slot"><div class="t">13:00–14:00</div><div class="blk cal">Lab meeting<div class="sub">calendar · campus</div></div></div>
+        <div class="slot"><div class="t">14:15–15:45</div><div class="blk">Thesis ch. 2: methods draft<span class="chg">moved</span><div class="sub">est 1 h</div></div></div>
+        <div class="slot"><div class="t">16:00–16:30</div><div class="blk cal">Call with Dr. Lee<div class="sub">calendar</div></div></div>
+        <div class="slot"><div class="t">16:45–17:45</div><div class="blk">Write the masters reference request<div class="sub">est 45 min · due Mon</div></div></div>
       </div>
       <div class="sec">Today, any time</div>
       <ul class="plain">
@@ -215,6 +221,7 @@ It is changed by saying so, and a re-plan replaces the old card.</p>
 <div class="note">
 <div class="label">To react to</div>
 <ul>
+<li><b>Updated for rulings 93 and 111–115.</b> The day runs from your first activity plus the morning routine to the bedtime target less the evening routine (114). All-day events are one label line (111). Travel to a campus event is a greyed buffer (115). "Until 11:00" is my proposal for the open expiry in ruling 98.</li>
 <li><b>Calendar events sit inline</b>, greyed, so the fit check can be read against the day. The alternative was a list of blocks only. That is shorter, but "5 h 45 free" would have nothing to check against.</li>
 <li><b>The fit line is the one coloured line.</b> Amber when over, green when it fits. It is measured, never enforced (ruling 99): it never blocks Accept.</li>
 <li><b>"Skip today" costs nothing.</b> The view then shows calendar and due items, with no "plan not set" line.</li>
@@ -383,11 +390,11 @@ Field names are placeholders: ruling 102 leaves the fact shape to the people dat
 
 <!-- ═════════════════════════ 4. THE VIEW ═════════════════════════ -->
 <section class="topic">
-<h2>4. The read-only view beside chat: Today, or several timescales?</h2>
-<p>Ruling 100 left this one open. It is 11:40 on Thursday and the 08:12 plan was accepted. All three are read-only: tapping an item opens chat about it, for example "Pay the hydro bill: done?".</p>
+<h2>4. The read-only view beside chat: ruled C (ruling 110, provisional)</h2>
+<p>A and B are kept as the candidates C beat, unchanged from the session. C is updated: it is 15:07 with the 10:05 plan accepted, and the thesis block's timer is running (ruling 93). Pause and Stop are the view's one exception to read-only; anything else, tapped, opens chat about it.</p>
 <div class="row">
 <div class="col">
-<div class="label">A · Today only</div>
+<div class="label">A · Today only (not chosen)</div>
 <div class="phone">
   <div class="bar"><div class="menu"></div><div class="title">Today</div><div class="right">Thu 19 Nov</div></div>
   <div class="screen">
@@ -417,7 +424,7 @@ Field names are placeholders: ruling 102 leaves the fact shape to the people dat
 </div>
 
 <div class="col">
-<div class="label">B · Day / Week / Month tabs (Week shown)</div>
+<div class="label">B · Day / Week / Month tabs (not chosen)</div>
 <div class="phone">
   <div class="bar"><div class="menu"></div><div class="title">Plan</div><div class="right">week 47</div></div>
   <div class="screen">
@@ -444,16 +451,20 @@ Field names are placeholders: ruling 102 leaves the fact shape to the people dat
 </div>
 
 <div class="col">
-<div class="label">C · One scroll: today, then the week, then the month</div>
+<div class="label">C · One scroll (chosen, 110)</div>
 <div class="phone">
   <div class="bar"><div class="menu"></div><div class="title">Plan</div><div class="right">Thu 19 Nov</div></div>
   <div class="screen">
-    <div class="hz">Today <span>6 h 05 in 5 h 45 free</span></div>
+    <div class="hz">Today <span>5 h 35 in 5 h 15 free</span></div>
+    <div class="xs muted">All day: Mum's birthday</div>
     <div class="agenda">
-      <div class="slot"><div class="t">11:15–12:45</div><div class="blk">Thesis ch. 2: methods draft</div></div>
-      <div class="now"><span style="text-align:right">11:40</span><hr></div>
-      <div class="slot"><div class="t">13:00–13:30</div><div class="blk cal">Call with Dr. Lee</div></div>
-      <div class="slot"><div class="t">14:00–15:00</div><div class="blk">Masters reference request</div></div>
+      <div class="slot"><div class="t">14:15–15:45</div><div class="blk">Thesis ch. 2: methods draft
+        <div class="timer"><span class="dot"></span><span>40 min working · 52 min since start</span></div>
+        <div class="btns" style="margin-top:6px"><span class="btn ghost">Pause</span><span class="btn ghost">Stop</span></div>
+      </div></div>
+      <div class="now"><span style="text-align:right">15:07</span><hr></div>
+      <div class="slot"><div class="t">16:00–16:30</div><div class="blk cal">Call with Dr. Lee</div></div>
+      <div class="slot"><div class="t">16:45–17:45</div><div class="blk">Masters reference request</div></div>
     </div>
     <div class="xs muted">2 earlier blocks done · any time: hydro bill, dentist</div>
     <div class="ask"><span>3 people questions tonight</span><span class="link">19:00</span></div>
