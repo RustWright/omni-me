@@ -6,8 +6,8 @@ live in `RULINGS.md`, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`
 
 ## ▶ NEXT ACTION — his pick of the next Cycle 6 item (asked 2026-11-20)
 [0103] is done (121–124; seed and evidence in overlay `TASKS_PREP.md`; the import moved to [0107]).
-The `tasks.md` Cycle 6 list is in dependency order; which item comes first is his call. [0101]'s judgment calls are in overlay
-`DECISION_LOG_2026-11-20.md`, worth a skim.
+The `tasks.md` Cycle 6 list is in dependency order; which item comes first is his call.
+[0101]'s judgment calls are in overlay `DECISION_LOG_2026-11-20.md`, worth a skim.
 
 ⛔ Live is the pause: every live step waits for his go, one at a time.
 ⛔ **Never `cargo build`/`test` on this box** (`project-dev-machines-and-build-limits`); the mock demo
