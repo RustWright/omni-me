@@ -91,6 +91,8 @@ ul.plain li.done span:first-child { text-decoration: line-through; color: rgb(va
 .grow:first-of-type { border-top: 0; }
 .mini { display: flex; gap: 6px; flex-wrap: wrap; }
 .mini span { font-size: 12px; border: 1px solid rgb(var(--border) / .15); border-radius: 12px; padding: 3px 10px; }
+.search { font-size: 13px; border: 1px solid rgb(var(--accent) / .6); border-radius: 8px; padding: 7px 10px; display: flex; align-items: center; }
+.search .caret { width: 1px; height: 15px; background: rgb(var(--accent)); margin-left: 1px; }
 
 /* Person */
 .ph { display: flex; flex-direction: column; gap: 2px; }
@@ -308,6 +310,59 @@ It is changed by saying so, and a re-plan replaces the old card.</p>
 </div>
 </div>
 
+<div class="col">
+<div class="label">"Someone I know…" tapped on Shara</div>
+<div class="phone">
+  <div class="bar"><div class="menu"></div><div class="title">Assistant</div><div class="right">19:07</div></div>
+  <div class="screen">
+    <div class="card">
+      <div class="kicker"><b>New names in today's journal</b><span>3 of 3</span></div>
+      <div class="answered"><span>Marcus → new person</span><a href="#">Undo</a></div>
+      <div class="grow">
+        <div class="quote">Talked to <mark>Shara</mark> about the conference budget.</div>
+        <div class="search">Shara<span class="caret"></span></div>
+        <div class="xs muted">All your people, closest spelling first</div>
+        <div class="opt"><b>Sarah Okafor</b><span class="ctx">Work. Last: "Sarah reviewed my ch. 1 draft", 12 Nov</span></div>
+        <div class="opt"><b>Sarah, your sister</b><span class="ctx">Family. Last: "Called Sarah about Christmas flights", 2 Nov</span></div>
+        <div class="opt"><b>Shanice Moore</b><span class="ctx">Admin. Last: email "Your housing application", 28 Oct</span></div>
+        <div class="xs muted"><span class="link">Back</span> to New person / Don't know</div>
+      </div>
+      <div class="grow">
+        <div class="quote"><mark>Priya</mark>'s talk on causal inference was the best of the day.</div>
+        <div class="mini"><span>New person</span><span>Don't know</span><span>Someone I know…</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="composer">Message</div>
+</div>
+</div>
+
+<div class="col">
+<div class="label">Then: Sarah Okafor picked, a close spelling</div>
+<div class="phone">
+  <div class="bar"><div class="menu"></div><div class="title">Assistant</div><div class="right">19:07</div></div>
+  <div class="screen">
+    <div class="card">
+      <div class="kicker"><b>New names in today's journal</b><span>3 of 3</span></div>
+      <div class="answered"><span>Marcus → new person</span><a href="#">Undo</a></div>
+      <div class="grow">
+        <div class="quote">Talked to <mark>Shara</mark> about the conference budget.</div>
+        <div class="xs">Linked to <b>Sarah Okafor</b>. Was "Shara" a typo?</div>
+        <div class="opts2">
+          <div class="opt"><b>Yes, a typo</b><span class="ctx">Kept hidden, only to match it again</span></div>
+          <div class="opt"><b>No, she goes by Shara</b><span class="ctx">Shown as "also Shara"</span></div>
+        </div>
+      </div>
+      <div class="grow">
+        <div class="quote"><mark>Priya</mark>'s talk on causal inference was the best of the day.</div>
+        <div class="mini"><span>New person</span><span>Don't know</span><span>Someone I know…</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="composer">Message</div>
+</div>
+</div>
+
 <div class="note">
 <div class="label">To react to</div>
 <ul>
@@ -315,6 +370,7 @@ It is changed by saying so, and a re-plan replaces the old card.</p>
 <li><b>Email sources are labelled amber</b> (ruling 103): the display name and body are the sender's words, so the card never shows them unlabelled.</li>
 <li><b>A new person stays provisional</b> until a second mention or your confirmation. This is not shown on the card.</li>
 <li><b>Misspellings live in "Someone I know…"</b>, not as a fifth button. The alternative was offering the closest spelling automatically. It is one tap faster, but it also offers wrong matches.</li>
+<li><b>"Someone I know…" opens a search in that row</b>, prefilled with the name so close spellings come first. It differs from the first picker in reach: that one offers only the candidates the matcher found, this one searches everyone. Picking a different spelling asks the typo question in the row. The other rows stay as they were.</li>
 </ul>
 </div>
 </div>
