@@ -357,3 +357,6 @@ edit site carries their reasoning. These are settled. Do not re-open one without
   (96): each due date attaches to a matching task or proposes one. Never routed through Google
   Calendar, where a deadline would become an event. Deadlines an instructor did not post are
   given in chat. The feed address is a credential.
+- **123.** Each course is a native project, created from the LEARN feed's course and term and
+  closed when the term ends, asking once about anything still open. A deadline attaches to a task
+  in its course's project.

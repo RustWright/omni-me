@@ -5,8 +5,8 @@ live in `RULINGS.md`, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`
 `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
 ## ▶ NEXT ACTION — [0103] task data prep, with him (his pick, 2026-11-20)
-Sources read, seed list confirmed, `~/life` ruled (121): overlay `TASKS_PREP.md`. Deadlines ruled
-(122). Next: his LEARN feed file, then whether courses are projects, then task-person links. [0101]'s judgment calls are in overlay
+Sources read, seed list confirmed, `~/life` ruled (121): overlay `TASKS_PREP.md`. Deadlines and
+courses ruled (122, 123), the feed read. Next: task-person links, then what else the shape needs. [0101]'s judgment calls are in overlay
 `DECISION_LOG_2026-11-20.md`, worth a skim.
 
 ⛔ Live is the pause: every live step waits for his go, one at a time.
