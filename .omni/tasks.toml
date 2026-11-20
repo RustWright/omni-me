@@ -738,7 +738,7 @@ ref    = "tasks.md § Cycle 6"
 [[task]]
 id     = "omni-me-0103"
 title  = "Task data prep, offline: find the record shape, import as seed"
-status = "todo"
+status = "done"
 size   = "USER"
 ref    = "tasks.md § Cycle 6"
 

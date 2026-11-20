@@ -18,10 +18,9 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 
 ## Cycle 6: [0074] tasks, planning, people
 
-Rulings 90–120, the UI ruled in `design/0102/`; evidence and design input in `PUSH_0074_RESEARCH.md`. In dependency order. Prep
-and design sessions need him; builds follow them.
-- [0103] **Task data prep, offline** (ruling 105): pull the hub indexes and his native tasks
-  locally, find the record shape with him, import as the seed. Before [0107]'s data model. [USER, M]
+Rulings 90–124, the UI ruled in `design/0102/`, the task prep in overlay `TASKS_PREP.md`;
+evidence in `PUSH_0074_RESEARCH.md`. In dependency order. Prep and design sessions need him;
+builds follow them.
 - [0104] **Reminder spike** (ruling 96): does `tauri-plugin-notification` `Schedule::At` with
   `allow_while_idle` fire on his phone with the app killed? Plugin 2.8.1 needs tauri ^2.12 and the
   stack is held below it (deep-link pin): an older plugin, or the upgrade. Also: does a scheduled
@@ -34,7 +33,8 @@ and design sessions need him; builds follow them.
 - [0107] **Task records and hub intake:** native tasks and projects, estimates and actuals (93),
   staleness and the hub trial (92), and the hook push of each changed index (91). Plus the
   `~/life` hand-over and the SessionStart receipt (121; contract text then), the LEARN deadline
-  feed and course projects (122, 123), and an intake that
+  feed and course projects (122, 123), the seed import (re-confirm the list with him first),
+  with him: scheduled date, recurrence, external-only deadlines (research §4.1); and an intake that
   reports unknown index values, never drops them (overlay `TASKS_PREP.md`). [L]
 - [0108] **People data prep, offline** (105), beside [0107]: journal mentions, email senders, one
   vCard export; check To/Cc and whether `watched_label` holds sent mail. Settles the fact shape
