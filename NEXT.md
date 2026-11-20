@@ -9,8 +9,8 @@ Section 4 is ruled (110). The session also ruled 111–115 and revised 93 and 98
 plan card render to show them: all-day label line, the day starting at his first activity, travel
 buffer before campus events, timer controls. Then take sections 1, 2, 3 one at a time.
 Open from 98: when an unanswered morning plan expires (mine: when its first block starts).
-Between sessions: [0101], core only: `core/src/events`, `core/src/assistant` and the top-level
-`core/src/*.rs` files remain. Overnight judgment calls: overlay `DECISION_LOG_2026-11-20.md`.
+Between sessions: [0101], core top-level files only, from `config.rs` on (`accounts` through
+`budget` are done, `86a119e`). Overnight judgment calls: overlay `DECISION_LOG_2026-11-20.md`.
 
 ⛔ Live is the pause: every live step waits for his go, one at a time.
 ⛔ **Never `cargo build`/`test` on this box** (`project-dev-machines-and-build-limits`); the mock demo
