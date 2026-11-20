@@ -32,7 +32,9 @@ and design sessions need him; builds follow them.
 - [0106] **`CheckInPolicy` into named scheduled prompts**, each with its own tier, due-check and
   housekeeping (`check_in.rs` selects every scheduled message today). Gates every ritual. [M]
 - [0107] **Task records and hub intake:** native tasks and projects, estimates and actuals (93),
-  staleness and the hub trial (92), and the hook push of each changed index (91). [L]
+  staleness and the hub trial (92), and the hook push of each changed index (91). Plus the
+  `~/life` hand-over and the SessionStart receipt (121; contract text then), and an intake that
+  reports unknown index values, never drops them (overlay `TASKS_PREP.md`). [L]
 - [0108] **People data prep, offline** (105), beside [0107]: journal mentions, email senders, one
   vCard export; check To/Cc and whether `watched_label` holds sent mail. Settles the fact shape
   (102) and which people purpose comes first. [USER, L]

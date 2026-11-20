@@ -4,9 +4,9 @@
 live in `RULINGS.md`, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`), rationale in
 `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
-## ▶ NEXT ACTION — his pick of the next Cycle 6 item (asked 2026-11-20)
-[0102] is done: `design/0102/` is the ruled design (110, 117–120). The `tasks.md` Cycle 6 list is in
-dependency order; which open item comes first is his call. [0101]'s judgment calls are in overlay
+## ▶ NEXT ACTION — [0103] task data prep, with him (his pick, 2026-11-20)
+Sources read, seed list confirmed, `~/life` ruled (121): overlay `TASKS_PREP.md`. Next, the record
+shape with him: where coursework deadlines come from, whether courses are projects, task-person links. [0101]'s judgment calls are in overlay
 `DECISION_LOG_2026-11-20.md`, worth a skim.
 
 ⛔ Live is the pause: every live step waits for his go, one at a time.

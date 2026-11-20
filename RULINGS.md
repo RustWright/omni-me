@@ -235,8 +235,9 @@ edit site carries their reasoning. These are settled. Do not re-open one without
 
 ## Tasks, planning and people ([0074]; rationale in `PUSH_0074_RESEARCH.md` §1–§6)
 - **90.** Tasks are hub and native. Repo and `~/life` tasks arrive read-only through
-  `.omni/tasks.toml`; omni-me owns tasks and projects made in-app or by the assistant. Session 2's
-  task design (`research.md`) is an input, not a baseline.
+  `.omni/tasks.toml` (`~/life`'s `USER` items are handed over, 121); omni-me owns tasks and
+  projects made in-app or by the assistant. Session 2's task design (`research.md`) is an input,
+  not a baseline.
 - **91.** Project tasks are pulled in deliberately; only needs-you items (`USER` size or a `due`)
   surface on their own. Indexes reach the server by the session hooks pushing each changed index,
   never by reading GitHub, which serves one branch while work lives on dev branches.
@@ -346,3 +347,9 @@ edit site carries their reasoning. These are settled. Do not re-open one without
   left to the people data prep ([0108]). The People tab searches locally by text and spelling
   closeness, one matcher shared with "Someone I know…" (118), never semantically: questions in
   plain language go to the assistant.
+- **121.** A `USER` item in a `~/life` index is proposed once as a native task, keyed by its hub
+  id, and once accepted omni-me owns its status and ignores that id in the index. The topic's
+  next session closes the entry: SessionStart asks the server which ids were taken over (about a
+  2 s timeout, skipped with one line when unreachable), and the session marks them `cut`, "moved
+  to omni-me". omni-me never writes the repo; the server keeps a receipt until a pushed index
+  shows the cut. Revises 90 for `~/life`, whose indexes go unrefreshed for months.
