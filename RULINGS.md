@@ -332,3 +332,8 @@ edit site carries their reasoning. These are settled. Do not re-open one without
   so the fit can be checked, the fit line the one coloured line and never blocking Accept, "Skip
   today" free of any follow-up, and a re-plan collapsing the old card to one line, its approval
   refused. No "From:" row; a line appears only when an input could not be read.
+- **118.** People questions are section 2 of `design/0102/`, provisional until tested: one tap
+  answers with Undo and no confirm, email sources labelled amber (103), a new person provisional
+  until a second mention or his confirmation, and misspellings handled in "Someone I know…": a
+  search of everyone in the row, prefilled with the name, then one typo question (a hidden alias,
+  or a shown "also" name).
