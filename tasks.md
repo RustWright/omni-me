@@ -47,7 +47,7 @@ and design sessions need him; builds follow them.
   lines (98), block reminders, the load measure (99). Needs [0104], [0106]. [L]
 - [0110] **People build:** mentions, facts, resolution, pickers and group cards (102–104), merge
   and unmerge reversible for every attached record from the first event, the person view and the
-  People tab with model-free search (118–120), per `design/0102/`. Needs [0108]. [L]
+  People tab with model-free search (118–120), per `design/0102/`; task text as a source (124). Needs [0108]. [L]
 
 ## Waiting on his decision
 

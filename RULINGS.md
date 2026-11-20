@@ -360,3 +360,6 @@ edit site carries their reasoning. These are settled. Do not re-open one without
 - **123.** Each course is a native project, created from the LEARN feed's course and term and
   closed when the term ends, asking once about anything still open. A deadline attaches to a task
   in its course's project.
+- **124.** A task has no person field: task text is a mention source (102), read like the journal
+  and email, so a task naming someone appears on their person view. Capture stays one line, and
+  the task build needs nothing from the people build.
