@@ -39,7 +39,8 @@ and design sessions need him; builds follow them.
   vCard export; check To/Cc and whether `watched_label` holds sent mail. Settles the fact shape
   (102) and which people purpose comes first. [USER, L]
 - [0112] **Calendar and routines data prep, offline** (105): pull his calendar locally, count the
-  all-day events and how they are marked (reviews 111), and enter his routines, places and travel
+  all-day events and how they are marked (reviews 111) and the clashes and duplicates (reviews
+  116), and enter his routines, places and travel
   times (114, 115) so the fit check has real minutes. Before [0109]. [USER, M]
 - [0109] **Planning build:** read-only calendar (96), plan records, the ritual tier and summary
   lines (98), block reminders, the load measure (99). Needs [0104], [0106]. [L]

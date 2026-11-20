@@ -324,3 +324,7 @@ edit site carries their reasoning. These are settled. Do not re-open one without
 - **115.** Planning gets named places and a travel time between them, from his estimates, and
   buffers travel before an event at a different place. Location history (`research.md`
   § Locations) is its own later cycle and reuses those places, supplying real travel times.
+- **116.** Overlapping calendar events count once toward busy time; exact duplicates (same title
+  and time) merge silently. A real clash is one line on the plan card asking which he is going
+  to; travel (115) assumes the earlier until he answers, and an answer holds for that day only.
+  Reviewed after the calendar data prep ([0112]), as 111 is.
