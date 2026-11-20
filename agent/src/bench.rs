@@ -1,70 +1,8 @@
 //! `--bench`: does the model pick the right verb, and what does constraining it cost?
 //!
-//! Test scaffolding, on the same terms as [`super::ask`].
-//!
-//! ## Why it is multi-turn
-//!
-//! An earlier version of this measurement scored only the model's *first* tool
-//! call, which marked it wrong for calling `list_types` to find out what exists
-//! before acting. That is not a wrong answer, it is the first step of a plan —
-//! and since the design is a multi-turn agent, a single-turn test measures
-//! something the system never does.
-//!
-//! ## What a scorecard reports, and why it is not only accuracy
-//!
-//! Verb accuracy alone cannot fill the model roles, because two of them are not
-//! defined by accuracy: the interactive reasoner is chosen on a latency
-//! budget and the high-volume structurer on cost per call. So each variant
-//! also reports median and worst request latency, and prompt / completion /
-//! reasoning tokens summed across cases. Tokens rather than dollars —
-//! see [`Score::report_cost`].
-//!
-//! ## What the constraint tax is
-//!
-//! Every case runs twice: once with free tool calling, once with replies
-//! constrained to a verb-call schema. Structured decoding is reported both as a
-//! large accuracy win and as a suppressor of tool calling, and only running both
-//! settles which one *this* tool surface gets. The difference between the two
-//! scores is the tax, and it is a measurement rather than an assumption.
-//!
-//! The two halves must differ in one thing: how a call travels back. Each
-//! carries the same verb documentation — the constrained half in its prompt,
-//! since its request cannot carry `tools` — and offers exactly one channel. Open
-//! both and the model picks per its own training, which makes the score a
-//! property of the model rather than of the constraint; see
-//! `Session::constrained`.
-//!
-//! A tax is only reported when the constrained half was actually
-//! constrained, and there are two ways it silently is not. Providers differ on
-//! whether a response schema is enforced as a grammar or read as a strong hint;
-//! and a model trained to emit tool calls can have them parsed out of its
-//! completion by the serving stack even though the request declared no tools,
-//! which turns the constrained arm back into a free-form one while every visible
-//! signal still reads as success. Both are counted as off-schema, and a non-zero
-//! count withholds the number. Check the endpoint advertises `structured_outputs`
-//! *at the pinned quantization* before running: the same provider serves the same
-//! model with and without it depending on the tag.
-//!
-//! Not every endpoint can run the constrained half. One vendor's serving stack
-//! applies the grammar from token zero and never terminates with a reasoning
-//! model, which is a deployment-config fact about that vendor and not a property
-//! of the weights. A constrained score of zero with errors means that, and
-//! must not be read as the model failing.
-//!
-//! Both variants therefore run against one endpoint per invocation — whichever
-//! `[llm]` selects — and the tax is read off a run where both halves completed.
-//! Comparing a free-form score from one endpoint against a constrained score from
-//! another would attribute a serving-stack difference to the constraint.
-//!
-//! On a rate-capped endpoint, set `OMNI_AGENT_LLM_MIN_INTERVAL_MS`. Without it
-//! the cap returns errors that this scorecard would report as the model failing.
-//!
-//! Run it as `cargo run -p omni-me-agent -- --bench`, never a prebuilt
-//! binary. A run takes long enough that the source usually moves underneath it,
-//! and a stale binary produces a plausible scorecard measuring code that no longer
-//! exists — which happened: a "-20 point constraint tax" was recorded from a
-//! binary built eight minutes before the fix it was meant to be testing. `cargo
-//! run` rebuilds; a path into `target/debug` does not.
+//! Every case runs free-form and schema-constrained; the score difference is the constraint
+//! tax. Design and traps: `MODEL_BENCH.md` § How `--bench` is built, and why.
+//! Run with `cargo run`, never a prebuilt binary: a stale one scores code that no longer exists.
 
 use std::time::Duration;
 
@@ -265,14 +203,9 @@ const CASES: &[Case] = &[
     },
     // --- absent answers (lever 2) -----------------------------------------
     //
-    // Each is the twin of a positive case above: same request shape, same verb,
-    // and the record simply does not exist. Holding the path fixed is what
-    // isolates abstention from retrieval — a model that fails the twin but
-    // passes the positive cannot tell "I did not find it" from "it is not
-    // there", which is the distinction that makes an assistant trustworthy.
-    //
-    // The verb is still required, so answering "no" without looking does not
-    // pass. Abstention without checking is a guess that happened to be right.
+    // Each twins a positive case with the record absent, holding the path fixed so abstention
+    // is measured apart from retrieval. The verb is still required: "no" without looking is
+    // a guess that happened to be right.
     Case {
         // Journals are seeded 2026-03-14 to -18 only. `read` is the direct path,
         // but `list` establishes the same absence honestly, so either counts —
@@ -320,13 +253,9 @@ struct Score {
     content_miss: usize,
     /// Wall time of each successful multi-turn request.
     ///
-    /// The request, not the call, because the interactive role's budget is
-    /// how long a person waits for an answer, and that is every turn plus the
-    /// verb executions between them. A per-call median would flatter a model
-    /// that answers fast but needs six turns to get there.
-    ///
-    /// Successful only, because seat A's gate reads this and an errored case is
-    /// already counted against the model in the score.
+    /// Per request, not per call: the budget is how long a person waits, and a per-call median
+    /// flatters a fast model that needs six turns. Successful only, because errors already
+    /// count against the score.
     latencies: Vec<Duration>,
     /// Wall time of each failed request, kept apart and reported apart.
     ///
@@ -351,12 +280,8 @@ impl Score {
 
     /// Median and worst case of the successful requests, in seconds.
     ///
-    /// Still not a p95, and the threshold file now says so too. At this case
-    /// count nearest-rank p95 *is* the maximum — `ceil(0.95 × 14) = 14` — so a
-    /// "p95" column would be the worst case wearing a percentile's name, and
-    /// computing it as the second-slowest (which is what reading the logs by
-    /// hand produced) is the false precision this comment has always warned
-    /// about. Distinguishing the two needs n ≥ 20 and means little below ~40.
+    /// Not a p95: at 14 cases nearest-rank p95 is the maximum, so a "p95" column would be the
+    /// worst case under a percentile's name. A real p95 needs n ≥ 20, and means little below ~40.
     fn latency_secs(&self) -> Option<(f64, f64)> {
         Self::median_worst(&self.latencies)
     }
@@ -470,13 +395,9 @@ fn stability(label: &str, per_run: &[usize], cases: usize) -> String {
 
 /// Run every case both ways and print a scorecard.
 ///
-/// `constrained_only` runs the schema arm alone. It exists for endpoints that
-/// serve `response_format` and no `tools` parameter at all, where the free-form
-/// arm cannot run and a both-arms invocation aborts in pre-flight rather than
-/// measuring anything — DeepInfra's Llama-4 endpoints are the case in point.
-/// Accuracy, latency and tokens are all still real; only the tax is unavailable,
-/// and it is reported as *not applicable* rather than *not measurable*, because a
-/// deliberate omission and a broken endpoint are different findings.
+/// `constrained_only` runs the schema arm alone, for endpoints with `response_format` and no
+/// `tools`. The tax is then "not applicable", never "not measurable": a deliberate omission and
+/// a broken endpoint are different findings.
 pub async fn run(
     db: &Database,
     config: &ResolvedConfig,
@@ -574,17 +495,8 @@ pub async fn run(
         return;
     }
     if free.errors == free.total {
-        // The mirror of the guard below, and the one the model slate forced into
-        // existence: an endpoint can lack `tools` while offering
-        // `structured_outputs`, so the *free-form* half is the one that cannot
-        // run. Llama-4 on DeepInfra is exactly this. Without this branch the
-        // subtraction below reads a 0% free-form score as the model failing and
-        // reports the constrained score itself as a large positive "tax" — a
-        // fabricated number, from a half that never happened.
-        //
-        // Such a run is still worth doing: the constrained scorecard, its
-        // latency and its token counts are all real. Only the *difference*
-        // between the halves is unavailable.
+        // An endpoint without `tools` fails the whole free-form half; subtracting would report
+        // the constrained score itself as a large fabricated tax. The rest of the run is real.
         println!(
             "\n  constraint tax: NOT MEASURABLE on this endpoint — every free-form call \
              errored while the constrained half ran, which is what a stack that serves \
@@ -624,16 +536,8 @@ pub async fn run(
         return;
     }
     if free.errors > 0 || constrained.errors > 0 {
-        // Partial failure, and the gap the guards above left open: they each fire
-        // only when a half errored *entirely*, so a half that errored four times
-        // out of ten sailed through and printed a number.
-        //
-        // An errored case scores as incorrect, which is right for accuracy and
-        // wrong for a difference: the two halves then completed different numbers
-        // of cases, and subtracting them blends "the constraint hurt" with "the
-        // endpoint dropped calls". `deepseek-v4-pro` reported a confident
-        // "-40 percentage points" this way, of which the constraint's share was
-        // unknown and possibly zero.
+        // Partial failure: halves that completed different numbers of cases cannot be
+        // subtracted, or "the constraint hurt" blends with "the endpoint dropped calls".
         println!(
             "\n  constraint tax: NOT MEASURABLE — {} free-form and {} constrained call(s) \
              errored, so the halves did not complete the same work. An errored case counts \

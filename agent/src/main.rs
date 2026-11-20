@@ -1,23 +1,9 @@
 //! omni-me agent — a headless device.
 //!
-//! Own process, own database, own device id, syncing over HTTP exactly as a
-//! phone does. The rationale for the device shape (rather than a module inside
-//! the server) is in `docs/src/assistant.md` § "The assistant is a device, not a
-//! feature"; the short version is that the embedded store is opened per process,
-//! and the shape that forces is also the one worth wanting — contained failure,
-//! inherited machinery, proposals that sync for free.
-//!
-//! It answers questions. A question authored on any device arrives here the
-//! ordinary way — pulled, projected — and the answer goes back the same way. That
-//! is not an implementation detail: `surrealkv` holds an exclusive lock on its
-//! directory, so a resident agent's database cannot be opened by a second process
-//! to hand it work. Carrying the question as an event is what makes *resident*
-//! and *askable* the same process. The loop itself is in [`responder`].
-//!
-//! Two flags stand for the two postures, and they are opposites: `--read-only`
-//! refuses to build a writer at all, `--probe` authors one note through the one
-//! it built. Both answer a question about a *host* rather than about the code,
-//! which is why they live here and not in a test.
+//! Own process, database and device id, syncing over HTTP as a phone does (why:
+//! `docs/src/assistant.md` § "The assistant is a device, not a feature"). Questions arrive as
+//! events because `surrealkv` locks its directory to one process; the loop is in [`responder`].
+//! `--read-only` refuses to build a writer and `--probe` writes one note: host checks, not tests.
 
 mod ask;
 mod bench;
@@ -100,22 +86,14 @@ const LLM_API_KEY_ENV: &str = "OMNI_AGENT_LLM_API_KEY";
 
 /// Override the assistant's turn budget for one run.
 ///
-/// The quality-against-cost balance is found by trying, and a tuning loop
-/// runs from here rather than from a phone's settings screen. Injected as the
-/// device layer of the resolved config (see [`learn_config`]) so it lands
-/// in the same resolution and the same clamp as a value set from Settings —
-/// an override that bypassed `int_of` could set a budget the app itself would
-/// refuse.
+/// For tuning runs. Injected as the device config layer ([`learn_config`]) so it gets the same
+/// clamp as Settings; bypassing `int_of` could set a budget the app would refuse.
 const MAX_TURNS_ENV: &str = "OMNI_AGENT_MAX_TURNS";
 
 /// How long the agent waits between sync pulls, in milliseconds.
 ///
-/// Deliberately not [`sync::DEFAULT_PULL_INTERVAL`]'s 20s. That default is
-/// sized for a phone: a radio, a battery, and a person who does not notice a
-/// twenty-second lag on a note edit. This process sits on the same host as the
-/// server it polls, on mains power, and its pull latency is a limb of the
-/// interactive path — a question waits here before anything else can happen to
-/// it. See [`DEFAULT_PULL_INTERVAL_MS`].
+/// Not [`sync::DEFAULT_PULL_INTERVAL`]'s phone-sized 20 s: this runs beside the server on mains
+/// power, and every question waits on this pull first. See [`DEFAULT_PULL_INTERVAL_MS`].
 const PULL_INTERVAL_ENV: &str = "OMNI_AGENT_PULL_INTERVAL_MS";
 
 /// Minutes after which an unanswered question is closed without a model call.
@@ -153,24 +131,15 @@ struct Args {
     /// Refuse to construct an `EventWriter` at all, so the process is
     /// structurally incapable of authoring an event.
     ///
-    /// A zero-verb agent authors nothing anyway, which makes a backfill
-    /// rehearsal against real data safe *by accident*. This turns it into a
-    /// property: the writer does not exist, so no later code path can quietly
-    /// start writing. It is what makes a full-scale timing run against the live
-    /// box something other than a leap of faith.
+    /// Makes a timing run against live data safe by construction rather than by accident: with
+    /// no writer, no later code path can start writing.
     read_only: bool,
 
     /// Author one throwaway note through the real writer, then keep running.
     ///
-    /// The mirror of [`Args::read_only`]: that one proves this process *cannot*
-    /// write, this one proves it *can*. A cold start that backfills correctly
-    /// says nothing about the write half, and the write half is the one whose
-    /// wiring fails silently — a writer built above the push debouncer appends
-    /// happily and never syncs, because `pusher::run_loop` has no interval
-    /// fallback to cover for the missing nudge.
-    ///
-    /// This writes a real note into whatever log it is pointed at. That is a
-    /// throwaway hub, never a real one.
+    /// The mirror of [`Args::read_only`]: proves the write half, whose wiring fails silently
+    /// (a writer built above the push debouncer appends and never syncs).
+    /// It writes a real note: point it at a throwaway hub, never a real one.
     probe: bool,
 
     /// Put one question through the assistant, print the trace, and exit.
@@ -197,67 +166,41 @@ struct Args {
 
     /// Run [`Args::ask`] under grammar-constrained decoding.
     ///
-    /// Exists so the constrained half can be tried once before `--bench`
-    /// tries it a hundred times. Two things can only be settled against a real
-    /// endpoint: whether it accepts the verb-call schema at all, and whether a
-    /// constrained reply can reach the `answer` exit rather than re-calling
-    /// until the turn budget runs out. Both have already produced a scorecard
-    /// that measured the harness, and both cost one request to rule out.
+    /// One request to check, before `--bench`, that the endpoint accepts the verb-call schema
+    /// and that a constrained reply can reach `answer` rather than looping to the budget.
     constrained: bool,
 
     /// Score retrieval itself — keyword, fused, and fused-plus-reranked — over a
     /// fixture corpus with known right answers, and report cost per model.
     ///
-    /// Separate from [`Args::bench`] rather than a mode of it, because the two
-    /// measure different machines. That one scores an LLM over a network and
-    /// needs credentials, a rate limit and a chosen endpoint; this one is local,
-    /// deterministic and needs none of them. Folding them together would make the
-    /// retrieval number cost tokens to obtain.
-    ///
-    /// Test scaffolding, on the same terms as [`Args::ask`].
+    /// Separate from [`Args::bench`]: local and deterministic, so the number costs no tokens.
     bench_retrieval: bool,
 
     /// Score the document extractor — role C1 — against labels the corpus
     /// generates itself, by parsing the CSV export of a period whose PDF the
     /// model is asked to read.
     ///
-    /// Its own run rather than a mode of [`Args::bench`] because it measures a
-    /// different trait against a different endpoint: `DocumentExtractor` on
-    /// `[llm.extractor]`, where that one measures `LlmClient` on `[llm]`.
-    ///
-    /// Test scaffolding, on the same terms as [`Args::ask`].
+    /// Its own run: `DocumentExtractor` on `[llm.extractor]`, not `LlmClient` on `[llm]`.
     bench_extraction: bool,
 
     /// Score the note structurer — role D — on what it invents before what it
     /// finds, against probe notes written so their truth is known by
     /// construction.
     ///
-    /// Its own run for the same reason [`Args::bench_extraction`] is: a
-    /// different endpoint (`[llm.structurer]`) and a different question. It
-    /// needs no database and no corpus on disk.
-    ///
-    /// Test scaffolding, on the same terms as [`Args::ask`].
+    /// Its own run on `[llm.structurer]`; needs no database and no corpus.
     bench_structuring: bool,
 
     /// Score the document reader — role C2 — on what it invents before what it
     /// finds, against probe documents written so their truth is known by
     /// construction.
     ///
-    /// Its own run for the same reason [`Args::bench_extraction`] is. It shares
-    /// that one's endpoint (`[llm.extractor]`) but asks the other question: what
-    /// *is* this document, rather than what transactions does it contain.
-    ///
-    /// Test scaffolding, on the same terms as [`Args::ask`].
+    /// Shares `[llm.extractor]` but asks what the document is, not what transactions it holds.
     bench_reading: bool,
 
     /// Score the transcriber — role C3 — against the text layer a born-digital
     /// PDF already carries.
     ///
-    /// Its own run for [`Args::bench_extraction`]'s reason. The oracle is free
-    /// and exact: render the file to images, transcribe those, and compare with
-    /// what the file itself states.
-    ///
-    /// Test scaffolding, on the same terms as [`Args::ask`].
+    /// The oracle is free and exact: render the file to images, transcribe, compare with its text.
     bench_transcription: bool,
 
     /// Score role B on its own job: the scheduled belief review, against beliefs
@@ -274,14 +217,8 @@ struct Args {
 
     /// Author a question event, then exit — a stand-in for the client.
     ///
-    /// Distinct from [`Args::ask`] in the thing that matters: that one calls the
-    /// model in this process, this one writes an event and lets whichever agent
-    /// is *resident* pick it up. It is how the ask/answer path gets exercised
-    /// end-to-end before the Assistant tab exists, and it exercises the real
-    /// path rather than a shortcut through it — two processes, separate data
-    /// roots, one hub, exactly as a phone and the box relate.
-    ///
-    /// Writes a real event into whatever log it is pointed at.
+    /// Unlike [`Args::ask`], the resident agent answers: two processes, one hub, as a phone and
+    /// the box relate. Writes a real event into whatever log it is pointed at.
     ask_event: Option<String>,
 
     /// Continue an existing thread instead of starting one. Only meaningful
@@ -412,17 +349,8 @@ fn parse_args() -> Result<Args, String> {
     {
         return Err("--bench-cases is its own run; pick one".to_string());
     }
-    // With `--bench` this means bench the constrained arm only, and it is
-    // deliberate rather than a mistake: some endpoints offer `response_format`
-    // and no `tools` parameter at all, so the free-form arm cannot be run there
-    // and a both-arms bench aborts in pre-flight instead of measuring anything.
-    // DeepInfra's Llama-4 endpoints are the case that forced this.
-    //
-    // This combination used to be refused, on the grounds that it would silently
-    // halve the measurement. That concern was right and is now answered by the
-    // scorecard rather than by the ban: a constrained-only run says so in its
-    // header and reports the tax as NOT APPLICABLE, naming the omission as
-    // chosen. Silence was the problem, not the halving.
+    // With `--bench` this means the constrained arm only, on purpose: some endpoints have no
+    // `tools`. The scorecard says so and reports the tax as not applicable, never silently.
     if args.constrained && args.ask.is_none() && !args.bench {
         return Err("--constrained applies to --ask or --bench".to_string());
     }
@@ -690,18 +618,10 @@ fn client_options_from_env() -> Result<omni_me_core::llm::ClientOptions, String>
 /// Refuse a corpus-reading bench that would send real documents through a gateway
 /// with nothing attached about what may be done with them.
 ///
-/// R27: the privacy terms travel in `extra_body`, and until 2026-09-27 role C's
-/// builders took no options — so every `--bench-extraction` and
-/// `--bench-transcription` run sent real statements through OpenRouter with neither
-/// `zdr` nor `data_collection: "deny"`. The plumbing is fixed; this is the guard
-/// against the same omission arriving by a different route, such as an
-/// `OMNI_AGENT_LLM_EXTRA_BODY` that overwrites the default object and drops them.
-///
-/// Keyed on the gateway's hostname, and that is a real limitation rather than a
-/// shortcut: `zdr` and `data_collection` are OpenRouter's request vocabulary, and a
-/// direct provider ignores them — its guarantee comes from its own policy plus the
-/// open-weights refusal. So a second gateway needs its name added here, and the
-/// guard says so when it passes rather than staying silent.
+/// The privacy terms (`zdr`, `data_collection: "deny"`) travel in `extra_body`, which an
+/// `OMNI_AGENT_LLM_EXTRA_BODY` override can silently drop (`MODEL_BENCH.md` R27).
+/// Keyed on the gateway hostname, because those terms are OpenRouter's vocabulary: a second
+/// gateway needs its name added here.
 fn privacy_preflight(
     creds: &omni_me_core::credentials::Credentials,
     options: &omni_me_core::llm::ClientOptions,
@@ -817,17 +737,8 @@ fn load_credentials() -> Result<omni_me_core::credentials::Credentials, String> 
     Ok(creds)
 }
 
-/// Load the embedding model and define the vector index, or explain why not.
-///
-/// Returns `None` rather than failing the boot. A model that will not load leaves
-/// the agent answering with keyword search — worse, but available — and the warning
-/// says which mode it is in. Refusing to start would make a missing 133 MB download
-/// look like a broken agent.
-/// Where downloaded ONNX weights live.
-///
-/// Beside the data, not beside the binary: the cache is state, and on a deployed
-/// host `.` is not writable while the data volume is. Both models share it, so a
-/// re-deploy re-downloads neither.
+/// Where downloaded ONNX weights live: beside the data, because on a deployed host `.` is not
+/// writable. Both models share it, so a re-deploy re-downloads neither.
 fn model_cache_dir() -> PathBuf {
     std::env::var("FASTEMBED_CACHE_DIR")
         .map(PathBuf::from)
@@ -838,6 +749,10 @@ fn model_cache_dir() -> PathBuf {
         })
 }
 
+/// Load the embedding model and define the vector index, or explain why not.
+///
+/// `None` rather than a failed boot: without the model the agent answers by keyword search,
+/// and the warning says so. Refusing to start would make a missing download look like a crash.
 async fn build_embedder(
     db: &Database,
     config: &ResolvedConfig,
@@ -934,19 +849,9 @@ async fn run(args: Args) -> Result<(), String> {
     let sync_client =
         SyncClient::new(server_url.clone(), device_id.clone()).with_token(&server_token);
 
-    // Learn the config BEFORE deciding which projections to run.
-    //
-    // The shared config layer is itself a projection, so on a cold start it does
-    // not exist yet and every feature falls back to its default — which is `on`.
-    // That default is right for a client, where a person installed the app and
-    // expects it to work; it is wrong for a deployed process, which would spend
-    // its first boot materializing features nobody asked for. A client gets away
-    // with it because a fresh install is rare. For an agent — new container, new
-    // volume — a cold start is the *normal* case.
-    //
-    // So: pull the raw log, fold it through the never-gated projections only,
-    // then re-read the config and build the real list against the answer. The
-    // cost is that a cold start reads the log twice out of the local database.
+    // Learn the config before choosing projections: on a cold start (the normal case for an
+    // agent) the config projection is empty and every feature defaults to on. The cost is that
+    // a cold start reads the log twice.
     let config = learn_config(&db, &sync_client).await?;
 
     // `JournalFile` is excluded structurally rather than left to the finances
@@ -1296,14 +1201,8 @@ fn title_from(question: &str) -> String {
 
 /// Author one note through the real writer and report what happened.
 ///
-/// Goes through [`EventWriter`] rather than the store on purpose: the point is
-/// to exercise the guard, the projection fold and the push nudge in the order
-/// *this process* wires them, which is the half no unit test can reach — a test
-/// constructs its own writer and so cannot catch a mistake in `run`'s ordering.
-///
-/// Non-fatal either way, because a refusal is a result, not a failure: with
-/// the feature that owns notes switched off, being refused here is the correct
-/// outcome and the one worth confirming.
+/// Through [`EventWriter`], not the store: it checks `run`'s own wiring order, which no unit
+/// test reaches. Non-fatal, because with notes switched off a refusal is the right result.
 async fn probe_once(writer: &EventWriter) {
     let note_id = ulid::Ulid::new().to_string();
     let event = NewEvent::generic_note_created(
@@ -1349,15 +1248,9 @@ fn device_overrides() -> ConfigMap {
 
 /// Resolve the config this agent should run under, pulling first if it has to.
 ///
-/// Reads the materialized `app_config` table. If that is empty — a cold start —
-/// it pulls the log and folds it through the never-gated projections, which is
-/// the minimum needed for `ConfigProjection` to materialize the shared layer,
-/// then reads again.
-///
-/// Every failure here degrades to "use what we have" rather than refusing to
-/// boot. An agent that will not start because the box is unreachable is worse
-/// than one that starts with default features and corrects itself on the next
-/// tick — the pull scheduler runs regardless.
+/// On a cold start, pulls and folds the never-gated projections so `ConfigProjection` exists.
+/// Every failure degrades to "use what we have": starting on defaults and correcting next tick
+/// beats refusing to boot because the box is unreachable.
 async fn learn_config(db: &Database, client: &SyncClient) -> Result<ResolvedConfig, String> {
     let resolve = |global| ResolvedConfig::new(global, device_overrides());
 

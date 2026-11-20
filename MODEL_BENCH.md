@@ -200,6 +200,35 @@ an `Absent` case abstained for the right *reason*. The absence check is a phrase
 (`ABSENCE_SIGNALS`), generous by design: the failure it must catch is a model inventing a
 record, and an invented record contains none of those phrases.
 
+### How `--bench` is built, and why (moved from `agent/src/bench.rs`)
+
+- **Multi-turn.** An earlier version scored only the first tool call and marked the model wrong
+  for calling `list_types` before acting. That is the first step of a plan, and a single-turn
+  test measures something a multi-turn agent never does.
+- **Not only accuracy.** The interactive reasoner is chosen on a latency budget and the
+  high-volume structurer on cost per call, so each arm also reports median and worst request
+  latency and prompt, completion and reasoning tokens. Tokens rather than dollars: see
+  `Score::report_cost`.
+- **The arms differ in one thing**, how a call travels back. Both carry the same verb
+  documentation (the constrained arm in its prompt, since its request cannot carry `tools`) and
+  offer exactly one channel. Open both and the score becomes a property of the model's training
+  rather than of the constraint (`Session::constrained`).
+- **Two ways the constrained arm is silently not constrained:** a provider may treat the schema
+  as a hint rather than a grammar, and a serving stack may parse tool calls out of a completion
+  whose request declared none. Both count as off-schema, and a non-zero count withholds the tax.
+  Check the endpoint advertises `structured_outputs` at the pinned quantization: the same
+  provider serves the same model with and without it depending on the tag.
+- **Some endpoints cannot run the constrained arm.** One vendor applies the grammar from token
+  zero and never terminates with a reasoning model; a constrained zero with errors means that,
+  not a failing model.
+- **One endpoint per invocation**, whichever `[llm]` selects. Comparing arms across endpoints
+  would attribute a serving-stack difference to the constraint.
+- **On a rate-capped endpoint, set `OMNI_AGENT_LLM_MIN_INTERVAL_MS`**, or the cap's errors read
+  as the model failing.
+- **Run it with `cargo run -p omni-me-agent -- --bench`, never a prebuilt binary.** A run is long
+  enough for the source to move underneath it: a "-20 point constraint tax" was once recorded
+  from a binary built eight minutes before the fix it was testing.
+
 ---
 
 ## Part 2 — Results by role

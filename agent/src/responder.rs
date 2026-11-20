@@ -1,22 +1,6 @@
-//! The answering loop: find questions that arrived, answer them, record what
-//! happened.
-//!
-//! This is what makes the agent an *interface* rather than a resident process
-//! with nothing to do. A question authored on the phone reaches this loop the
-//! ordinary way — through sync, into the local database, folded by
-//! `AssistantProjection` — and the answer goes back the same way. There is no
-//! second channel, and deliberately so: `surrealkv` holds an exclusive lock on
-//! its directory, so anything that wanted to hand this process a question
-//! out-of-band would have to open a database it cannot open.
-//!
-//! ## Why it runs inline rather than in a spawned task
-//!
-//! `Retrievers` borrows the embedder and the reranker, both of which live in
-//! `main::run`'s frame. A spawned task would need them `'static`, which means
-//! either leaking them or wrapping both in `Arc` for no reason other than to
-//! satisfy the spawn. Running the loop where the values already live keeps the
-//! ownership honest, and there is nothing else for the main task to do — it used
-//! to block on `ctrl_c`.
+//! The answering loop: find questions that arrived through sync, answer them, record what
+//! happened. Sync is the only channel, since `surrealkv` locks the database to this process.
+//! Runs inline, not spawned: `Retrievers` borrows the embedder and reranker from `main::run`.
 
 use std::time::Duration;
 
@@ -38,12 +22,8 @@ use tokio::sync::broadcast::error::RecvError;
 
 /// The floor under the pull-driven trigger.
 ///
-/// Not redundant with subscribing to [`PullEvent`]. A broadcast receiver that
-/// lags drops messages, a pull that fails emits nothing to act on, and a question
-/// that landed during a restart was never announced at all. The pusher's missing
-/// interval fallback is this codebase's own precedent for what a single edge
-/// trigger costs: there, an append that skipped the nudge did not sync slowly, it
-/// did not sync at all.
+/// Not redundant with [`PullEvent`]: a lagging receiver drops messages, a failed pull emits
+/// nothing, and a question that landed during a restart was never announced.
 const SWEEP_FLOOR: Duration = Duration::from_secs(30);
 
 /// How often idle chats are looked at. The windows are days, so hourly is plenty.

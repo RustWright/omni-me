@@ -1,39 +1,9 @@
 //! `--bench-retrieval`: is meaning-based retrieval actually better, and what does
 //! each model cost to run?
 //!
-//! Test scaffolding, on the same terms as [`super::ask`].
-//!
-//! ## Why this is not part of `--bench`
-//!
-//! [`super::bench`] scores an LLM's verb selection: it needs credentials, an
-//! endpoint, a rate limit, and it costs tokens. Retrieval needs none of those — it
-//! is local, deterministic, and repeatable. Folding the two together would make the
-//! retrieval number cost money to obtain and would tie a local regression check to
-//! a vendor being up.
-//!
-//! ## Why the corpus is a fixture rather than the real journal
-//!
-//! Two reasons, and the second is the one that matters. The obvious one is that a
-//! measurement anyone can re-run cannot depend on private data. The subtler one is
-//! that a labelled question set *is* the measurement: "the right answer to this
-//! question is that record" has to be written down by hand, and writing it down over
-//! real entries would still be a fixture — just an unshareable one.
-//!
-//! The honest limitation: the same hand wrote the corpus and the questions.
-//! A fixture built only from paraphrase cases would flatter embeddings by
-//! construction, since keyword search cannot win a case with no shared words. So the
-//! cases are labelled [`CaseKind::Lexical`] or [`CaseKind::Semantic`] and both are
-//! reported separately. A change that improves the semantic column while wrecking
-//! the lexical one is a regression, and the split column is what makes that visible.
-//!
-//! ## What is reported
-//!
-//! Three arms over identical data: keyword only (what shipped before Phase C), fused
-//! (BM25 + vectors through RRF), and fused plus each reranker. Per arm: how often the
-//! right record came back at all, how often it came back *first*, and mean reciprocal
-//! rank. Per model: resident memory and per-query wall clock, because the deployment
-//! host has 3820 MB, no swap and two cores — a model that wins on rank and does not
-//! fit has not won.
+//! Local and deterministic, over a fixture whose cases are labelled [`CaseKind::Lexical`] or
+//! [`CaseKind::Semantic`] and reported apart. Why, and what each arm reports:
+//! `docs/src/retrieval.md` § How it is measured.
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};

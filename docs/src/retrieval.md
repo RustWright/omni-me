@@ -255,6 +255,28 @@ The stopword list is deliberately shy: a missed function word costs a little tal
 while a content word wrongly listed costs recall silently and permanently. So "may" and "march"
 are months, "can" and "will" are nouns, and none of them are on it.
 
+## How it is measured
+
+`--bench-retrieval` is separate from the assistant's `--bench`, which scores a model's verb
+choice and needs credentials, an endpoint and tokens. Retrieval is local, deterministic and
+repeatable; folding the two together would make the retrieval number cost money and tie a local
+regression check to a vendor being up.
+
+The corpus is a fixture, not the real journal. A measurement anyone can re-run cannot depend on
+private data, and more to the point, a labelled question set *is* the measurement: "the right
+answer to this question is that record" has to be written by hand, and written over real
+entries it would still be a fixture, just an unshareable one.
+
+The limitation is that one hand wrote both the corpus and the questions, and a fixture of only
+paraphrase cases would flatter embeddings by construction, since keyword search cannot win a
+case with no shared words. So each case is labelled lexical or semantic and the two are reported
+apart: a change that lifts the semantic column while wrecking the lexical one is a regression.
+
+Three arms run over identical data: keyword only, fused, and fused plus each reranker. Per arm it
+reports how often the right record came back at all, how often first, and mean reciprocal rank.
+Per model it reports resident memory and per-query wall clock, because the deployment host has
+3820 MB, no swap and two cores, and a model that wins on rank and does not fit has not won.
+
 ## What is still wrong
 
 **Stemming is not applied.** "appointments" does not match "appointment". SurrealDB ships a

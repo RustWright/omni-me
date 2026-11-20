@@ -77,12 +77,8 @@ fn collect_pdfs(dir: &Path, depth: usize, into: &mut Vec<PathBuf>) {
 
 /// Keep only the PDFs that carry a real text layer.
 ///
-/// This filter *is* the oracle. A scanned PDF has no text layer, so there
-/// would be nothing to score against — and scoring a transcription against an
-/// empty string would report every model as perfectly fabricating.
-/// `passwords` is what lets an encrypted statement be a case at all. Two issuers
-/// encrypt 100% of theirs, so without it this arm silently measured only the
-/// unencrypted 82% of the corpus and counted the rest as scans.
+/// This filter is the oracle: against a scan's empty text layer every model would score as
+/// fabricating. `passwords` lets encrypted statements in; without them they count as scans.
 async fn born_digital(
     paths: Vec<PathBuf>,
     want: usize,
@@ -254,14 +250,8 @@ fn score(case: &Case, transcribed: &str, pages: usize, latency: Duration) -> Run
 
 /// A stable, non-identifying label for a document.
 ///
-/// FNV-1a over the file stem, four hex digits — the same construction
-/// `extraction_bench::tag` uses, so the two scorecards are read the same way.
-/// Deterministic, so two runs of one corpus stay comparable.
-///
-/// Dropping the directory is not enough on its own. An earlier version of this
-/// kept the digits of the file name, which are the statement's own date: it
-/// printed `doc-20190630`, a real date out of the user's financial records,
-/// into output whose whole purpose is to be pasted somewhere public.
+/// FNV-1a over the file stem, four hex digits, as `extraction_bench::tag` does. Never keep the
+/// file name's digits: they are the statement's date, and this output gets pasted publicly.
 fn tag_for(path: &Path) -> String {
     let name = path
         .file_stem()
@@ -277,16 +267,9 @@ fn tag_for(path: &Path) -> String {
 
 /// Render one document to the images every run of it will be given.
 ///
-/// Separate from the call so the repeats share one rasterization: the images are
-/// identical by construction, and rendering a multi-page statement is the
-/// expensive half on a machine this size.
-///
-/// Rasterized rather than handed over as a PDF, and that is the whole trick.
-/// `payload_for` sends a PDF's text layer when it has one, so passing the file
-/// would measure poppler reading itself. Rendering to images forces the vision
-/// path onto a document whose answer is already known.
-/// The error carries the page count rather than a built row, so the caller stays
-/// the only place that turns a failure into a scored row.
+/// Shared by the repeats, since rendering is the expensive half. Images, never the PDF:
+/// `payload_for` would send the text layer, measuring poppler instead of the vision path.
+/// The error carries the page count, so only the caller builds a scored row.
 async fn prepare(case: &Case) -> Result<Vec<media::PreparedImage>, (usize, String)> {
     let bytes = std::fs::read(&case.path).map_err(|e| (0, format!("read: {e}")))?;
     let candidates: Vec<&str> = case.passwords.iter().map(String::as_str).collect();
