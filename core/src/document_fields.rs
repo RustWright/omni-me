@@ -1,16 +1,8 @@
 //! Deriving archive fields from a document, without a model where possible.
 //!
-//! A statement is the one document kind this project can read deterministically:
-//! `statement::parse` already turns the CSV exports into rows and, crucially,
-//! already knows *what it was able to check*. This module turns that into
-//! `DocumentFieldsExtracted` so the archive gets a parser-sourced answer for the
-//! documents that admit one, and a model is asked only about the rest.
-//!
-//! `verified` is not "a parser produced it". It is "something checked
-//! this against a figure the bank states about itself" — see
-//! [`DocumentField::verified`]. The distinction is load-bearing here because
-//! several CSV exports parse perfectly while declaring nothing, so a clean parse
-//! and a checked parse look identical from the outside.
+//! Parser-sourced fields for statements, which `statement::parse` reads and knows what it checked;
+//! a model handles the rest. `verified` means checked against the bank's own figures, not merely
+//! parsed ([`DocumentField::verified`]): some exports parse cleanly declaring nothing.
 
 use chrono::Utc;
 
@@ -82,13 +74,8 @@ impl StatementFormat {
     /// Header columns that must all be present for this format to claim a
     /// file. Empty for the headerless format, which is why it is the fallback.
     ///
-    /// These are stricter than the parsers themselves, deliberately. A
-    /// parser treats a column it can work without as optional — the transfer
-    /// map takes `running balance` and `transferwise id` as `Option`, so with
-    /// only `date` and `amount` present it accepts a brokerage export and
-    /// produces rows. That is correct when the *user* named the format and
-    /// wrong when nothing did. Tighten the signature here, never the parser:
-    /// the import path depends on that leniency.
+    /// Stricter than the parsers on purpose: their optional columns let one accept another's
+    /// export, right when the user named the format. Tighten here, never the parser.
     fn signature(self) -> &'static [&'static str] {
         match self {
             StatementFormat::Brokerage => &["date", "amount", "balance"],
@@ -109,31 +96,17 @@ impl StatementFormat {
 /// Whether a parse is good enough to say this parser *recognised* the file,
 /// as opposed to having chewed through it producing plausible wreckage.
 ///
-/// All three conditions matter. Rows, because a parser that recognises nothing
-/// returns an empty parse rather than an error. No skipped lines, because a
-/// skip means a line that looked like a transaction could not be read — the one
-/// finding available to every format. And `check_accounting`, because a line
-/// that fell out of the loop unclassified is invisible to both of the others.
+/// Rows (a non-match parses empty), no skips (an unreadable transaction), and
+/// `check_accounting` (an unclassified line), each catching what the others miss.
 fn recognises(parse: &StatementParse) -> bool {
     !parse.rows.is_empty() && parse.skipped.is_empty() && parse.check_accounting().is_ok()
 }
 
 /// Find the one statement parser that recognises `csv`, if exactly one does.
 ///
-/// Two passes, and the order is the point. A file with a header is matched
-/// against the header signatures first, because those identify a format
-/// positively. Only if none matches is the headerless chequing map tried,
-/// and it has to be last: reading by position alone, it will accept any CSV
-/// whose third and fourth columns happen to hold money, so letting it compete
-/// with a positive identification would let column coincidence outvote a
-/// declared header.
-///
-/// Ambiguity returns `None` rather than a best guess. Two signatures
-/// matching one file means the formats overlap in a way nothing here can
-/// adjudicate, and picking the first would make the winner depend on
-/// declaration order in [`StatementFormat::ALL`] — a silent dependency that
-/// would survive every test written against unambiguous files. The document
-/// still reaches the archive; it simply gets its fields from a model instead.
+/// Header signatures first; the headerless chequing map last, since it accepts any CSV with money
+/// in the right columns. Ambiguity returns `None`, never the first match by declaration order;
+/// the document then gets its fields from a model.
 pub fn claim_statement(csv: &str) -> Option<(StatementFormat, StatementParse)> {
     let header = parse::header_columns(csv).unwrap_or_default();
 
@@ -168,17 +141,9 @@ pub const HUMAN_SOURCE: &str = "human";
 
 /// Turn one hand-entered value into the event that folds it onto a document.
 ///
-/// `verified: true`, and this is the one path where that is honest. The
-/// flag means a value was checked against something real, and the archive page
-/// requires the document to be visible beside the field being edited — so
-/// the oracle is the person reading the document. That UI constraint is what
-/// this function's `verified` depends on; do not call it from anywhere that
-/// cannot show the document, because then nothing checked anything.
-///
-/// One key per event. Fields fold by key, so correcting three values writes
-/// three events and each is independently attributable — a single batched event
-/// would make a later reader unable to tell which value the person actually
-/// looked at.
+/// `verified: true`, honest only because the person reading the document beside the field is the
+/// oracle; never call it where the document cannot be shown. One key per event, so each
+/// correction stays attributable.
 pub fn human_correction(
     document_id: &str,
     key: &str,
@@ -198,15 +163,8 @@ pub fn human_correction(
 
 /// A person's tag set for a document, as the one folded `tags` field.
 ///
-/// The whole set, every time. The fold overwrites a key and can never
-/// remove one, so a partial write would leave a tag the person took off still on
-/// the row — which is why the tag set is one field rather than one field per tag,
-/// and why the caller sends what the set should become.
-///
-/// `verified: true` for a narrower reason than [`human_correction`]'s. There
-/// the flag is honest because the person could see the document the value came
-/// from; here the tag *is* their own label, so there is no reading to check. Do
-/// not carry that argument to any other key.
+/// The whole set every time, since the fold cannot remove a key. `verified: true` because a tag
+/// is the person's own label, not a reading; that argument extends to no other key.
 pub fn human_tag_set(document_id: &str, tags: &[Tag]) -> DocumentFieldsExtractedPayload {
     DocumentFieldsExtractedPayload {
         document_id: document_id.to_string(),
@@ -241,18 +199,9 @@ pub fn email_date(
 
 /// The deterministic half: what a parser can say about the bytes alone.
 ///
-/// Synchronous, and takes no reader — which is the point. Ingest calls this one,
-/// so *no model at ingest* is a fact about what is in scope rather than a
-/// comment someone has to remember to obey. It needs nothing remote, so it can
-/// run wherever a document enters: a device's background queue, the server, a
-/// backfill. The model half pays network latency and is scheduled separately.
-///
-/// No MIME gate. Bulk ingest labels plenty of files
-/// `application/octet-stream`, and gating on a declared type would silently send
-/// those to a model instead. Valid UTF-8 is the only precondition — which
-/// excludes PDFs and images by construction — and [`claim_statement`]'s
-/// signature test is strict enough to be the real filter. Putting a second,
-/// weaker test in front of it would only ever subtract.
+/// Synchronous with no reader, so "no model at ingest" is structural. No MIME gate: bulk ingest
+/// mislabels files, valid UTF-8 already excludes PDFs and images, and [`claim_statement`] is the
+/// real filter.
 pub fn parser_fields(document_id: &str, bytes: &[u8]) -> Option<DocumentFieldsExtractedPayload> {
     let text = std::str::from_utf8(bytes).ok()?;
     let (format, parse) = claim_statement(text)?;
@@ -261,19 +210,9 @@ pub fn parser_fields(document_id: &str, bytes: &[u8]) -> Option<DocumentFieldsEx
 
 /// Derive a document's fields, preferring the answer that can be checked.
 ///
-/// The parser is tried first and the model only on its refusal, which is the
-/// ordering [`DocumentField::rank`] already encodes — asking a model about a
-/// file a parser can read costs money to produce a value that would lose the
-/// fold anyway.
-///
-/// Ingest does not call this; it calls [`parser_fields`] directly. This is the
-/// scheduled path, and the two are not interchangeable: the reader is the half
-/// that reaches the network, so it belongs to a batch that can be retried, rated
-/// and paused, not to the request that files a document.
-///
-/// `None` means no fields could be derived: no parser recognised the file and
-/// either no reader is configured or it failed. That is a normal outcome, not
-/// an ingest failure — the document is already archived and findable by name.
+/// Parser first, model only on refusal, as [`DocumentField::rank`] orders them. The scheduled
+/// path; ingest calls [`parser_fields`], keeping the network out of filing. `None` is a normal
+/// outcome: the document is archived and findable anyway.
 pub async fn derive_fields(
     document_id: &str,
     bytes: &[u8],
@@ -319,20 +258,9 @@ pub async fn derive_fields(
 
 /// The fields a recognised statement yields, ready to append as an event.
 ///
-/// ## What `verified` means here
-///
-/// One question decides it: did anything check the rows against a figure the
-/// bank states about itself? [`StatementParse::import_blockers`] is empty both
-/// when every check passed and when the format offered none, so
-/// [`StatementParse::verifiability`] is consulted to tell those apart — exactly
-/// the collapse its doc comment warns against.
-///
-/// The flag then applies to the fields that oracle actually covers. A walked
-/// balance chain confirms the row set is complete and correctly signed, so the
-/// period bounds, the row count and the closing balance inherit it. `kind` and
-/// `verifiability` do not: one is this parser's classification and the other is
-/// a description of the check itself, and neither was measured against
-/// anything.
+/// `verified` asks [`StatementParse::verifiability`], since empty `import_blockers` also means "no
+/// checks". It covers what the balance walk confirms (period, row count, closing balance), never
+/// `kind` or `verifiability`, which nothing measured.
 pub fn fields_from_statement(
     document_id: &str,
     format: StatementFormat,

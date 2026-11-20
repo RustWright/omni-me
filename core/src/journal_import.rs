@@ -1,25 +1,9 @@
 //! hledger journal → `DraftImportedTransaction` list.
 //!
-//! Inverse of `journal_file::render_transaction`. Walks an hledger file
-//! (resolving `include` globs per the POC 0.1b harness at
-//! `.archive/poc/ledger-parse/src/main.rs`) and produces a side-effect-free
-//! `ImportedJournal` value containing draft transactions, per-account stats,
-//! and per-file parse errors. The caller (`tauri-app::commands::journal_import`)
-//! is responsible for filtering, A2 rewriting, dedup, and event emission.
-//!
-//! Elided posting amounts are filled in by an in-house per-commodity sum-and-
-//! negate pass (`infer_elided_postings`). Single-currency transactions yield one
-//! synthesized balancing posting; multi-currency transactions expand into one
-//! balancing posting per commodity. `@`/`@@` prices drive the *cost* of the
-//! elided leg (so balances are ledger-faithful) but are not carried onto
-//! postings — the cost is fully captured by the explicit balancing legs.
-//! Transactions with more than one elided posting are skipped with a
-//! `balance_failures` entry.
-//!
-//! The A2 rewriter lives at the bottom of this module: `apply_a2_rewriter`
-//! walks draft postings, calls `accounts::strip_business_prefix`, and appends the
-//! `type:business` posting tag when the segment was present. Co-located because
-//! the rewriter and the parser share `DraftImportedTransaction`.
+//! The inverse of `journal_file::render_transaction`: a side-effect-free `ImportedJournal`
+//! (drafts, account stats, parse errors), resolving `include` globs; the caller filters, dedupes
+//! and emits. Elided amounts are filled per commodity at cost (`infer_elided_postings`); two
+//! elided postings go to `balance_failures`. The business-tag rewriter sits at the bottom.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -332,12 +316,8 @@ fn consume_items(ledger: ParserLedger, parent: &Path, source: &Path, state: &mut
 
 /// One hledger transaction in omni's own shapes, before anything file-specific.
 ///
-/// Extracted from [`convert_transaction`] so the assistant's
-/// `transaction.record` action can reuse it. Do not write a second parser
-/// for this syntax. Elided amounts, `@@` total-cost prices, virtual-posting
-/// refusal and inline header tags are each subtle, each already solved here, and
-/// each silently wrong when reimplemented — `unsupported_syntax`'s doc comment is
-/// a list of exactly those mistakes, made once already.
+/// Shared with `transaction.record`. Never write a second parser for this syntax: elision,
+/// `@@` costs, virtual postings and header tags are each silently wrong when redone.
 pub(crate) struct ParsedEntry {
     pub date: NaiveDate,
     pub description: String,
@@ -347,12 +327,8 @@ pub(crate) struct ParsedEntry {
 
 /// Read exactly one transaction out of free hledger text.
 ///
-/// Exactly one, and the refusals are not pedantry. Nothing here is an
-/// import: this reads a snippet a model wrote, and one approval must correspond
-/// to one ledger entry. Two transactions in the text would author two events off
-/// a card describing one, and none means the text was prose the parser skipped
-/// rather than an entry — the case that would otherwise reach the user as an
-/// approval for nothing.
+/// Exactly one, since one approval must be one entry: two would author two events off one card,
+/// and none means the parser skipped prose, an approval for nothing.
 pub(crate) fn parse_one_entry(text: &str) -> Result<ParsedEntry, String> {
     let ledger = crate::ledger::parse(text).map_err(|e| e.to_string())?;
     let mut txns = ledger.items.iter().filter_map(|i| match i {
@@ -490,32 +466,11 @@ fn convert_transaction(
 /// the transaction lands in `balance_failures` where the user can see it,
 /// instead of being imported as something it isn't.
 ///
-/// Each one used to be silently *misread* rather than rejected:
-///
-/// * Virtual postings. `convert_explicit_posting` never read
-///   `ParserPosting::reality` (the word appeared nowhere in `core/src`), so
-///   `ledger-parser` stripped the brackets and `[Assets:Budget:Food] 50.00 CAD`
-///   was imported as a real posting — inventing 50 CAD of assets and net
-///   worth. `infer_elided_postings` then summed virtual amounts into the same
-///   pot as real ones, where ledger keeps the two balances strictly separate.
-/// * Balance assertions. The explicit/elided split is exactly
-///   `p.amount.is_some()` and never consulted `p.balance`, so
-///   `Assets:Cash = 500.00 CAD` (amount `None`) was classified as *the elided
-///   leg* and handed the negation of the other legs — ledger would compute
-///   `500 − running_balance`. It also consumed the transaction's one allowed
-///   elided slot, so a genuinely elided leg in the same entry was rejected.
-///   Assertions were dropped on re-render anyway, erasing every reconciliation
-///   checkpoint in the file.
-/// * Lot prices. `infer_elided_postings` matched only `price` (`@`/`@@`)
-///   and never `lot_price` (`{…}`), so `Assets:NWG 10 NWG {50.00 CAD}` with an
-///   elided cash leg balanced at raw quantity and produced `Assets:Cash -10 NWG`
-///   — a nonsense commodity on a cash account, which then surfaced in
-///   `account_summaries`.
-///
-/// Refusing rather than supporting is a deliberate scope call: a scan of the
-/// user's real journal (10,209 transactions) found zero instances of all
-/// three. If that changes, the failure is visible and the transaction is
-/// recoverable, rather than quietly wrong in the balances.
+/// Each was silently misread before:
+/// - virtual postings (`[Assets:Budget:Food]`) were imported as real money;
+/// - a balance assertion (`= 500.00 CAD`, no amount) was taken as the elided leg;
+/// - a lot price (`{50.00 CAD}`) was ignored, minting a nonsense commodity on cash.
+/// Refused, not supported: a real journal had none of them, and a refusal is visible.
 fn unsupported_syntax(t: &ParserTxn) -> Option<String> {
     for p in &t.postings {
         let what = match p.reality {
@@ -555,15 +510,9 @@ fn convert_explicit_posting(p: &ParserPosting) -> Option<Posting> {
     if commodity.is_empty() {
         return None;
     }
-    // We deliberately do NOT carry the source `@`/`@@` price onto the posting.
-    // It is fully redundant with the (now-explicit) balancing legs — the cash
-    // leg *is* the cost — and no balance/valuation path reads per-posting
-    // `fx_rate` (base-currency conversion uses P-directive prices). Rendering a
-    // price would also make `core::ledger`/ledger-utils enforce cost-balance on
-    // the regenerated journal, where the lossy per-unit rate (`total ÷ qty`)
-    // can't reproduce the exact `@@ TOTAL` and the transaction fails to balance.
-    // The exact cost still drives elision via the original parser price in
-    // `infer_elided_postings`.
+    // Never carry the `@`/`@@` price: the explicit cash leg is the cost, nothing reads posting
+    // `fx_rate`, and a rendered per-unit rate cannot reproduce `@@ TOTAL`, so the regenerated
+    // entry would fail to balance. The exact cost still drives `infer_elided_postings`.
     Some(Posting {
         account: p.account.clone(),
         commodity,
@@ -573,17 +522,9 @@ fn convert_explicit_posting(p: &ParserPosting) -> Option<Posting> {
     })
 }
 
-/// One elided posting balances each commodity in the explicit postings at
-/// cost — exactly as ledger does. A priced leg contributes its cost in the
-/// quote commodity (`@ unit` → `qty × unit`; `@@ total` → the total, signed by
-/// the posting's direction); an unpriced leg contributes its own amount. For a
-/// single-commodity transaction this yields one balancing posting; for a
-/// multi-commodity entry (e.g. an opening balance recording VUN + Cash + Equity)
-/// it expands into one posting per commodity.
-///
-/// Costs are computed from the original parser postings so `@@ TOTAL` is exact —
-/// the per-unit `fx_rate` we derive for display would reintroduce rounding.
-/// FX rates are not inherited onto the elided side; it is the cost basis itself.
+/// Balances each commodity at cost, as ledger does (a priced leg counts its cost, an unpriced one
+/// its amount), one posting per commodity. Costs come from the parser postings, so `@@ TOTAL`
+/// stays exact; the elided side inherits no rate.
 fn infer_elided_postings(p: &ParserPosting, explicit: &[&ParserPosting]) -> Vec<Posting> {
     let mut sums: BTreeMap<String, Decimal> = BTreeMap::new();
     for ep in explicit {
@@ -712,14 +653,8 @@ fn has_type_business_tag(tags: &[Tag]) -> bool {
         .any(|t| matches!(t, Tag::KeyValue { key, value } if key == "type" && value == "business"))
 }
 
-// ---------------------------------------------------------------------------
-// Stable content hash — FNV-1a 64-bit → 16-char lowercase hex.
-//
-// FNV-1a is spec-defined (RFC 3-bis draft) and reproducible across platforms +
-// Rust versions, unlike `std::collections::hash_map::DefaultHasher`. Inputs
-// are concatenated with `\u{1F}` (Unit Separator) so two distinct field-tuples
-// can't be confused by accidental concatenation collisions.
-// ---------------------------------------------------------------------------
+// Stable content hash: FNV-1a 64-bit as 16 hex chars, reproducible unlike `DefaultHasher`.
+// Fields join with `\u{1F}` so distinct tuples cannot collide by concatenation.
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x100_0000_01b3;
@@ -799,17 +734,8 @@ mod tests {
     Assets:Cash
 ";
 
-    /// Importing a journal that declares accounts must work — including
-    /// omni-me's own regenerated `budget.journal`, where the `JournalFile`
-    /// projection writes an `account <name>  ; commodity:<c>` block for every
-    /// per-account override (rename / hide / liquid).
-    ///
-    /// Absence test. The importer and the balance reader had disjoint prep
-    /// passes: the reader stripped `account` blocks, the importer did not, and
-    /// `ledger-parser` errors on them — so a single override made the *entire*
-    /// import fail with zero transactions. One such directive is already sitting
-    /// in real user data, which makes this a live blocker on any clean
-    /// re-import rather than a hypothetical.
+    /// A journal declaring accounts, as omni-me's own `budget.journal` does, must import; one
+    /// `account` block once failed the whole import.
     #[test]
     fn imports_a_journal_that_declares_accounts() {
         let dir = TempDir::new().unwrap();
@@ -853,11 +779,7 @@ account Assets:Cash  ; commodity:CAD
     /// The three constructs omni-me refuses must land in `balance_failures`
     /// with a readable reason, not be silently misread.
     ///
-    /// Absence test: each case previously *succeeded* and produced wrong money.
-    /// A virtual posting was imported as real (inventing assets); a
-    /// balance-assertion-only posting was treated as the elided leg and handed
-    /// the negation of the other legs; a lot price was ignored so the elided leg
-    /// balanced at raw quantity and minted a nonsense commodity.
+    /// Each case once succeeded with wrong money (see `unsupported_syntax`).
     #[test]
     fn unsupported_hledger_syntax_is_refused_and_reported() {
         let cases: [(&str, &str); 3] = [

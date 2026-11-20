@@ -1,19 +1,6 @@
-//! In-process pluggable-text-accounting (PTA) engine — wraps `ledger-parser` +
-//! `ledger-utils` so downstream features can compute balances and run queries
-//! without shelling out to hledger.
-//!
-//! Validated against the user's real 5,826-transaction production journal in
-//! POC 0.1b (desktop) and POC 0.1c (Android arm64); both produced byte-identical
-//! results.
-//!
-//! Used by:
-//! - the financial-health dashboard (balance aggregation across accounts).
-//! - unified reconciliation review (`Unmatched`-account balance check).
-//! - the statement-reconciliation balance check.
-//! - the ad-hoc transaction filter DSL.
-//!
-//! Scope deliberately stays *read-side*. Writes go through the event store +
-//! journal-file projection.
+//! In-process plain-text accounting over `ledger-parser` and `ledger-utils`, no hledger binary,
+//! validated byte-identical on desktop and Android against a real journal. Read-side only;
+//! writes go through events and the journal-file projection.
 
 use ledger_parser::{Ledger, LedgerItem};
 use ledger_utils::balance::Balance;
@@ -65,16 +52,9 @@ pub fn balances(content: &str) -> Result<Balance, LedgerError> {
 /// behind [`balances`] and [`parse_artifacts`], so a caller that needs both
 /// balances and prices doesn't re-parse the journal for each.
 ///
-/// `SimplifiedLedger` enforces per-transaction balance by *raw* amount — it
-/// ignores `@`/`@@` cost and only tolerates a single 2-commodity exchange.
-/// Real `ledger` cost-balances, so legitimate cost-annotated entries it
-/// accepts — notably zero-cost crypto acquisitions (`0.000088 ETH @@ 0.00
-/// CAD`, where the cash leg is 0) — make `SimplifiedLedger` reject the whole
-/// journal as unbalanced. `ledger bal` itself is just a per-account,
-/// per-commodity sum of posting amounts, so when the strict path rejects we
-/// fall back to that: identical results for ordinary journals, correct
-/// (ledger-faithful) results for the cost-balanced ones. The rendered journal
-/// always has explicit amounts, so no elision is needed here.
+/// `SimplifiedLedger` balances by raw amount and rejects valid cost entries (zero-cost
+/// `@@ 0.00 CAD` acquisitions), so on rejection this falls back to `ledger bal`'s per-account,
+/// per-commodity sum: identical for ordinary journals, faithful for the rest.
 pub fn balances_from(ledger: &Ledger) -> Balance {
     match SimplifiedLedger::try_from(ledger.clone()) {
         Ok(simplified) => Balance::from(&simplified),
@@ -113,19 +93,9 @@ pub fn parse_artifacts(content: &str) -> Result<JournalArtifacts, LedgerError> {
     let ledger = parse(content)?;
     let balance = balances_from(&ledger);
     let mut prices = Prices::new();
-    // KNOWN LIMITATION (reviewed 2026-08-26, deferred): `insert_from` applies
-    // `get_commodity_prices` and *then* `get_prices_from_transactions` into the
-    // same per-date map, so a rate inferred from any two-commodity transaction
-    // overwrites an explicit `P` directive on the same date — one CAD/USD
-    // transfer carrying a wire fee would re-rate every foreign holding from that
-    // date forward. Not fixable without upstream help: `add_prices` and both
-    // `get_*` helpers are private in ledger-utils 0.6, so the precedence can't
-    // be reordered from here.
-    //
-    // Currently unreachable: `render_exchange_rate` is the only writer of `P`
-    // lines and the live journal contains none, so no date can hold both kinds
-    // of rate. REVISIT if `P` directives start appearing for a pair that also
-    // shows up in transactions — i.e. once FX rates are actually being recorded.
+    // Known limitation: a rate inferred from a transaction overwrites a same-date `P` directive,
+    // and ledger-utils 0.6 keeps the order private. Unreachable while no `P` line shares a date
+    // with such a transaction; revisit once FX rates are actually recorded.
     prices.insert_from(&ledger);
     Ok(JournalArtifacts { balance, prices })
 }
@@ -158,26 +128,11 @@ fn raw_balances(ledger: &Ledger) -> Balance {
 
 /// Normalize an hledger file into something `ledger-parser` v6 will accept.
 ///
-/// One helper, two callers — this module (which reads balances back out of
-/// `budget.journal`) and `journal_import` (which reads a user's journal in).
-/// They used to have *disjoint* prep passes, and each one's gap was the other's
-/// fix: this side stripped `account` blocks but not malformed `P` directives,
-/// the import side did the reverse. Since the `JournalFile` projection writes an
-/// `account` block for every per-account override, importing omni-me's own
-/// regenerated journal failed wholesale — and one such directive is already
-/// present in real user data.
-///
-/// Three normalizations, none of which drops balance information:
-///
-/// 1. `account` blocks are removed. `ledger-parser` errors on them, and they
-///    carry no balances — the overrides they encode (rename / hide / liquid)
-///    live in the DB. A single one otherwise collapses every balance view.
-/// 2. Status markers are spaced out — see [`normalize_status_marker`].
-/// 3. `P` price directives are kept when they carry a time component and
-///    dropped when they don't. Not dropped wholesale: `insert_from` reads
-///    these for base-currency conversion, so stripping them all here would
-///    silently un-price every foreign holding. `ledger-parser` v6 requires the
-///    time, which hand-written journals routinely omit.
+/// Shared by balance reading and `journal_import`, whose separate passes each missed a case. No
+/// normalization drops balance information:
+/// - `account` blocks go (the parser errors on them; overrides live in the DB);
+/// - status markers are spaced ([`normalize_status_marker`]);
+/// - `P` directives without a time go, the rest stay, since conversion reads them.
 pub(crate) fn prep_content(content: &str) -> String {
     let mut kept: Vec<String> = Vec::new();
     let mut in_account_block = false;
@@ -450,14 +405,8 @@ account Assets:Cash  ; commodity:CAD
     /// Every description shape that changes the *structure* of an hledger
     /// header line must still round-trip to correct balances.
     ///
-    /// This is an absence test: it asserts the file does not fail to parse. No
-    /// fix commit would produce it, because each case is a payee string nobody
-    /// would think to write by hand — they arrive from bank CSV description
-    /// columns, which is exactly why `journal_import` already strips `**` on
-    /// the way in while no *write* path did on the way out. One unlucky payee
-    /// used to abort `parse_ledger` for the whole file, and `account_summaries`
-    /// then falls back to empty, so net worth, Accounts and the dashboard all
-    /// went blank together.
+    /// Payees from bank CSVs nobody would write by hand; one used to abort the whole parse and
+    /// blank net worth, Accounts and the dashboard together.
     #[test]
     fn hazardous_descriptions_still_parse() {
         use crate::events::{Posting, TransactionRecordedPayload};
