@@ -341,3 +341,8 @@ edit site carries their reasoning. These are settled. Do not re-open one without
   answering with a link, and a People tab with search. The tab is kept despite screens retiring
   for chat, because it must work when the assistant is down or slow: search and the person view
   read local records with no model call.
+- **120.** The person view is section 3 of `design/0102/`: read-only with Undo and "Wrong?" on its
+  links, a source chip on every fact, and roles, keep-in-touch cadence and project or goal links
+  left to the people data prep ([0108]). The People tab searches locally by text and spelling
+  closeness, one matcher shared with "Someone I know…" (118), never semantically: questions in
+  plain language go to the assistant.

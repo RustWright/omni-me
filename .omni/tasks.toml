@@ -731,7 +731,7 @@ ref    = "tasks.md § Alongside Cycle 6"
 [[task]]
 id     = "omni-me-0102"
 title  = "UI design session: render plan card, picker, person view, timescale view"
-status = "todo"
+status = "done"
 size   = "USER"
 ref    = "tasks.md § Cycle 6"
 

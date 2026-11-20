@@ -4,9 +4,10 @@
 live in `RULINGS.md`, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`), rationale in
 `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
-## ▶ NEXT ACTION — finish [0102] with him: his reactions to sections 1–3 of `design/0102/index.html`
-Section 4 is ruled (110); the render already shows 93 and 111–115, and 98's expiry is ruled. Sections 1
-and 2 are ruled (117, 118). Section 3's way in is ruled (119); next, his verdict on its other points (asked). [0101] is done; its judgment calls are in overlay `DECISION_LOG_2026-11-20.md`, worth a skim.
+## ▶ NEXT ACTION — his pick of the next Cycle 6 item (asked 2026-11-20)
+[0102] is done: `design/0102/` is the ruled design (110, 117–120). The `tasks.md` Cycle 6 list is in
+dependency order; which open item comes first is his call. [0101]'s judgment calls are in overlay
+`DECISION_LOG_2026-11-20.md`, worth a skim.
 
 ⛔ Live is the pause: every live step waits for his go, one at a time.
 ⛔ **Never `cargo build`/`test` on this box** (`project-dev-machines-and-build-limits`); the mock demo

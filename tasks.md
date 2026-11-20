@@ -18,10 +18,8 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 
 ## Cycle 6: [0074] tasks, planning, people
 
-Rulings 90–109; evidence and design input in `PUSH_0074_RESEARCH.md`. In dependency order. Prep
+Rulings 90–120, the UI ruled in `design/0102/`; evidence and design input in `PUSH_0074_RESEARCH.md`. In dependency order. Prep
 and design sessions need him; builds follow them.
-- [0102] **UI design session** (fresh session): render the plan card, picker card, person view and
-  a multi-timescale view; ruling 100 leaves Today-vs-timescales to his reaction. [USER]
 - [0103] **Task data prep, offline** (ruling 105): pull the hub indexes and his native tasks
   locally, find the record shape with him, import as the seed. Before [0107]'s data model. [USER, M]
 - [0104] **Reminder spike** (ruling 96): does `tauri-plugin-notification` `Schedule::At` with
@@ -46,7 +44,7 @@ and design sessions need him; builds follow them.
   lines (98), block reminders, the load measure (99). Needs [0104], [0106]. [L]
 - [0110] **People build:** mentions, facts, resolution, pickers and group cards (102–104), merge
   and unmerge reversible for every attached record from the first event, the person view and the
-  People tab with model-free search (118, 119). Needs [0108]. [L]
+  People tab with model-free search (118–120), per `design/0102/`. Needs [0108]. [L]
 
 ## Waiting on his decision
 
