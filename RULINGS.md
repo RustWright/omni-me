@@ -337,3 +337,7 @@ edit site carries their reasoning. These are settled. Do not re-open one without
   until a second mention or his confirmation, and misspellings handled in "Someone I know…": a
   search of everyone in the row, prefilled with the name, then one typo question (a hidden alias,
   or a shown "also" name).
+- **119.** A person view is reached three ways: a name tapped in chat or on a card, the assistant
+  answering with a link, and a People tab with search. The tab is kept despite screens retiring
+  for chat, because it must work when the assistant is down or slow: search and the person view
+  read local records with no model call.

@@ -45,7 +45,8 @@ and design sessions need him; builds follow them.
 - [0109] **Planning build:** read-only calendar (96), plan records, the ritual tier and summary
   lines (98), block reminders, the load measure (99). Needs [0104], [0106]. [L]
 - [0110] **People build:** mentions, facts, resolution, pickers and group cards (102–104), merge
-  and unmerge reversible for every attached record from the first event. Needs [0108]. [L]
+  and unmerge reversible for every attached record from the first event, the person view and the
+  People tab with model-free search (118, 119). Needs [0108]. [L]
 
 ## Waiting on his decision
 
