@@ -244,8 +244,12 @@ edit site carries their reasoning. These are settled. Do not re-open one without
   current?" line instead of its items; a native task untouched for 4 weeks is offered for drop in
   the weekly review. Hub surfacing is a 4-week trial of acted versus dismissed, after which the
   weekly review asks whether it stays.
-- **93.** Calibration is of his estimates, on native tasks: estimate at planning, actual asked at
-  completion. Project work keeps Claude's `XS`–`L` sizing, which log actuals may later check. No
+- **93.** Calibration is of his estimates, on native tasks: estimate at planning; the actual from
+  a start/pause/stop timer when he used one, else asked at completion. A timed session keeps both
+  active and elapsed time, and scheduling calibrates on elapsed, because breaks take day time. A
+  timer running well past its block gets one nudge. Start sits on the block reminder and on the
+  current block in the view; pause and stop on the view, an exception to read-only like Undo.
+  Project work keeps Claude's `XS`–`L` sizing, which log actuals may later check. No
   session-to-task tag.
 - **94.** No areas: a task without a project stands alone. Goals sit above projects, kept light,
   with gates only where evidence supports them.
@@ -256,8 +260,10 @@ edit site carries their reasoning. These are settled. Do not re-open one without
   so plan approval can earn autonomy. omni-me fires its own block reminders.
 - **97.** The day plan is mixed: blocks for deep work, an untimed list for small things.
 - **98.** Rituals are assistant-initiated: a morning day-plan proposal, an evening shutdown, a weekly
-  plan and a light monthly review. The morning plan has its own ritual tier: one silent push at a
-  set time outside quiet hours, the proposal expiring at noon. Evening, weekly and monthly ride
+  plan and a light monthly review. The morning plan has its own ritual tier: one silent push,
+  drafted at his first activity of the day with a set time only as the fallback (114). Its noon
+  expiry is open, since a late start can pass noon (mine: until its first block starts). Evening,
+  weekly and monthly ride
   the 19:00 summary (60) as code-built count lines that tap through to chat.
 - **99.** Ritual load is measured, never enforced, as in 55: at most 30 minutes a week, a weekly
   review of at most 10 decisions with the rest rolling over, and at most 2 planning or people
@@ -307,3 +313,13 @@ edit site carries their reasoning. These are settled. Do not re-open one without
   job with that brief and its own seat. Not a separate agent: re-planning lives in the chat thread.
 - **113.** The server checks the calendar for changes every 15 minutes, and every plan or re-plan
   fetches it fresh first. Only the "now overlaps" flag on an accepted block waits on the interval.
+- **114.** The day is planned from when he is actually up toward a bedtime target, with no fixed
+  start window: his waking time varies widely, and a plan that assumes an early start on a late
+  morning gets ignored whole.
+  The day starts at his first activity (first routine tick, chat, or the push) plus his learned
+  morning routine, and ends at the bedtime target less the evening routine. The bedtime target is
+  the one number he sets, as something to aim at. The evening shutdown shows what tomorrow's
+  bedtime buys, measured, never enforced (99). Day shape: overlay `PLANNING_DAY_SHAPE.md`.
+- **115.** Planning gets named places and a travel time between them, from his estimates, and
+  buffers travel before an event at a different place. Location history (`research.md`
+  § Locations) is its own later cycle and reuses those places, supplying real travel times.

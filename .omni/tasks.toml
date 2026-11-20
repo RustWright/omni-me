@@ -808,3 +808,10 @@ title  = "Calendar and routines data prep, offline"
 status = "todo"
 size   = "USER"
 ref    = "tasks.md § Cycle 6"
+
+[[task]]
+id     = "omni-me-0113"
+title  = "Locations: history as event metadata, on planning's places"
+status = "todo"
+size   = "L"
+ref    = "tasks.md § Later cycles"

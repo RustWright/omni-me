@@ -26,7 +26,8 @@ and design sessions need him; builds follow them.
   locally, find the record shape with him, import as the seed. Before [0107]'s data model. [USER, M]
 - [0104] **Reminder spike** (ruling 96): does `tauri-plugin-notification` `Schedule::At` with
   `allow_while_idle` fire on his phone with the app killed? Plugin 2.8.1 needs tauri ^2.12 and the
-  stack is held below it (deep-link pin): an older plugin, or the upgrade. [S]
+  stack is held below it (deep-link pin): an older plugin, or the upgrade. Also: can a reminder
+  carry a Start action button (the timer, ruling 93)? [S]
 - [0105] **Test gaps before the summary and tier changes** (Cycle 5 review, `reviews/2026-11-16-
   test-gaps.md`, this machine only): T3, T7, T10, T11, T12, T13, T17. Before [0106]. [M]
 - [0106] **`CheckInPolicy` into named scheduled prompts**, each with its own tier, due-check and
@@ -37,8 +38,8 @@ and design sessions need him; builds follow them.
   vCard export; check To/Cc and whether `watched_label` holds sent mail. Settles the fact shape
   (102) and which people purpose comes first. [USER, L]
 - [0112] **Calendar and routines data prep, offline** (105): pull his calendar locally, count the
-  all-day events and how they are marked (reviews 111), and enter his routines so the fit check
-  has real minutes. Before [0109]. [USER, M]
+  all-day events and how they are marked (reviews 111), and enter his routines, places and travel
+  times (114, 115) so the fit check has real minutes. Before [0109]. [USER, M]
 - [0109] **Planning build:** read-only calendar (96), plan records, the ritual tier and summary
   lines (98), block reminders, the load measure (99). Needs [0104], [0106]. [L]
 - [0110] **People build:** mentions, facts, resolution, pickers and group cards (102–104), merge
@@ -220,6 +221,10 @@ generic IMAP config source.
   written when its code is next edited. T5 (stored rows after a type change) also gates areas. [M]
 
 ## Later cycles
+
+- [0113] **Locations** (`research.md` § Locations, ruling 115): location history as event
+  metadata, reusing planning's named places and feeding them real travel times. Its own cycle:
+  background location, battery, and the most sensitive data the app would sync. [L]
 
 - [0091] **Recurring detection to the server**, when it migrates onto the contract: it needs no
   offline run, and every open device runs it today (a duplicate risk, unverified). [M]
