@@ -1134,9 +1134,9 @@ read in the 2.4.0 or tauri 2.10.3 source.
 - [T][S] The action payload is only `{actionId}`: 2.4.0 never sets `sourceJson`, so it never says
   which notification was tapped. Encode the block in the action id (`start:<block>`, one action
   type per block).
-- Consequence for ruling 93's Start on the block reminder: it works only while the app is alive.
-  A cold-start tap needs the launch intent's extras read by the app itself (MainActivity already
-  carries custom code), or Start falls back to the block in the view, which the tap opens.
+- Consequence for ruling 93's Start on the block reminder: the plugin delivers it only while the
+  app is alive. His call (2026-11-20): MainActivity reads the launch intent's extras itself and
+  hands the Start over the way `commands::deep_link` hands over a tab, so it works either way.
 
 ---
 
