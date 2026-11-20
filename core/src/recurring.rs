@@ -1,19 +1,8 @@
 //! Recurring-transaction detection.
 //!
-//! The W3 scanner sweeps the transaction log for repeat patterns and emits
-//! `RecurringTransactionDetected` events for new candidates. The dashboard
-//! (4.6) shows `confirmed` rows; the 5.4 confirm UI flips `detected` →
-//! `confirmed` (or `dismissed`). This module owns the pure detection
-//! logic; the Tauri layer handles the read/write of events and the
-//! "skip already-tracked patterns" idempotency check.
-//!
-//! Algorithm:
-//!   1. Group expense legs by `(description, amount, commodity)`.
-//!   2. For each group with ≥3 occurrences, compute gaps between
-//!      consecutive dates (sorted ascending).
-//!   3. Hand the gaps to [`classify_cadence`] — if it returns
-//!      `Some(cadence_days)`, the group is a detected pattern.
-//!   4. Emit one `DetectedPattern` per qualifying group.
+//! Pure detection; callers emit events and skip tracked patterns. Expense legs group by
+//! (description, amount, commodity); a group of three or more whose date gaps
+//! [`classify_cadence`] accepts becomes one `DetectedPattern`.
 
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
@@ -46,14 +35,8 @@ pub const MIN_OCCURRENCES: usize = 3;
 /// Decide whether a list of inter-occurrence gaps (in days) is regular
 /// enough to call recurring, and if so what cadence to snap to.
 ///
-/// Returns `Some(cadence_days)` if the gaps qualify, `None` if they're
-/// too irregular. The cadence value should snap to one of the named
-/// cadences when possible (7 = weekly, 14 = biweekly, 30 = monthly)
-/// since those are what the dashboard's `RecurringCard` widget labels;
-/// otherwise return the median gap.
-///
-/// Callers guarantee `gaps.len() >= MIN_OCCURRENCES - 1` (i.e., at
-/// least 2 gaps).
+/// `None` when too irregular; else snapped to 7, 14 or 30 (what `RecurringCard` labels) or the
+/// median gap. Callers pass at least two gaps.
 pub fn classify_cadence(gaps_days: &[u32]) -> Option<u32> {
     if gaps_days.len() < MIN_OCCURRENCES - 1 {
         return None;

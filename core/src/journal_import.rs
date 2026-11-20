@@ -462,11 +462,7 @@ fn convert_transaction(
     })
 }
 
-/// Refuse — loudly — the three hledger constructs omni-me does not model, so
-/// the transaction lands in `balance_failures` where the user can see it,
-/// instead of being imported as something it isn't.
-///
-/// Each was silently misread before:
+/// Refuse three unmodelled constructs into `balance_failures`; each was silently misread before:
 /// - virtual postings (`[Assets:Budget:Food]`) were imported as real money;
 /// - a balance assertion (`= 500.00 CAD`, no amount) was taken as the elided leg;
 /// - a lot price (`{50.00 CAD}`) was ignored, minting a nonsense commodity on cash.

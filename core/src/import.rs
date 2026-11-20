@@ -1,17 +1,8 @@
 //! Obsidian vault import — pure parsing + directory-walking logic.
 //!
-//! This module only reads from disk; it never emits events. The caller
-//! (Tauri command layer, later phase 5.6) is responsible for turning
-//! `ParsedNote`s into `JournalEntryCreated` / `GenericNoteCreated` events.
-//!
-//! Design:
-//!   - `parse_markdown(text)` splits frontmatter from body and parses
-//!     the frontmatter as YAML. Used both here and in tests.
-//!   - `walk_vault(root)` recursively collects every `.md` file under a
-//!     directory, skipping hidden dirs (`.obsidian`, `.git`, `.trash`)
-//!     and non-markdown files.
-//!   - All I/O errors surface per-file so the UI (phase 5.5 preview)
-//!     can show partial successes instead of failing the whole import.
+//! Read-only; the command layer emits the events. `parse_markdown` splits YAML frontmatter from
+//! the body; `walk_vault` collects `.md` files, skipping hidden dirs. Errors are per file, so a
+//! preview shows partial success.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -105,19 +96,8 @@ fn parse_frontmatter_yaml(raw: &str) -> Result<JsonValue, ImportError> {
 
 /// Split a markdown document into `(frontmatter_yaml, body)`.
 ///
-/// Contract:
-///   - If the content starts with a `---` fence line, find the matching
-///     closing fence (either `---` or `...`) on its own line. Everything
-///     between the fences (exclusive) is the frontmatter. Everything after
-///     the closing fence (with any leading blank line trimmed) is the body.
-///   - If there is no opening fence, frontmatter is `""` and the full
-///     content is returned as body.
-///   - If there is an opening fence but no closing fence, treat as
-///     malformed and return the whole input as body (frontmatter `""`) —
-///     the UI will still let the user import it as a generic note.
-///
-/// Implementation handles both `\n` and `\r\n` line endings (Obsidian on
-/// Windows writes CRLF).
+/// Between a `---` fence and a closing `---` or `...` line is frontmatter; the rest, one leading
+/// blank line trimmed, is body. No fence or no closing fence: all body. Handles CRLF.
 fn split_frontmatter_and_body(content: &str) -> (&str, String) {
     let Some(spans) = scan_fences(content) else {
         return ("", content.to_string());
@@ -132,14 +112,8 @@ fn split_frontmatter_and_body(content: &str) -> (&str, String) {
 
 /// Where the body of a markdown document starts, in bytes.
 ///
-/// `0` for a document with no usable frontmatter — no opening fence, or an
-/// unterminated one — which is the same fallback [`split_frontmatter_and_body`]
-/// takes, since that is exactly the case where the whole input *is* the body.
-///
-/// Exists so a caller that must not touch the frontmatter can slice past
-/// it and keep its bytes. [`split_frontmatter_and_body`] cannot serve that
-/// caller: it hands back an owned body with a leading blank line trimmed, so the
-/// offsets it was built from are gone and nothing can be written back.
+/// `0` without usable frontmatter, as [`split_frontmatter_and_body`] falls back. For callers that
+/// must keep the frontmatter bytes, which that function's trimmed owned body cannot serve.
 pub(crate) fn body_start_offset(content: &str) -> usize {
     scan_fences(content).map_or(0, |spans| spans.body_start)
 }
@@ -302,13 +276,8 @@ pub struct MappedFrontmatter {
 
 /// Split a parsed frontmatter value into typed fields + `legacy_properties`.
 ///
-/// `declared` is the record type's property keys. A key it does not name is not
-/// discarded — it lands in `legacy_properties` and comes back out through the
-/// panel's raw escape hatch, which is what lets an imported Obsidian note keep
-/// frontmatter this install has no declaration for.
-///
-/// Non-object frontmatter (scalar, list, null) goes entirely into
-/// `legacy_properties` since it doesn't fit the property-panel model.
+/// Undeclared keys, and any non-object frontmatter, go to `legacy_properties`, never discarded,
+/// so imported notes keep frontmatter this install has no declaration for.
 pub fn map_frontmatter(fm: &JsonValue, declared: &[&str]) -> MappedFrontmatter {
     let Some(map) = fm.as_object() else {
         return MappedFrontmatter {
@@ -385,17 +354,8 @@ pub enum NoteKind {
 /// Try to extract a `YYYY-MM-DD` date from the start of a filename stem,
 /// tolerating an optional separator-prefixed suffix.
 ///
-/// Matches:
-///   - `"2026-04-22"` → `Some(2026-04-22)` (exact date, canonical)
-///   - `"2026-04-22-note"` → `Some(2026-04-22)` (Obsidian daily-note suffix)
-///   - `"2026-04-22_reflection"` / `"2026-04-22 daily"` / `"2026-04-22.draft"`
-///     → all `Some(2026-04-22)` (common separator conventions)
-///
-/// Rejects:
-///   - `"Random"` → `None` (no date)
-///   - `"2026-04-22abc"` → `None` (no valid separator between date and suffix)
-///   - `"My Note 2026-04-22"` → `None` (date must be at the start)
-///   - `"2026-13-99"` → `None` (invalid date)
+/// Accepts `2026-04-22` alone or followed by `-`, `_`, space or `.` and a suffix. Rejects no
+/// date, an unseparated suffix (`2026-04-22abc`), a date not at the start, and invalid dates.
 pub fn parse_date_prefix(stem: &str) -> Option<NaiveDate> {
     // `YYYY-MM-DD` is 10 ASCII bytes. Guard against non-UTF8 boundary slices.
     if stem.len() < 10 || !stem.is_char_boundary(10) {

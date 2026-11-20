@@ -1,20 +1,8 @@
 //! Removing documents on purpose, bytes and all.
 //!
-//! The one irreversible operation in the archive, and the only place anything in
-//! this project deletes a user's data. Everything here is shaped by that: it
-//! previews before it acts, it counts what it did in a form that cannot flatter
-//! itself, and it refuses to delete bytes anything else still references.
-//!
-//! This never decides *what* to purge. A person does, per group, having
-//! seen every item in it. The model may flag junk; flagging is a proposal, and
-//! deletion is never grantable to autonomy. Why, and the alternatives that were
-//! refused: `docs/src/archive.md`.
-//!
-//! A purge does not empty the event log. The archive event stays, text and
-//! all — the log is append-only and a rebuild replays it. What a purge reclaims
-//! is the *blob*, which is where the bytes actually are, and what it removes from
-//! every read surface is the projection row's content. Those are different
-//! things and conflating them is how "purged" comes to mean "still searchable".
+//! The only place that deletes user data: preview first, honest counts, and never bytes anything
+//! still references. A person decides each group: ruling 3 (RULINGS.md), `docs/src/archive.md`.
+//! It reclaims the blob and clears read surfaces; the log keeps the archive event.
 
 use std::path::Path;
 
@@ -122,18 +110,9 @@ impl PurgeReport {
 
 /// What a purge of everything tagged `tag` would remove.
 ///
-/// Writes nothing and deletes nothing. The same selection the apply half uses,
-/// so the preview cannot drift from what actually happens — the rule
-/// `preview_obsidian_export` states outright.
-///
-/// `archived_before` narrows the group to documents older than an RFC3339 instant,
-/// which is how a retention group is previewed: its members are "tagged X and
-/// past X's rule", not the whole tag. It narrows the one selection rather than
-/// adding a second query, because the preview and the confirm have to be looking at
-/// the same set.
-///
-/// `only` narrows it to the documents a retention scan proposed. Tag and cutoff
-/// alone also select documents another tag keeps, such as one tagged Keep forever.
+/// Writes nothing; the apply half's own selection, so it cannot drift. `archived_before` narrows
+/// a retention group within that one selection; `only` limits it to what a retention scan
+/// proposed, since tag and cutoff alone catch documents another tag keeps.
 pub async fn preview(
     db: &Database,
     tag: &str,
@@ -260,15 +239,9 @@ fn label_for(row: &DocumentRow) -> String {
 
 /// Purge exactly these documents, and reclaim any bytes nothing else needs.
 ///
-/// The caller has already shown this exact list to the user. Nothing here
-/// re-derives a selection; an id that reaches this function is one a person
-/// confirmed. That is what keeps deletion out of autonomy's reach.
-///
-/// The order is load-bearing. Every tombstone is written first, then blobs
-/// are considered — because [`queries::blob_reference_counts`] excludes purged
-/// documents, so a blob becomes reclaimable only once every document naming it
-/// has been tombstoned. Deleting as we went would refuse to free anything a batch
-/// internally shares.
+/// Only ids a person confirmed from the shown list; nothing is re-derived. Tombstones first, then
+/// blobs: [`queries::blob_reference_counts`] ignores purged documents, so deleting as we went
+/// would never free a blob the batch shares.
 pub async fn apply(
     db: &Database,
     writer: &EventWriter,

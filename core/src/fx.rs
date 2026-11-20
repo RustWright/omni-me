@@ -1,15 +1,8 @@
 //! Frankfurter FX rate fetcher.
 //!
-//! Free ECB-sourced daily rates, no API key. Covers CAD/USD/EUR which are
-//! three common demo currencies. AED is handled separately as
-//! manual entry at import time.
-//!
-//! Wire shape: `GET https://api.frankfurter.app/{date|"latest"}?from=X&to=Y`
-//! returns `{ "amount": 1.0, "base": "X", "date": "YYYY-MM-DD", "rates": { "Y": 1.37 } }`.
-//!
-//! `fetch_*` returns a `Vec<FxRateRecord>` because the API supports multiple
-//! `to=` quotes in one request — callers picking up CAD/USD/EUR in one shot
-//! avoid 3 sequential round-trips.
+//! Free daily ECB rates, no key: `GET /{date|latest}?from=X&to=Y` returns `{base, date, rates}`.
+//! `fetch_*` returns a `Vec` because one request takes several `to=` quotes. Uncovered currencies
+//! are entered by hand ([`MANUAL_FX_CURRENCIES`]).
 
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
@@ -17,17 +10,8 @@ use serde::Deserialize;
 
 const FRANKFURTER_BASE_URL: &str = "https://api.frankfurter.app";
 
-/// Currencies the user supplies FX rates for manually because Frankfurter
-/// (our daily-rate source) doesn't cover them. Append here when a new
-/// account in an unsupported currency lands; remove if Frankfurter expands
-/// coverage. Single source of truth — the auto-import batch-review flow
-/// and the journal projection consult this list rather than hard-coding
-/// per-currency knowledge in each handler.
-///
-/// When Frankfurter adds coverage for a currency listed here, removing it
-/// is non-breaking: existing `ExchangeRateRecorded` events stay valid
-/// (user-supplied historical rates remain truthful); future batches
-/// auto-fetch via Frankfurter as soon as the entry is gone.
+/// Currencies Frankfurter lacks, whose rates the user enters; the one list batch review and the
+/// journal consult. Removing one once covered is safe: recorded rates stay valid.
 pub const MANUAL_FX_CURRENCIES: &[&str] = &["AED"];
 
 /// Does this commodity need a user-supplied FX rate at import-review time?
