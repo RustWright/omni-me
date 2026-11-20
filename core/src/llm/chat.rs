@@ -1,22 +1,9 @@
 //! Multi-turn chat: the shape an agent loop needs, and the one the single-shot
 //! `LlmClient` methods cannot express.
 //!
-//! `complete_with_tools` takes one prompt and returns one response. An agent has
-//! to hand tool *results* back and let the model continue, which needs a message
-//! list, the provider's own call ids to answer against, and somewhere to put the
-//! token counts. None of that fits a `&str`.
-//!
-//! ## Instrumentation is part of the contract here, not an add-on
-//!
-//! Every call records latency and token counts, with reasoning tokens counted
-//! separately from completion tokens. They are billed and rate-limited like any
-//! other output token and were roughly 95% of output on the model this was first
-//! measured against, so folding them together misreports both cost and latency.
-//!
-//! Message content is never logged. A model quotes the user's records back,
-//! and a log is the easiest place for that to escape — the promise is written down
-//! in `docs/src/assistant.md` § "What leaves your machine". Counts and timings
-//! only.
+//! A message list with the provider's call ids, so tool results go back to the model.
+//! Every call records latency and tokens, reasoning counted apart: it is billed like output and
+//! can dominate it. Content is never logged (`docs/src/assistant.md` § "What leaves your machine").
 
 use std::time::Duration;
 
@@ -254,14 +241,8 @@ pub struct ChatResponse {
     pub finish_reason: Option<String>,
     /// Which upstream actually served the call, when the endpoint says.
     ///
-    /// Gateways route: a request to OpenRouter names a *model*, and the stack
-    /// that answers is chosen from a dozen candidates at differing
-    /// quantizations. `extra_body` can pin one, but a pin is an instruction —
-    /// this is the evidence. Constrained decoding is a property of the serving
-    /// stack rather than the weights (one vendor's config, same weights, could
-    /// not terminate at all), so a measurement that cannot name its stack is
-    /// unattributable. `None` for endpoints that report nothing, which is most
-    /// of them.
+    /// A gateway pin is an instruction; this is the evidence, and behaviour is a property of the
+    /// serving stack, not the weights. `None` where the endpoint reports nothing, as most do.
     pub provider: Option<String>,
 }
 

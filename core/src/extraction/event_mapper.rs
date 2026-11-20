@@ -1,30 +1,9 @@
-//! Map `ExtractionResult` → `Vec<DraftTransaction>` per handler semantic.
-//!
-//! Two flavors because bank statements and receipts have opposite sign
-//! conventions:
-//!
-//! - Statement extraction — each posting in the result represents one
-//!   row of the statement, signed from the bank's perspective (negative =
-//!   outflow). The handler knows which hledger account corresponds to that
-//!   bank. Each posting becomes a draft with the bank-side posting + an
-//!   `Unmatched` mirror; user assigns the real other-side account during
-//!   batch review.
-//!
-//! - Receipt extraction — one purchase becomes ONE draft, anchored on the
-//!   document's stated total, because that total is the figure a single bank
-//!   charge cancels against and `reconciliation::find_match_candidates` pairs
-//!   only amounts that cancel exactly. Line items become expense legs and a
-//!   balancing leg absorbs whatever they leave unaccounted; we do not yet know
-//!   which card paid, so the credit side stays on `Unmatched` for review.
-//!   Two fallbacks: postings that already settle to zero are used as given (the
-//!   model supplied both legs), and a document stating no total is anchored on
-//!   the sum of its lines instead.
-//!
-//! Both flavors emit deterministic external ids derived from a caller-provided
-//! prefix (e.g. `"meridian-aed-uid-14272"`) so re-processing the same source event
-//! never duplicates rows — `AutoImportProjection`'s UPSERT collapses on the
-//! `{source}-{dedup_key}` composite, and the per-draft `external_id` keeps
-//! committed `TransactionRecorded` events deterministic via the same prefix.
+//! Map an `ExtractionResult` to drafts, in two flavours for opposite sign conventions:
+//! - statement: one draft per row, signed as the bank sees it, plus an `Unmatched` mirror;
+//! - receipt: one draft per purchase, anchored on the stated total (what a bank charge cancels
+//!   against), lines as expense legs, the credit side `Unmatched`; zero-sum postings are used as
+//!   given, and no total means the lines' sum.
+//! External ids derive from a caller prefix, so reprocessing a source never duplicates rows.
 
 use chrono::{NaiveDate, Utc};
 
@@ -93,11 +72,8 @@ pub fn statement_extraction_to_drafts(
 /// Receipt-flavored draft mapping: one draft per purchase, anchored on the
 /// document's stated total, or on the sum of its lines when it states none.
 ///
-/// Deliberately takes no counter-leg resolver. The receipt's `Unmatched`
-/// leg is not a gap waiting to be filled — it is the thing that *cancels*
-/// against the bank row's `Unmatched` so `reconciliation::find_match_candidates`
-/// can pair the two. Resolving it to a real account here would leave nothing to
-/// match on and break the pairing this whole flavor exists to feed.
+/// No counter-leg resolver on purpose: the `Unmatched` leg is what cancels against the bank
+/// row's, so `find_match_candidates` can pair them. Resolving it here breaks the pairing.
 pub fn receipt_extraction_to_drafts(
     result: &ExtractionResult,
     source_prefix: &str,
@@ -280,23 +256,9 @@ fn build_receipt_posting(p: &ExtractedPosting) -> Posting {
         } else {
             p.commodity.clone()
         },
-        // Receipts are extracted as positive costs — keep the sign normalized so
-        // the expense leg is positive and the Unmatched mirror is negative.
-        //
-        // KNOWN TRADE-OFF (reviewed 2026-08-26, kept deliberately): this also
-        // flattens a *genuinely* negative line — a refund or credit printed on
-        // the receipt — into an expense, so a returned item would increase
-        // spending. Removing `.abs()` was tried and reverted: the guard exists
-        // because the extractor sometimes emits a negative for an ordinary
-        // purchase (see `receipt_mapping_normalizes_negative_to_positive`), and
-        // dropping it would invert those instead — trading a rare wrong sign for
-        // a common one. Which failure is actually more common is an empirical
-        // question about real receipts, not something to guess at.
-        //
-        // REVISIT when a real receipt with a refund line is run through
-        // extraction and the output is checked: if the extractor reports refunds
-        // reliably, gate on `p.amount.is_sign_negative()` plus a refund hint
-        // rather than blanket-normalizing.
+        // Normalised positive, which also turns a printed refund into spending; removing `.abs()`
+        // inverts the commoner sign error instead. Revisit with a real refund receipt: if refunds
+        // come back reliably, gate on the sign plus a refund hint.
         amount: p.amount.abs(),
         fx_rate: None,
         tags: vec![],

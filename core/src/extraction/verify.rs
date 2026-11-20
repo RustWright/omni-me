@@ -1,22 +1,8 @@
 //! Post-extraction verification.
 //!
-//! Cross-checks the extractor's output for arithmetic consistency and surfaces
-//! warnings + a possibly-adjusted confidence. The confirm-draft
-//! screen routes anything with `needs_manual_review = true` into a "look at
-//! this carefully" lane rather than auto-committing.
-//!
-//! Checks:
-//! - Receipt / Paystub / BankStatement: when `total` is present, verify
-//!   `sum(posting amounts).abs() ≈ total` within a small tolerance.
-//! - Confidence gate: any extraction below `DEFAULT_CONFIDENCE_THRESHOLD`
-//!   (after any verification-driven adjustment) is flagged for manual review.
-//!
-//! The report also records whether the total cross-check was an independent
-//! comparison at all (`TotalCheck`), so an empty warnings list is never
-//! mistaken for evidence the arithmetic was verified.
-//!
-//! Designed as a pure function — easy to test, easy for the UI to render the
-//! warnings inline next to the extracted fields.
+//! Arithmetic checks on an extraction: postings must sum to a stated `total` within tolerance,
+//! and anything below `DEFAULT_CONFIDENCE_THRESHOLD` needs manual review. `TotalCheck` says
+//! whether the comparison was independent, so no warnings never reads as verified. Pure.
 
 use rust_decimal::Decimal;
 use std::str::FromStr;
@@ -64,13 +50,8 @@ pub struct VerificationReport {
     /// How far the line items missed a stated total, when one was compared and
     /// disagreed. `None` when they reconciled or nothing was compared.
     ///
-    /// Distinct from `total_check`, which records whether the comparison was
-    /// independent rather than what it found. This is the one signal in the
-    /// report that is objective rather than a suspicion: the document states the
-    /// figure itself, so a gap means the extraction is wrong, where a low
-    /// confidence only means the model was unsure. `extract_reconciled` retries
-    /// on it, and the size is carried so a caller can prefer the closest attempt
-    /// rather than the first.
+    /// The report's one objective signal (the document states the figure), unlike confidence.
+    /// `extract_reconciled` retries on it and uses the size to keep the closest attempt.
     pub total_mismatch: Option<Decimal>,
 }
 

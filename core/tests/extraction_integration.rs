@@ -1,8 +1,8 @@
-//! The document extractor against real samples. Ignored by default and outside CI: they spend money on a live endpoint, and failures are
-//! diagnostic. Need `OMNI_EXTRACT_BASE_URL`, `OMNI_EXTRACT_MODEL`, `OMNI_EXTRACT_KEY`, samples
-//! (`receipt.jpg`, `brokerage.pdf`, `paystub.pdf`, `email.txt`) in
-//! `core/tests/fixtures/extraction/`, and `pdftotext`. Run with
-//! `cargo test -p omni-me-core --test extraction_integration -- --ignored`.
+//! The document extractor against real samples. Ignored by default and outside CI: they spend
+//! money on a live endpoint, and failures are diagnostic. Need `OMNI_EXTRACT_BASE_URL`,
+//! `OMNI_EXTRACT_MODEL`, `OMNI_EXTRACT_KEY`, samples (`receipt.jpg`, `brokerage.pdf`,
+//! `paystub.pdf`, `email.txt`) in `core/tests/fixtures/extraction/`, and `pdftotext`.
+//! Run with `cargo test -p omni-me-core --test extraction_integration -- --ignored`.
 
 use std::path::PathBuf;
 

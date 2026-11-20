@@ -40,13 +40,7 @@ pub trait LlmClient: Send + Sync {
 
     /// One turn of a multi-turn conversation, with token counts and latency.
     ///
-    /// Separate from [`Self::complete_with_tools`] because an agent loop needs to
-    /// hand tool *results* back and let the model continue, which a single prompt
-    /// string cannot express.
-    ///
-    /// No default implementation, deliberately. A default that returned
-    /// "unsupported" would let a new provider compile while silently being unable
-    /// to run the assistant; requiring the method makes that a decision someone
-    /// has to make on purpose.
+    /// No default implementation on purpose: an "unsupported" default would let a new provider
+    /// compile while silently unable to run the assistant.
     async fn chat(&self, request: &ChatRequest) -> Result<ChatResponse, LlmError>;
 }

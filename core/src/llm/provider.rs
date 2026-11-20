@@ -1,26 +1,9 @@
 //! Choosing a text-LLM client from credentials.
 //!
-//! Lives in `core` rather than in the server binary because more than one host
-//! needs it: the server processes notes, and the agent runs the assistant. A
-//! second copy in the agent could disagree about which provider a config selects
-//! — and the disagreement would be silent, since both would happily build *a*
-//! client and only the answers would differ.
-//!
-//! Which model to use for which job is not decided here. That is a
-//! benchmarked, per-job choice written into the call site. The jobs are grouped
-//! into five roles, each earning its own model from one discriminator:
-//!
-//! | Role | Jobs | Discriminator |
-//! |---|---|---|
-//! | Interactive reasoner | assistant loop, chat surface | latency budget |
-//! | Batch reasoner | derived beliefs, habits, scheduled reviews | quality, latency-tolerant |
-//! | Quarantined extractor | receipts, statements, photo capture | trust boundary — never holds tools |
-//! | High-volume structurer | note extraction, categorization, NL→query | cost × volume |
-//! | Local | embedder, reranker, speech recognition | never leaves the machine |
-//!
-//! This module turns an `[llm]` section into a client for one named role. The
-//! role selects which `[llm.<role>]` override applies; which model fills a role
-//! is a benchmarked choice recorded in `MODEL_BENCH.md`.
+//! In `core` so the server and agent can never disagree, silently, on what a config selects.
+//! Turns `[llm]` into a client for one role, whose `[llm.<role>]` override applies. The roles
+//! (interactive, batch, quarantined extractor, structurer, local) and their models:
+//! `MODEL_BENCH.md`.
 
 use std::sync::Arc;
 
@@ -37,28 +20,10 @@ use crate::extraction::{
 /// Vendors whose models we are willing to send records to, each with every
 /// namespace spelling we have seen it served under.
 ///
-/// An allowlist, deliberately: an unrecognised vendor is refused, which is a
-/// loud one-line fix, where an unrecognised vendor silently *allowed* would be an
-/// invisible privacy breach. Same reasoning as the closed `Feature` enum — the
-/// unknown case must fail toward safety.
-///
-/// A namespace is a gateway's spelling, not a fact about the vendor, which
-/// is why this is grouped by vendor rather than being a flat list of prefixes.
-/// Z.ai is `z-ai/` on OpenRouter and `zai-org/` on DeepInfra; DeepSeek is
-/// `deepseek/` and `deepseek-ai/`; ByteDance is `bytedance-seed/` and
-/// `ByteDance/`. A flat list is only ever correct for the one gateway it was
-/// written against — this one was written against OpenRouter, and every DeepInfra
-/// spelling was refused until 2026-09-09, *including the model the bench script
-/// itself defaults to*. We screen on one gateway and run production on another,
-/// so adding a vendor means adding every spelling it is served under, and the
-/// grouping is what makes that obligation visible. The canonical name on the left
-/// is read by nothing but the tests and a human; that is its job.
-///
-/// The list is not exhaustive, and is not meant to be. A vendor arrives here
-/// when something needs it, and only once its published licence has actually been
-/// checked — an entry is a privacy commitment, not a catalogue import. An absent
-/// vendor costs one verified line and fails loudly; a wrong one costs the
-/// guarantee and fails silently.
+/// An allowlist: an unknown vendor is refused loudly, never silently allowed.
+/// Grouped by vendor because a namespace is a gateway's spelling (`z-ai/` and `zai-org/`), so a
+/// new vendor needs every spelling it is served under. An entry is a privacy commitment, added
+/// only once its licence is checked.
 const OPEN_WEIGHT_VENDORS: &[(&str, &[&str])] = &[
     ("allen-ai", &["allenai"]),
     ("bytedance", &["bytedance", "bytedance-seed"]),
@@ -89,32 +54,15 @@ const OPEN_WEIGHT_VENDORS: &[(&str, &[&str])] = &[
 /// Namespaces that carry both open and closed weights: the vendor's spellings,
 /// and the prefix that marks the open half.
 ///
-/// `openai/` is the trap this whole check exists for: `openai/gpt-oss-120b` is
-/// open weights, `openai/gpt-5-nano` is not, and they sort next to each other in
-/// any catalogue listing. `google/gemma-*` versus `google/gemini-*` is the same
-/// shape. Alias-keyed for the same reason as above — these two happen to spell
-/// identically on both gateways today, and relying on that is how the other list
-/// went wrong.
+/// The trap this check exists for: `openai/gpt-oss-120b` is open, `openai/gpt-5-nano` is not, as
+/// with `google/gemma-*` and `gemini-*`. Alias-keyed like the list above.
 const MIXED_VENDORS: &[(&[&str], &str)] = &[(&["openai"], "gpt-oss"), (&["google"], "gemma")];
 
 /// Why a model id is refused, or `None` if it may be used.
 ///
-/// ## Why this exists
-///
-/// The committed provider (DeepInfra) also proxies closed models — its
-/// `/v1/openai/models` listing opens with `anthropic/claude-opus-4-8` — and its
-/// privacy policy carves exactly those out: it does not train on submissions
-/// *"except when using Google or Anthropic models, where the receiving company's
-/// training policy applies"*. So one wrong model id, through the same key and the
-/// same base URL, silently voids both the zero-retention guarantee and the
-/// does-not-own-its-models criterion the provider was chosen for.
-///
-/// ## What it does not check
-///
-/// Only namespaced ids (`vendor/name`) are judged. A bare id — `llava`,
-/// `qwen3:8b` — is what a self-hosted Ollama, llama.cpp or vLLM server calls a
-/// local file, and data sent there never leaves the machine, so there is nothing
-/// to protect it from. Hosted gateways always namespace.
+/// The provider also proxies closed models its privacy policy carves out, so one wrong id
+/// through the same key silently voids the zero-retention guarantee. Only namespaced ids are
+/// judged: a bare id (`qwen3:8b`) names a self-hosted local model.
 fn refusal_reason(model: &str) -> Option<String> {
     let Some((vendor, name)) = model.split_once('/') else {
         return None; // bare id ⇒ a local server's own name for a local file
@@ -150,23 +98,10 @@ fn refusal_reason(model: &str) -> Option<String> {
 
 /// Endpoint quirks that are not part of the credentials file.
 ///
-/// Separate from [`Credentials`] because these describe the *deployment* an
-/// endpoint happens to be — a rate cap on a free tier, a gateway that needs its
-/// upstream pinned — rather than which provider the user chose. They also change
-/// between a dev run and production against the same `[llm]` section.
-///
-/// `extra_body` is a gateway concept. Routing preferences
-/// (`provider.only`, `zdr`, `require_parameters`) are OpenRouter's request
-/// vocabulary; a direct provider ignores unknown top-level keys, so setting them
-/// against one is inert rather than an error. Production goes direct to the
-/// committed provider and therefore leaves this empty — which is why the server
-/// passes [`ClientOptions::default`] and only the bench harness populates it.
-/// The privacy guarantee on the direct path comes from the provider's own policy
-/// plus [`refusal_reason`], not from anything sent per-request.
-///
-/// Every seat takes one, and that is load-bearing rather than tidy: role C's
-/// builders took no options until 2026-09-27, so a bench that set the pin and the
-/// privacy terms applied them to the chat seats and to no document request.
+/// Deployment facts (rate caps, gateway pins), not the user's provider choice. `extra_body` is
+/// OpenRouter's vocabulary and inert against a direct provider, so production passes
+/// [`ClientOptions::default`]; there privacy rests on the provider's policy and
+/// [`refusal_reason`]. Every seat takes one: a seat without it drops a bench's privacy terms.
 #[derive(Debug, Clone, Default)]
 pub struct ClientOptions {
     /// Merged into every request body. See [`OpenAiCompatClient::with_extra_body`].
@@ -177,31 +112,15 @@ pub struct ClientOptions {
 
 /// Spacing applied to every client this process builds, in milliseconds.
 ///
-/// Read from the environment rather than passed in, because the callers that
-/// need it most cannot pass anything: the server's enrichment passes build role C
-/// through [`build_extractor`], [`build_reader`] and [`build_transcriber`], none of
-/// which take options. Without this, `with_min_interval` existed and nothing in
-/// production could reach it — so a backfill was protected by the 429 retry alone.
-///
-/// Unset means no spacing, which is the behaviour up to now.
-///
-/// Per client, not per process. Three role-C seats each space their own
-/// calls, so this bounds a backfill (one seat at a time) and not a genuinely
-/// concurrent burst; that would need a limiter they share.
+/// From the environment, because the enrichment passes build role C through builders that take
+/// no options. Unset means no spacing. Per client: it bounds a backfill, not a concurrent burst
+/// across seats, which would need a shared limiter.
 pub const MIN_INTERVAL_ENV: &str = "OMNI_LLM_MIN_INTERVAL_MS";
 
 /// The sampling a role runs at when its config names none.
 ///
-/// Decided 2026-09-28 (user), and the line is not between document work and chat —
-/// it is between a question with one right answer and a voice someone hears.
-/// Role C's three questions and role D's structuring have one right answer each.
-/// Role B answers one scheduled question a day and is told not to draw new
-/// conclusions, so variety buys it nothing and determinism is what would let its
-/// saturated bench separate anything.
-///
-/// Role A is the exception and deliberately so: it is the seat being conversed
-/// with, and temperature 0 there costs phrasing that varies. One line to change
-/// whenever that trade is worth making.
+/// The line is one right answer versus a voice someone hears: roles B, C and D are
+/// deterministic, role A, the seat being conversed with, is not. One line to change.
 fn default_sampling(role: LlmRole) -> Sampling {
     match role {
         LlmRole::Extractor
@@ -269,18 +188,9 @@ fn min_interval_from(raw: Option<String>) -> Option<std::time::Duration> {
 
 /// Build the text LLM client a config selects.
 ///
-/// `provider = "openai_compatible"` with a non-empty `base_url` and `model`
-/// selects the OpenAI-compatible client. Anything else — an absent `[llm]`
-/// section, a half-filled one, or a model [`refusal_reason`] rejects — yields a
-/// [`NullLlmClient`] carrying the reason.
-///
-/// Nothing here fails the build. Boot has to succeed on a host with no LLM
-/// configured, and the server cannot ask a human for a key mid-startup, so every
-/// failure is deferred to call time where it can be reported to someone.
-///
-/// `role` is required rather than defaulted so a new call site has to say which
-/// job it is building for. The roles are not interchangeable, and a default here
-/// would have silently handed every one of them the same model.
+/// `openai_compatible` with `base_url` and `model` set builds the client; anything else, a
+/// refused model included, yields a [`NullLlmClient`] with the reason, so boot never fails.
+/// `role` is required: a default would silently give every role the same model.
 pub fn build_llm_client(
     creds: &Credentials,
     options: ClientOptions,
@@ -345,17 +255,9 @@ pub fn build_llm_client(
 
 /// Build the document extractor a config selects — role C, the quarantined one.
 ///
-/// Refuses on the same terms as [`build_llm_client`], plus a gate of its own:
-/// `vision = true` asserts the endpoint accepts images, which varies across
-/// OpenAI-compatible servers and fails confusingly upstream when it does not.
-///
-/// A refused or unconfigured extractor is a `NullExtractor`, and that answers
-/// `Ok` with an empty draft rather than erroring. A caller that scores results
-/// has to check `name()`, or a misconfiguration reads as the model finding nothing.
-///
-/// `options` is not optional scaffolding. It carries the gateway pin, and
-/// without it every role-C measurement ever taken was routed to an upstream of
-/// the gateway's choosing — see [`VisionEndpoint::into_client`].
+/// Refuses like [`build_llm_client`], and also needs `vision = true`. A refusal yields a
+/// `NullExtractor` answering `Ok` with an empty draft, so a scoring caller must check `name()`.
+/// `options` carries the gateway pin ([`VisionEndpoint::into_client`]).
 pub fn build_extractor(creds: &Credentials, options: ClientOptions) -> Arc<dyn DocumentExtractor> {
     let Some(endpoint) = vision_endpoint(creds, LlmRole::Extractor, "extractor") else {
         return Arc::new(NullExtractor);
@@ -431,15 +333,9 @@ impl VisionEndpoint {
 
 /// Resolve role C's endpoint, logging the reason when it refuses.
 ///
-/// Shared so the vision gate and the closed-weight refusal cannot reach one
-/// document path and miss another. That asymmetry was a real defect: the text
-/// client refused closed weights from the day role wiring landed, and the
-/// document path did not.
-///
-/// `role` is load-bearing and was not always a parameter. All three role-C
-/// builders used to resolve `LlmRole::Extractor` and pass `consumer` only to the
-/// log line, so one `[llm.extractor]` table silently served three seats that
-/// measured out to different models.
+/// Shared, so the vision gate and the closed-weight refusal reach every document path.
+/// `role` is load-bearing: without it one `[llm.extractor]` table silently served all three
+/// role-C seats.
 fn vision_endpoint(creds: &Credentials, role: LlmRole, consumer: &str) -> Option<VisionEndpoint> {
     // Named for the log so a missing table points at the one to write, rather
     // than at whichever role-C seat happened to ask first.

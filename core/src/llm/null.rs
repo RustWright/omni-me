@@ -1,15 +1,7 @@
 //! The client that answers nothing, and says why.
 //!
-//! Two situations need a `dyn LlmClient` that cannot work: no `[llm]` section at
-//! all, and a section naming a model we refuse to send data to. Both must still
-//! boot — a host with no LLM configured is a supported deployment, and the
-//! server has no way to ask a human for a key mid-startup — so the failure has to
-//! be deferred to call time rather than raised at construction.
-//!
-//! What it replaces is worth stating: the previous fallback built a *Gemini*
-//! client around an empty key, so "no LLM configured" surfaced as a Gemini auth
-//! error against an endpoint the operator never chose. The reason travels with
-//! the client now, so the message names the actual problem.
+//! For no `[llm]` section, or a refused model: boot must still succeed, so the failure waits for
+//! call time and carries its reason, naming the actual problem.
 
 use async_trait::async_trait;
 use serde_json::Value;

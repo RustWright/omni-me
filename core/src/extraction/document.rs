@@ -1,18 +1,8 @@
 //! Reading a document the archive could not parse — the model half of fields.
 //!
-//! Separate from [`super::DocumentExtractor`] because the two ask different
-//! questions. That trait asks *"what transactions does this receipt contain"*
-//! and answers with postings and a total the verification pass can check with
-//! arithmetic. This one asks *"what is this document"* — a lease, a notice of
-//! assessment, a warranty — and answers with fields nothing can check.
-//!
-//! No confidence score, deliberately. `ExtractionResult` carries one
-//! because `verify` has real arithmetic to measure it against. Here there is
-//! none: there is no sum to reconcile in *"this is a 2023 notice of
-//! assessment"*, so a number beside the answer would imply a calibration
-//! nothing provides. [`DocumentField::verified`] — always false on this path —
-//! is the honest signal, and the archive page is where a person fixes what it
-//! flags.
+//! Asks "what is this document", not [`super::DocumentExtractor`]'s "what transactions", and its
+//! fields have no arithmetic to check. So no confidence score, which would imply a calibration
+//! nothing provides; [`DocumentField::verified`] (always false here) is the honest signal.
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -64,18 +54,9 @@ pub struct DocumentSummary {
 
 /// Read a document for what it *is*, rather than for transactions.
 ///
-/// Its own trait rather than a second method on [`super::DocumentExtractor`]:
-/// that trait exists so a receipt/statement specialist (Veryfi and the like) can
-/// register without touching callers, and such a specialist cannot answer this
-/// question at all. Folding the two together would make every finance extractor
-/// declare a capability it does not have.
-///
-/// `NullExtractor` deliberately does not implement this, and the asymmetry
-/// with [`super::DocumentExtractor`] is the point. A null draft is a usable "no
-/// extraction available, enter it yourself"; a null *summary* would be a
-/// document filed with an empty kind and an empty title, which reads as a
-/// catalogued document and is worse than an uncatalogued one. With no reader
-/// configured, no fields event is emitted at all.
+/// Its own trait: a finance specialist registering as [`super::DocumentExtractor`] cannot
+/// answer this. `NullExtractor` does not implement it on purpose: a null summary would look
+/// catalogued, so with no reader no fields event is emitted.
 #[async_trait]
 pub trait DocumentReader: Send + Sync {
     fn name(&self) -> &str;
@@ -170,18 +151,9 @@ pub fn document_schema() -> serde_json::Value {
                 "enum": crate::retention_class::keys()
             }
         },
-        // `fields` is required so the key cannot simply be omitted — six of
-        // seven models returned nothing there, and a document catalogued without
-        // its account or policy number is one nobody can find again.
-        //
-        // And deliberately NO `minItems`. A floor would make a document that
-        // truly states no identifiers unanswerable except by inventing one, which
-        // the prompt forbids and an abstention probe exists to measure.
-        //
-        // `tags` stays optional: a document with no sensible grouping should
-        // return none, and requiring the key would push models toward filling it.
-        // `retention` is required: every document gets exactly one category, and
-        // the enum above is what keeps it on the list.
+        // `fields` is required (most models omitted it) but has no `minItems`, which would force
+        // an invented identifier. `tags` stays optional so models do not fill it; `retention` is
+        // required, one category from the enum.
         "required": ["kind", "title", "fields", "retention"]
     })
 }
@@ -278,14 +250,8 @@ pub fn to_fields_payload(
         .unwrap_or("other");
     fields.push(field(DOCUMENT_RETENTION_KEY, class));
     for extra in &summary.fields {
-        // A model must not be able to overwrite a hoisted key through the open
-        // `fields` list. They have their own slots above; a duplicate key here
-        // would fold against its own sibling and which one won would depend on
-        // vector order, not on provenance.
-        //
-        // `tags` is reserved with them although nothing on this path emits it
-        // yet: the column is an array parsed out of the value, so a model writing
-        // a raw string there would land tags nobody normalized.
+        // Hoisted keys are refused in the open `fields` list, where a duplicate would win by
+        // vector order. `tags` too, though unused here: a raw string would land unnormalised tags.
         if [
             DOCUMENT_KIND_KEY,
             DOCUMENT_TITLE_KEY,

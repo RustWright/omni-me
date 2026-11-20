@@ -437,13 +437,8 @@ pub async fn rasterize_pdf(
 
 /// Encode a whole set of images so that together they fit one request.
 ///
-/// Walks the quality ladder rather than failing at the first overflow: eight
-/// dense pages can land just over budget, and a slightly softer JPEG is a far
-/// better answer than refusing the document. The ladder is finite, so a
-/// genuinely oversized set still ends in `TooLarge`.
-///
-/// Shared by the rasterized-PDF path and the several-photos path, because the
-/// constraint is the same one — a request body, not a page count.
+/// Walks the quality ladder rather than failing at the first overflow; a truly oversized set
+/// still ends in `TooLarge`. Shared by rasterized PDFs and photo sets: the limit is one body.
 fn fit_set(decoded: &[image::DynamicImage]) -> Result<Vec<PreparedImage>, MediaError> {
     let mut last = None;
     for quality in JPEG_QUALITY_LADDER {
@@ -472,12 +467,8 @@ fn fit_set(decoded: &[image::DynamicImage]) -> Result<Vec<PreparedImage>, MediaE
 /// Prepare several images that are pages of one document, sharing a single
 /// request budget between them.
 ///
-/// Each is prepared on its own first, which keeps [`prepare_image`]'s
-/// pass-through: two already-small photos reach the endpoint as their original
-/// bytes, un-re-encoded. Only when the set overflows together does it fall back
-/// to re-encoding all of them down the ladder, because lowering the quality of
-/// images that were individually fine is a cost worth paying only once it buys
-/// the document a way through.
+/// Each is prepared alone first, so small photos pass through as their original bytes; only
+/// a set that overflows together is re-encoded down the ladder.
 pub fn prepare_images(parts: &[(&[u8], &str)]) -> Result<Vec<PreparedImage>, MediaError> {
     let individually: Vec<PreparedImage> = parts
         .iter()
@@ -508,15 +499,9 @@ pub fn fits_request(images: &[PreparedImage]) -> Result<(), MediaError> {
     check_budget(images)
 }
 
-/// Spawn `pdftoppm` into `out_dir` and read the page images back in page order.
-/// Try each candidate password until one renders, on the terms
-/// [`crate::statement::pdf::extract_layout_text_with_any`] explains — including
-/// the empty password first, so an unencrypted document costs one `pdftoppm` run
-/// however many passwords are configured.
-///
-/// Without this the vision fallback could not open an encrypted statement that
-/// the text path had just failed on, so the 18.3% of the corpus that is encrypted
-/// had no route at all: no text layer, and no picture of one either.
+/// Try each candidate password until one renders, on
+/// [`crate::statement::pdf::extract_layout_text_with_any`]'s terms; the empty password goes
+/// first, so an unencrypted document costs one run. Without it encrypted statements had no route.
 async fn rasterize_with_any(
     pdf: &Path,
     out_dir: &Path,
@@ -541,6 +526,7 @@ async fn rasterize_with_any(
     })
 }
 
+/// Spawn `pdftoppm` into `out_dir` and read the page images back in page order.
 async fn run_pdftoppm(
     pdf: &Path,
     out_dir: &Path,
