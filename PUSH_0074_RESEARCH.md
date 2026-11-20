@@ -1123,7 +1123,11 @@ read in the 2.4.0 or tauri 2.10.3 source.
   reminders on every start, which also covers reboots.
 - [S] On Android 12+ without the exact-alarm permission the plugin falls back to an inexact alarm,
   and it declares no such permission: the app must declare `USE_EXACT_ALARM` or
-  `SCHEDULE_EXACT_ALARM`. Untested: the S9 cannot show it; his daily phone's version decides.
+  `SCHEDULE_EXACT_ALARM`. His daily phone is Android 15 (his answer), and from Android 14
+  `SCHEDULE_EXACT_ALARM` is denied by default for apps targeting 13+ (Android 14 behaviour
+  changes, "Schedule exact alarms"). So declare `USE_EXACT_ALARM`, granted at install for
+  reminder apps; its Play restriction does not apply to an APK-installed app. Untested on a
+  phone: the S9 cannot show it.
 - [T] An action button shows on a scheduled reminder. With the app alive, a tap reaches the
   `onAction` listener. [T][S] With the app killed, the tap cold-starts it, but the plugin fires
   the event in `load()`, before any listener exists, and tauri's `Plugin.trigger` drops it.

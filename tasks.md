@@ -38,8 +38,8 @@ builds follow them.
   times (114, 115) so the fit check has real minutes. Before [0109]. [USER, M]
 - [0109] **Planning build:** read-only calendar (96), plan records, the ritual tier and summary
   lines (98), block reminders, the load measure (99). Needs [0106]. Reminders per [0104]'s results
-  (`PUSH_0074_RESEARCH.md` Appendix B): plugin 2.4.0, reschedule on every start, an exact-alarm
-  permission, `start:<block>` action ids; Start on a killed app is his call (asked). [L]
+  (`PUSH_0074_RESEARCH.md` Appendix B): plugin 2.4.0, reschedule on every start, `USE_EXACT_ALARM`
+  (his phone is Android 15), `start:<block>` action ids; Start on a killed app is his call (asked). [L]
 - [0110] **People build:** mentions, facts, resolution, pickers and group cards (102–104), merge
   and unmerge reversible for every attached record from the first event, the person view and the
   People tab with model-free search (118–120), per `design/0102/`; task text as a source (124).
