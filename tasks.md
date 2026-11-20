@@ -26,8 +26,6 @@ builds follow them.
   stack is held below it (deep-link pin): an older plugin, or the upgrade. Also: does a scheduled
   reminder carry a Start action, and does its tap reach a killed app (timer, ruling 93; docs are
   silent on both, `PUSH_0074_RESEARCH.md` Appendix B)? [S]
-- [0105] **Test gaps before the summary and tier changes** (Cycle 5 review, `reviews/2026-11-16-
-  test-gaps.md`, this machine only): T3, T7, T10, T11, T12, T13, T17. Before [0106]. [M]
 - [0106] **`CheckInPolicy` into named scheduled prompts**, each with its own tier, due-check and
   housekeeping (`check_in.rs` selects every scheduled message today). Gates every ritual. [M]
 - [0107] **Task records and hub intake:** native tasks and projects, estimates and actuals (93),
