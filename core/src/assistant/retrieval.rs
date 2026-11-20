@@ -75,18 +75,9 @@ const RERANK_POOL_MAX: usize = 24;
 
 /// Merge keyword and semantic results into the shape the model sees.
 ///
-/// The output is one ranked list across every type. Never revert to per-type
-/// grouping; why, in `docs/src/retrieval.md`.
-///
-/// The retrievers are not equals. Semantic ranks; keyword only supplies what
-/// semantic missed. Fusing them as peers was built, measured, and retired — it cost
-/// 19 points of top-1. See [`fusion::prefer`].
-///
-/// `keyword_matches` counts BM25 matches only, and is named for it: there is no
-/// meaningful count on the semantic side, so a combined total would have no referent.
-/// A match is any content word of the question — see
-/// [`super::store::TypeResults::total_matches`]. The number says how much was
-/// looked at, never how much was relevant.
+/// One ranked list across types; never per-type groups (`docs/src/retrieval.md`). Semantic ranks,
+/// keyword adds what it missed ([`fusion::prefer`]). `keyword_matches` counts BM25 matches only,
+/// how much was looked at, never how much was relevant.
 pub async fn merge(
     db: &Database,
     targets: &[&'static CatalogEntry],
@@ -165,14 +156,8 @@ async fn rerank_pool(
         return fusion::cut(candidates, limit);
     }
 
-    // Rebuilt rather than sorted in place: the reranker may return fewer entries
-    // than it was given, and a candidate it declined to score must keep a position
-    // rather than disappear.
-    //
-    // The scores in this vector are on two different scales — cross-encoder
-    // logits for what was judged, positional weights for what was not. That is safe
-    // only because `fusion::cut` never compares them; it takes the order as given.
-    // Do not add a sort here.
+    // Rebuilt, not sorted, so an unscored candidate keeps a position. The scores mix two scales,
+    // safe only because `fusion::cut` never compares them. Never add a sort here.
     let mut reordered: Vec<(RecordKey, f64)> = Vec::with_capacity(candidates.len());
     let mut placed = vec![false; pool.len()];
     for (index, score) in scored {

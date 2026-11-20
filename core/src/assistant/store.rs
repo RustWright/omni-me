@@ -23,31 +23,15 @@ const SNIPPET_CHARS: usize = 240;
 
 /// How much of one text column `read` may return.
 ///
-/// A bare cap would be a different bug, not a fix. `read` is the verb that
-/// means "you now have this record", so a body cut in silence leaves the model
-/// answering about a document it believes it saw whole — and a confident wrong
-/// answer drawn from two thirds of a tax notice is worse than no answer. Every
-/// cut is therefore stated twice: inline, where the model is reading, and in
-/// [`FullRecord::truncated`], where a caller can assert on it.
-///
-/// 12,000 characters is ≈3,000 tokens, and the multi-turn loop re-sends every
-/// record it has read on each later turn. It clears every human-authored record
-/// in this app by a wide margin — journal entries and notes run hundreds to low
-/// thousands of characters — and binds only the case it was written for: a
-/// document's machine-extracted text layer, where a 40-page scan is one row.
+/// Every cut is stated inline and in [`FullRecord::truncated`]: a silent cut leaves the model
+/// sure it saw the whole record. About 3,000 tokens, re-sent each turn; it binds only long
+/// extracted text layers, never human-written records.
 const READ_BODY_CHARS: usize = 12_000;
 
 /// Markers `search::highlight` wraps around matched terms.
 ///
-/// Internal only — they never reach the model. `search::highlight` marks up
-/// the *whole field* rather than returning a window, so the markers are used to
-/// locate the match and are stripped by [`keyword_in_context`] before the snippet
-/// is returned. A marked snippet handed over as-is gets quoted back verbatim: the
-/// first live run answered "Landlord posted the «rent» «notice» today", markers
-/// and all.
-///
-/// Guillemets rather than angle brackets because a journal entry can contain
-/// HTML, and `<b>` would be indistinguishable from the entry's own text.
+/// Internal: they locate the match and [`keyword_in_context`] strips them, or the model quotes
+/// them back. Guillemets, since entries can contain HTML.
 const HL_OPEN: &str = "\u{ab}";
 const HL_CLOSE: &str = "\u{bb}";
 
@@ -124,41 +108,16 @@ struct RawHit {
     body: Option<String>,
 }
 
-/// Full-text search one catalogued type.
-///
-/// Scores are comparable within a type and not across types. BM25 is
-/// relative to its own corpus — its document count and average length — so a note
-/// scoring 1.7 and a journal entry scoring 1.7 have not been measured against
-/// each other. This function therefore returns one type's results, ranked among
-/// themselves, and sorts nothing across types.
-///
-/// Merging across types happens in [`super::retrieval::merge`], which fuses by
-/// rank rather than score for exactly this reason — positions are comparable
-/// where these numbers are not. Do not "simplify" that by summing or normalising
-/// the scores; the arithmetic would look reasonable and mean nothing.
-///
-/// Never filter on `score > 0`. Classic BM25's IDF term is
-/// `log((N - n + 0.5)/(n + 0.5))`, which is *exactly zero* when a term appears in
-/// one of two documents. On a fresh install with a handful of records a perfectly
-/// good match scores 0.0, and a threshold would silently drop it. Matching on any
-/// word rather than all of them makes this more load-bearing, not less: a record
-/// caught by one common word is meant to arrive and rank last.
-///
-/// The query is passed through [`query_text::prepare`] first. Ranking is BM25's
-/// job; that function only keeps the tally from counting the whole corpus.
-/// The [`CatalogEntry::hidden_when`] exclusion as SQL, or `None` when the entry
-/// hides nothing.
-///
-/// Written as `!= true` rather than `= false` on purpose. The column is
-/// `TYPE bool` on a SCHEMAFULL table today, so the two agree — but if a row ever
-/// reaches the table without it, `= false` hides it and `!= true` shows it, and
-/// of the two failures a row that should have been hidden appearing is the one a
-/// person notices. The opposite failure is a transaction vanishing from the
-/// assistant's view with nothing to indicate it was ever there.
+/// The [`CatalogEntry::hidden_when`] exclusion as SQL, or `None`. `!= true`, never `= false`: if
+/// a row lacks the column, showing a hidden row is the failure a person notices.
 fn hidden_clause(entry: &CatalogEntry) -> Option<String> {
     entry.visible_condition()
 }
 
+/// Full-text search of one type. BM25 scores compare within a type only, so
+/// [`super::retrieval::merge`] fuses by rank; never sum or normalise scores. Never filter on
+/// `score > 0`: IDF is exactly zero for a term in one of two documents. Queries pass through
+/// [`query_text::prepare`] first.
 pub async fn search(
     db: &Database,
     entry: &CatalogEntry,
@@ -272,13 +231,8 @@ pub async fn search(
 
 /// Look up the human-facing handles for a set of identities.
 ///
-/// Exists for hits that arrived from vector search only. Those carry an identity
-/// and a matched passage but no handle, and a result the model cannot name is one
-/// it cannot report back to the user.
-///
-/// Deliberately a lookup rather than a `handle` column denormalized onto the
-/// embedding rows: a title edit would leave that copy stale until the next sweep,
-/// and a search result showing a note's *old* title is worse than one extra query.
+/// For vector-only hits, which carry no handle. A lookup, not a denormalized column, which a
+/// title edit would leave stale until the next sweep.
 pub async fn handles_for(
     db: &Database,
     entry: &CatalogEntry,
@@ -712,16 +666,8 @@ fn derive(view: DerivedView, children: &serde_json::Map<String, Value>) -> Value
 
 /// Drop a row's bookkeeping columns before anyone sees it.
 ///
-/// Exists because both queries that feed the model select `*`, which is the
-/// right default — a column added to a projection reaches the assistant without
-/// anyone having to remember a second list, and the alternative (naming every
-/// column here) fails by silently *omitting* a real field. The cost of that
-/// default is that internal columns arrive too, and this is where they stop. See
-/// [`CatalogEntry::hidden_fields`].
-///
-/// A non-object row is left alone rather than treated as an error: `SELECT *`
-/// always yields objects, and inventing a failure path for something the query
-/// cannot produce would be the only untested branch in the function.
+/// Queries select `*` so new columns reach the model; internal ones stop here
+/// ([`CatalogEntry::hidden_fields`]). A non-object row is left alone; `SELECT *` cannot make one.
 fn hide_fields(row: &mut Value, hidden: &[&str]) {
     if hidden.is_empty() {
         return;
@@ -733,17 +679,8 @@ fn hide_fields(row: &mut Value, hidden: &[&str]) {
     }
 }
 
-/// One child collection, newest first and capped by its declaration.
-///
-/// The cap lives in the catalog rather than here because it is a property of the
-/// data — a routine has a handful of items and an unbounded completion history —
-/// and an uncapped history would quietly become the largest thing in a prompt.
-/// Whatever the entry owning `table` hides, as SQL.
-///
-/// Resolved from the table, not from the parent entry. A child collection
-/// can read a different table than its parent, so inheriting the parent's rule
-/// would apply the wrong one — it is only by coincidence that today's single case
-/// (`document` → its own `attachments`) reads the same table.
+/// Whatever the entry owning `table` hides, as SQL: resolved from the table, not the parent,
+/// since a child can read a different table.
 fn hidden_clause_for_table(table: &str) -> Option<String> {
     super::catalog::ALL_ENTRIES
         .iter()
@@ -751,20 +688,15 @@ fn hidden_clause_for_table(table: &str) -> Option<String> {
         .and_then(hidden_clause)
 }
 
+/// One child collection, newest first, capped by its catalog declaration so an unbounded
+/// history never becomes the largest thing in a prompt.
 async fn fetch_children(
     db: &Database,
     child: &ChildCollection,
     parent_id: &str,
 ) -> Result<Vec<serde_json::Value>, DbError> {
-    // Whatever the child's table hides, this must hide too. An attachment is a
-    // document, so a purged one reached the model through its parent email long
-    // after `search`, `list` and `read` had all stopped returning it — the same
-    // shape of leak the vector index has, through a different door.
-    //
-    // The child's own declaration wins where it has one, because a table with no
-    // entry (`routine_items`) has nothing to inherit; otherwise the rule comes
-    // from the entry that owns the table, so a table with an entry declares it
-    // exactly once.
+    // Hide what the child's table hides, or a purged attachment reaches the model through its
+    // email. The child's own rule wins (`routine_items` has no entry); else the table's entry.
     let hidden = child
         .hidden_when
         .map(|col| format!("{col} != true"))
@@ -1214,11 +1146,8 @@ mod tests {
     /// An attachment is a document, so a purged one must not come back through
     /// the email it arrived in.
     ///
-    /// This is the door the catalogue's structural guard used to hold shut by
-    /// forbidding the shape entirely. `documents` is self-referential, so the
-    /// moment it gained a hidden rule the shape existed — and `fetch_children`
-    /// queries the child table directly, with none of `search`/`list`/`read`'s
-    /// exclusions in the way.
+    /// `fetch_children` queries the child table directly, outside `search`/`list`/`read`'s
+    /// exclusions.
     #[tokio::test]
     async fn a_purged_attachment_is_not_returned_through_its_parent() {
         let db = test_db().await;
@@ -1325,11 +1254,8 @@ mod tests {
     /// `journal.tags` and `note.tags` are `TYPE array` and always `[]`, while
     /// `documents.tags` is `option<array>` and is absent for most of a real corpus.
     ///
-    /// It works without a coalesce — `NONE CONTAINS 'x'` is `false`. This test
-    /// exists because that is not the guessable answer: `string::lowercase(NONE)` in
-    /// the neighbouring query *is* a hard error, and reasoning by analogy from it
-    /// produces a coalesce nothing needs. So the fixture carries an untagged row,
-    /// and the assertion is that the query returns rather than fails.
+    /// No coalesce needed: `NONE CONTAINS 'x'` is `false`, though `string::lowercase(NONE)` next
+    /// door errors. The untagged row proves the query returns.
     #[tokio::test]
     async fn a_tag_filter_survives_a_row_with_no_tags_at_all() {
         let db = test_db().await;
@@ -1406,14 +1332,8 @@ mod tests {
         assert_eq!(days[1]["skipped"], 1, "but stays visible as a skip");
     }
 
-    /// Bookkeeping columns must not reach the model. `applied_appends` holds the
-    /// ids of append events already folded in; handed over inside a record called a
-    /// note, those are event ids the assistant can quote back as if the user had
-    /// written them.
-    ///
-    /// The row is created *with* the column populated, which is the only version
-    /// of this test worth having — against a row that never had one it passes
-    /// whether or not anything is stripped.
+    /// Bookkeeping (`applied_appends`) must not reach the model. The row has the column populated:
+    /// without it the test passes whether or not anything is stripped.
     #[tokio::test]
     async fn a_note_read_carries_no_bookkeeping_columns() {
         let db = test_db().await;

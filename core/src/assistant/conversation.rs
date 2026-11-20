@@ -216,14 +216,9 @@ struct ThreadState {
 
 /// One message, with everything the client needs to render it.
 ///
-/// `usage` and `records_read` stay [`DbValue`] rather than typed structs: they
-/// are stored shapes owned by the event payload, and re-declaring them here
-/// would be a second definition to keep in step with the first. They serialize
-/// through [`db_value_as_json`]; `DbValue`'s own serde form is enum-tagged.
-///
-/// `records_read` carries no title — see
-/// [`crate::assistant::answer::records_read`] for why, and resolve the display
-/// name against the record tables at render time.
+/// `usage` and `records_read` stay [`DbValue`], owned by the payload, serialized through
+/// [`db_value_as_json`]. No title in `records_read`: resolve it at render
+/// ([`crate::assistant::answer::records_read`]).
 #[derive(Debug, Clone, Serialize, SurrealValue)]
 pub struct ConversationMessage {
     pub message_id: String,

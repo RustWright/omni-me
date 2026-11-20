@@ -1,22 +1,9 @@
 //! The verbs the model is given, and what happens when it calls one.
 //!
-//! Every verb here, `propose` included, is read-only at this layer.
-//! `propose` validates an intention against [`super::actions`] and returns; it is
-//! handed no writer and holds no path to one. What records the intention is the
-//! agent, from the run's trace, after the loop has ended — the same derivation
-//! `records_read` uses, and for the same reason: a proposal built from what the
-//! model *called* cannot be one it merely claimed to have made.
-//!
-//! That is also what keeps `docs/src/assistant.md`'s strongest sentence literally
-//! true after the write half shipped — there is no write path behind any tool the
-//! model holds. The alternative, threading an `EventWriter` into dispatch, would
-//! have put one there in exchange for a proposal surviving a mid-run crash, which
-//! an approval gate makes worthless anyway.
-//!
-//! The set is small and generic on purpose rather than by taste: tool-calling
-//! accuracy degrades measurably once a model is choosing among roughly fifteen
-//! to twenty tools, so a tool per feature gets worse at exactly the rate the app
-//! gets richer. What varies between installs is [`super::catalog`], not this file.
+//! Every verb is read-only, `propose` included: it validates against [`super::actions`] and holds
+//! no writer; the agent records proposals from the trace afterwards. So no tool the model holds
+//! has a write path behind it; never thread an `EventWriter` into dispatch. Few, generic verbs, as
+//! in `mod.rs`; what varies per install is [`super::catalog`].
 
 use serde_json::{Value, json};
 
@@ -37,19 +24,12 @@ use crate::llm::ToolDef;
 const DEFAULT_LIMIT: u32 = 20;
 const MAX_LIMIT: u32 = 50;
 
-/// The verb names, for validating a tool call and for constrained decoding.
-///
-/// A set, listed in the order `docs/src/assistant.md` tables them. Deliberately
-/// not the order of [`tools`], which is a prompt-engineering choice — do not
-/// "fix" the two to agree; `the_tool_list_matches_the_verb_names` checks
-/// membership, not sequence.
-/// The write verb's name, as the model calls it.
-///
-/// Named because [`super::session`] has to recognise it to keep it off the turn
-/// budget, and a string literal compared in two files is one rename away from
-/// silently re-charging every proposal.
+/// The write verb's name, a constant because [`super::session`] matches it to keep proposals off
+/// the turn budget, and a literal in two files is one rename from re-charging them.
 pub const PROPOSE: &str = "propose";
 
+/// The verb names, for tool-call validation and constrained decoding, in `docs/src/assistant.md`'s
+/// order, not [`tools`]' (a prompt choice); the test checks membership, not sequence.
 pub const VERB_NAMES: &[&str] = &[
     "search",
     "list",
@@ -223,14 +203,8 @@ pub fn tools() -> Vec<ToolDef> {
 /// The same verb documentation as prompt text, for a request that cannot carry
 /// `tools`.
 ///
-/// Built by walking [`tools`], never written out by hand. A second copy of
-/// these descriptions would drift the first time someone edits one here, and the
-/// constrained variant would go on testing wording that no longer ships.
-///
-/// It is needed at all because a serving stack compiles a response schema into a
-/// token grammar and never shows it to the model. A constrained request
-/// therefore holds the model to a verb enum it was otherwise never introduced
-/// to, and would be measuring what the model can guess from five bare names.
+/// Built by walking [`tools`], never by hand, so it cannot drift. Needed because the grammar is
+/// never shown to the model, which would otherwise guess from bare verb names.
 pub fn tools_as_prompt() -> String {
     let mut out = String::from("The verbs you may call, and their arguments:\n");
     for tool in tools() {
@@ -246,12 +220,8 @@ pub fn tools_as_prompt() -> String {
 
 /// Run one verb and return what the model should see.
 ///
-/// Every failure comes back as `{"error": ...}` rather than an `Err`. A bad
-/// argument is something the model can recover from on the next turn — it asked
-/// for a type that does not exist, so telling it which do exist is more useful
-/// than aborting the conversation. Only a genuine database fault is worth
-/// stopping for, and it arrives here as an error message too, because the loop
-/// has a turn budget and will end on its own.
+/// Failures return `{"error": ...}`, never `Err`, so the model can recover next turn; even a
+/// database fault, since the turn budget ends the loop anyway.
 pub async fn dispatch(db: &Database, config: &ResolvedConfig, name: &str, args: &Value) -> Value {
     dispatch_with(db, config, name, args, Retrievers::default()).await
 }

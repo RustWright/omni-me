@@ -1,28 +1,9 @@
 //! The action catalog: what the assistant is allowed to propose.
 //!
-//! The write-side twin of [`super::catalog`], and deliberately a *separate*
-//! table. Being readable and being writable are different permissions over the
-//! same collection — the journal is the proof: it is fully readable and
-//! permanently unwritable — so one table carrying both would have to encode the
-//! difference as a flag, and a flag is something a later entry can get wrong by
-//! omission.
-//!
-//! ## Code rather than events, same as the read catalog
-//!
-//! Every event an action can author is constructed in this build. An
-//! event-declared action naming an event type this binary cannot build would be
-//! genericity in name only, so the declaration lives where the constructor does.
-//!
-//! ## The journal is never proposable
-//!
-//! The user is its sole author. That is a product invariant, not a phase
-//! boundary: it does not lapse when autonomy is granted per action type, and it
-//! does not lapse because the machinery would support it. [`NEVER_PROPOSABLE`]
-//! and the test over it are what make the decision visible — an absent entry is
-//! not a decision anyone can review.
-//!
-//! Reading the journal stays fully available through [`super::catalog`]. What is
-//! forbidden is only the reverse direction.
+//! The write-side twin of [`super::catalog`], a separate table because readable and writable are
+//! different permissions (the journal is both readable and never writable). In code, where the
+//! event constructors live. The journal is never proposable, ruling 1 (RULINGS.md):
+//! [`NEVER_PROPOSABLE`] and its test make that a reviewable decision, not an absent entry.
 
 use serde_json::{Value, json};
 
@@ -75,40 +56,16 @@ pub enum ParamSource {
     /// The system fills it from the run's trace — the records the assistant
     /// actually opened while reaching this conclusion.
     ///
-    /// Deliberately not something the model can author. Letting it list its
-    /// own evidence reopens exactly the hallucination surface `records_read`
-    /// closes: a citation is only worth anything if it names a record that was
-    /// demonstrably in hand.
-    ///
-    /// The guarantee is an overwrite, not a refusal — do not mistake one for
-    /// the other. `describe_type` renders this parameter like any other (its
-    /// description is what tells the model it cannot set it), and
-    /// [`validate_args`] *accepts* a well-shaped value, because it cannot tell a
-    /// model's fresh call from a stored proposal being re-checked at approval,
-    /// where the evidence is legitimately present. What makes model-authored
-    /// evidence impossible is `answer::proposals`, which inserts the
-    /// trace-derived list over whatever is there. Removing that insert on the
-    /// belief that validation already guards this would silently hand the model
-    /// its own citations.
+    /// Never model-authored: a citation counts only if the record was demonstrably in hand.
+    /// The guarantee is an overwrite, not a refusal: [`validate_args`] accepts a value (a stored
+    /// proposal legitimately has one), and `answer::proposals` writes the trace over it. Removing
+    /// that insert would silently hand the model its own citations.
     EvidenceFromTrace,
     /// The system fills it at approval, from the record being changed.
     ///
-    /// The one argument that exists because of *when* it can be known rather than
-    /// who knows it: `note.revise` sends an anchor and a replacement, and the
-    /// finished body only exists once the anchor has been resolved against the
-    /// note as it stands at the moment of approval. Resolving it when the
-    /// proposal was made would bake in a body that may be stale by the time
-    /// anyone reads the card.
-    ///
-    /// Same guarantee and same non-guarantee as
-    /// [`ParamSource::EvidenceFromTrace`]: `validate_args` *accepts* a
-    /// well-shaped value, because a stored proposal being re-checked at approval
-    /// legitimately carries one. What makes a model-authored value impossible to
-    /// apply is `inbox::resolve_args` writing over it.
-    ///
-    /// Never `required`. It is absent on the model's call and present on the
-    /// re-check, and a declaration that demanded it would refuse every proposal
-    /// at the moment it was made.
+    /// For `note.revise`, whose finished body exists only once the anchor resolves against the note
+    /// at approval. As with [`ParamSource::EvidenceFromTrace`], validation accepts a value and
+    /// `inbox::resolve_args` overwrites it. Never `required`: the model's call lacks it.
     ResolvedAtApproval,
 }
 
@@ -164,23 +121,13 @@ pub struct ActionParam {
     pub allowed: Option<&'static [&'static str]>,
     /// A domain parser the value must satisfy, returning its own error message.
     ///
-    /// Reached for instead of [`ActionParam::allowed`] wherever the domain
-    /// already owns a parser. A routine's frequency is the case that forced it:
-    /// `daily`/`weekly`/`biweekly`/`monthly` would fit a list, but `custom:N`
-    /// carries an integer with bounds, and re-listing what is legal here would
-    /// be a second definition of the same rule — free to drift, and drifting
-    /// silently, since an unparseable frequency reaches the projection rather
-    /// than the user.
+    /// Used instead of [`ActionParam::allowed`] wherever the domain owns a parser (`custom:N`
+    /// frequencies), so the rule has one definition rather than a silently drifting copy.
     pub validator: Option<ParamValidator>,
     /// Keep the value's leading and trailing whitespace instead of trimming it.
     ///
-    /// Trimming is right for a name and wrong for an anchor. Every
-    /// argument here was a title, an id or a whole added block until
-    /// `note.revise`, and for those a stray newline is noise. For an anchored
-    /// splice the whitespace *is* the edit: markdown indentation nests a list
-    /// item, and a trimmed replacement can come out byte-identical to the text it
-    /// replaces — which applies cleanly, changes nothing, and reports success.
-    /// That is the exact failure this feature was required not to have.
+    /// For an anchored splice the whitespace is the edit; a trimmed replacement can equal the text
+    /// it replaces, apply cleanly, change nothing and report success.
     pub verbatim: bool,
     pub source: ParamSource,
     /// What the value looks like. Rendered to the model by `describe_type`,
@@ -209,13 +156,9 @@ impl ActionParam {
     /// A list of plain text arguments, each checked exactly as a
     /// [`ActionParam::text`] of the same `max_chars` would be.
     ///
-    /// A batch is one decision, so it has to stay one claim. What varies
-    /// across the list is the identity; everything else about the proposal — the
-    /// day, the routine, the evidence — is shared, and that is what lets the card
-    /// state the batch in a sentence a person can accept or refuse as a whole.
-    /// Do not reach for this to let one proposal span two days or two
-    /// routines: there is no partial approval, so a card the user half-agrees
-    /// with has no outcome they can choose.
+    /// A batch is one decision: only identity varies, the day, routine and evidence are shared.
+    /// Never use it to span two days or routines; with no partial approval, half-agreement has
+    /// no outcome.
     pub const fn list(
         key: &'static str,
         description: &'static str,
@@ -238,17 +181,9 @@ impl ActionParam {
     /// A value the system resolves at approval. See
     /// [`ParamSource::ResolvedAtApproval`].
     ///
-    /// `max_chars` bounds it like any other argument. The bound is not the
-    /// interesting part — the *applied* event carries the same body whatever the
-    /// bound is — but leaving it unbounded would mean one declaration in this
-    /// file with no ceiling at all, and the reason every other one has a ceiling
-    /// (an argument is stored in an event, and every event syncs to the phone)
-    /// applies here too.
-    ///
-    /// `verbatim` is set but inert today: [`validate_args`] gives this source
-    /// its own branch and never reaches `checked_text`. It is declared anyway so
-    /// that removing that branch degrades to trimming-off rather than to silently
-    /// trimming a note's trailing newline off every body it writes.
+    /// Bounded like every argument, since arguments are stored in synced events. `verbatim` is
+    /// inert today ([`validate_args`] branches first), set so that removing the branch cannot
+    /// start trimming every note's trailing newline.
     pub const fn resolved(key: &'static str, description: &'static str, max_chars: usize) -> Self {
         ActionParam {
             key,
@@ -344,18 +279,9 @@ pub struct ActionType {
 
 /// What makes an action eligible to be proposed.
 ///
-/// [`Trigger::OnRequest`] is prompt-enforced, not code-enforced, and saying
-/// so matters: there is no reliable way to classify "the user asked for a
-/// conclusion", and pretending otherwise would put a guarantee behind a
-/// heuristic. What is structural is the approval gate — an over-eager proposal
-/// still records nothing until a person accepts it, so the trigger governs how
-/// many cards appear, never what enters the log.
-///
-/// One variant today by the user's decision (2026-09-10): beliefs are proposed
-/// only when asked for. The two wider policies considered — propose whenever a
-/// durable pattern is noticed, and propose only on repeated independent evidence
-/// — are deferred to during or after Phase F, not dropped, which is why this
-/// is an enum rather than a comment.
+/// [`Trigger::OnRequest`] is prompt-enforced, not code-enforced; the approval gate is what is
+/// structural, so the trigger governs how many cards appear, never what enters the log. One
+/// variant by ruling 4 (RULINGS.md); an enum because wider policies are deferred, not dropped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Trigger {
     /// Raise it only when the conversation is explicitly asking for it.
@@ -406,16 +332,8 @@ const NOTE_CREATE: ActionType = ActionType {
 
 /// Adding to the end of a note the user already has.
 ///
-/// Appending rather than rewriting is the whole point of the action. The
-/// alternative considered and rejected was a `note.update` carrying the finished
-/// body: it costs tokens in proportion to the note's length, and — the real
-/// objection — the model has to reproduce the parts it was not asked to change,
-/// so a quietly reworded paragraph is indistinguishable from the edit that was
-/// asked for. This action cannot drop what it did not send.
-///
-/// The journal is not reachable from here, and not because notes and
-/// journals happen to use different events. The user is the journal's sole
-/// author; see this module's note and [`NEVER_PROPOSABLE`].
+/// Append, not rewrite (`note.update` was rejected by ruling 9 (RULINGS.md)): a model reproducing
+/// the whole body can silently reword it. Never the journal: ruling 1 (RULINGS.md).
 const NOTE_APPEND: ActionType = ActionType {
     name: "note.append",
     kind: ActionKind::NoteAppend,
@@ -448,37 +366,11 @@ const NOTE_APPEND: ActionType = ActionType {
 
 /// Changing text in the middle of a note the user already has.
 ///
-/// ## Why this is not the `note.update` that was rejected
-///
-/// [`NOTE_APPEND`]'s note records the objection: a model handed the finished body
-/// has to reproduce the parts it was not asked to change, so a quietly reworded
-/// paragraph is indistinguishable from the edit that was asked for. That
-/// objection is about the model authoring the body, not about the event that
-/// overwrites one — `GenericNoteUpdated` is what every autosave from the notes
-/// editor already writes. So the model sends only the region it touched, and the
-/// system splices it into the live body at approval. Nothing that can reword a
-/// paragraph ever sees the paragraphs it was not asked about.
-///
-/// ## Why the anchor is text and the splice happens at approval
-///
-/// A byte offset into a body another device has already rewritten points at the
-/// wrong place; `GenericNoteAppendedPayload` refuses to carry one for that reason.
-/// Text carries its own identity instead.
-///
-/// The anchor is resolved once, on the approving device, and the event that
-/// reaches the log is the finished body. Do not move the resolution into the
-/// projection, however naturally an anchored `GenericNoteRevised` event seems to
-/// fit there: projections consume events in `received_at` order, which is local
-/// arrival time, so two devices legitimately fold the same events in different
-/// orders. An anchor evaluated per device can match on one and miss on another,
-/// and nothing afterwards reconciles them — a note that silently differs between
-/// the phone and the desktop, permanently. Logging the outcome instead of the
-/// intent is what makes every device agree.
-///
-/// What this does *not* fix is last-write-wins itself (`architecture.md`): a
-/// device holding an older copy of the note writes an overwrite computed from it,
-/// exactly as that device's own editor would. This action adds no new exposure to
-/// that; it inherits the note editor's.
+/// Under ruling 9 (RULINGS.md) the model sends only the region it touched, and the system
+/// splices it at approval, so nothing that could reword a paragraph sees the untouched ones. The anchor is
+/// text, since an offset into a rewritten body points elsewhere. Never move resolution into the
+/// projection: devices fold in different orders, so an anchor could match on one and miss on
+/// another, forever. The log holds the outcome. Last-write-wins is inherited, not added.
 const NOTE_REVISE: ActionType = ActionType {
     name: "note.revise",
     kind: ActionKind::NoteRevise,
@@ -812,12 +704,8 @@ const ROUTINE_MODIFY_ITEM: ActionType = ActionType {
 
 /// A day in exactly the app's spelling, or the reason it is not one.
 ///
-/// The round-trip check is the point, not pedantry. `chrono` accepts
-/// `2026-8-14` for `%Y-%m-%d`, and a routine completion's row id is
-/// `{item_id}-{date}-done` built by concatenation — so an unpadded day keys a
-/// *different* row than the same tick made in the app, and the app's undo would
-/// then leave the assistant's copy behind. Refusing is the loud failure the
-/// model fixes on its next turn; accepting is a duplicate nobody sees.
+/// Round-tripped because `chrono` accepts `2026-8-14`, and the completion row id concatenates
+/// the date, so an unpadded day keys a different row that the app's undo would leave behind.
 fn canonical_date(value: &str) -> Result<chrono::NaiveDate, String> {
     let date = chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
         .map_err(|_| "must be a day written as YYYY-MM-DD".to_string())?;
@@ -830,12 +718,8 @@ fn canonical_date(value: &str) -> Result<chrono::NaiveDate, String> {
 /// A day something is claimed to have happened on: canonical, and not ahead of
 /// today.
 ///
-/// Time-dependent, which a validator otherwise is not, and the direction is
-/// what makes it safe. A stored proposal is re-validated at approval, so a
-/// clock-sensitive rule risks refusing something the user was already shown.
-/// Here the clock can only move a date the permissive way — future becomes past
-/// — so waiting can legalise a refused proposal and can never invalidate a live
-/// one.
+/// Time-dependent but safe: proposals re-validate at approval, and time only moves a date the
+/// permissive way, so waiting can never invalidate a live proposal.
 fn valid_completion_date(value: &str) -> Result<(), String> {
     if canonical_date(value)? > super::memory::today() {
         return Err("cannot be a day that has not happened yet".to_string());
@@ -874,29 +758,10 @@ const BATCH_LIMIT: usize = 12;
 
 /// Marking routine items done on a given day.
 ///
-/// This is the one action whose argument is a claim about the world, and
-/// it is why `date` and `evidence` are both required in spirit. Everything else
-/// here proposes a change the user can evaluate on its face — a note's wording
-/// is right there. A completion asserts that something happened, and the user
-/// reads their own history back as fact. So the proposal has to carry what it
-/// read: the card says *you wrote about it on the 14th*, not *done*.
-///
-/// It is nonetheless grantable like any other reversible action, and that is
-/// deliberate rather than an oversight of the three rules. Undo is derivable,
-/// nothing leaves the log, and nothing outside observed it. The user's stated
-/// reason for making the journal readable was precisely this — they write about
-/// what they did, and having to re-tick it by hand is the friction that left
-/// routines unused. Making completion permanently un-grantable would foreclose
-/// the behaviour the readability was for.
-///
-/// One proposal, many items — and no partial approval. A morning written
-/// up in one journal entry is one reading and one decision, so it is one card
-/// rather than five stacked ones the user clears by reflex. The cost is real and
-/// chosen: there is no way to accept four of five, and a user who disagrees with
-/// one item must refuse the batch and let the assistant re-propose. That is the
-/// right way round — refusing is the cheap outcome, and an inbox that trains
-/// reflex approval is the expensive one. Do not "fix" this by splitting a
-/// batch at approval; the proposal the user read is the thing being approved.
+/// A claim about the world, so the card carries what it read ("you wrote about it on the
+/// 14th"). Grantable on purpose: reversible, and re-ticking what the journal says is the friction
+/// readability was for. One card per reading, no partial approval; never split a batch at
+/// approval, since the proposal the user read is what is approved.
 const ROUTINE_COMPLETE: ActionType = ActionType {
     name: "routine.complete",
     kind: ActionKind::RoutineComplete,
@@ -988,19 +853,9 @@ const ROUTINE_SKIP: ActionType = ActionType {
 
 /// One ledger entry, written as the user's own journal would hold it.
 ///
-/// hledger text rather than structured arguments, and the reason is the
-/// balancing leg. A bank import knows one side of a payment; what it was *for*
-/// comes off a receipt that has no schema — a photo, an email body — which is
-/// why this action exists at all. Two-account arguments would cover the common
-/// case and silently refuse a split receipt (groceries and household in one
-/// purchase), so the entry is expressed in the syntax that can hold it.
-///
-/// `journal_import::parse_one_entry` is the parser, and there must not be a
-/// second one. Elided amounts, `@@` total-cost prices, virtual-posting refusal
-/// and inline tags are each subtle and each already solved there — see
-/// `unsupported_syntax`'s comment, which is a list of those mistakes made once.
-/// Validating here and rebuilding differently in `build_events` would be the same
-/// duplication one function apart, so both call it.
+/// hledger text, not two-account arguments, which would silently refuse a split receipt.
+/// `journal_import::parse_one_entry` is the only parser: validation and `build_events` both call
+/// it (`unsupported_syntax` lists the subtle cases).
 const TRANSACTION_RECORD: ActionType = ActionType {
     name: "transaction.record",
     kind: ActionKind::TransactionRecord,
@@ -1118,16 +973,10 @@ const TRANSACTION_TAG: ActionType = ActionType {
     trigger: Trigger::OnRequest,
 };
 
-/// Description and date only — deliberately not the postings.
+/// Description and date only, never the postings: ruling 8 (RULINGS.md).
 ///
-/// `TransactionUpdatedPayload.changes` is a free-form object and the projection
-/// will happily apply a `postings` rewrite; that path exists for the
-/// reconciliation review, which converts an `Unmatched` leg into a real one
-/// against a statement it has in hand. Reaching it from here would let a model
-/// restate what an amount was, and "the amount is what the bank said" stops being
-/// true — with the change presented as a wording fix. If a proposed amount is
-/// ever wanted, it belongs in its own action whose card shows both numbers, not
-/// as another key accepted quietly by this one.
+/// The projection would apply a `postings` rewrite, letting a model restate an amount as a
+/// wording fix. A proposed amount needs its own action whose card shows both numbers.
 const TRANSACTION_UPDATE: ActionType = ActionType {
     name: "transaction.update",
     kind: ActionKind::TransactionUpdate,
@@ -1159,17 +1008,9 @@ const TRANSACTION_UPDATE: ActionType = ActionType {
 
 /// Marking a transaction reconciled against a named statement.
 ///
-/// 🔴 This one asserts that something was checked, which no other action does.
-/// `cleared` means an authority — a bank statement — agreed the payment happened,
-/// and that is the same kind of claim `verified` exists to keep a model from
-/// making about extracted fields. It is proposable anyway, on the user's decision
-/// (2026-09-13), and what makes that safe is the shape of the argument list rather
-/// than a promise: `statement_source` is required, so the proposal cannot be
-/// "I believe this cleared" — it must name the statement, and the card shows which
-/// one. The user is then confirming a citation, not a feeling.
-///
-/// The only irreversible action here. There is no un-clear event, so
-/// `reversible: false` is the honest answer and the card says so.
+/// The one action asserting that something was checked. Proposable under ruling 8 (RULINGS.md)
+/// because `statement_source` is required: the user confirms a cited statement, not a feeling.
+/// Irreversible (there is no un-clear), so never grantable: ruling 3 (RULINGS.md).
 const TRANSACTION_CLEAR: ActionType = ActionType {
     name: "transaction.clear",
     kind: ActionKind::TransactionClear,
@@ -1271,11 +1112,8 @@ pub type ArgError = String;
 /// Check a proposal's arguments against its declaration, returning the normalized
 /// object to store.
 ///
-/// Unknown keys are rejected, not dropped. Arguments are model output and
-/// may carry text lifted out of a record, so the object has to be closed: a key
-/// that means nothing today is a key that means something after the next action
-/// is added, and a silently-dropped one leaves a proposal whose stored form does
-/// not match what was proposed.
+/// Unknown keys are rejected, never dropped: today's meaningless key means something after the
+/// next action, and a dropped one stores a proposal unlike what was proposed.
 pub fn validate_args(action: &ActionType, args: &Value) -> Result<Value, ArgError> {
     let Some(obj) = args.as_object() else {
         return Err(format!("`args` for {} must be an object", action.name));
@@ -1323,14 +1161,8 @@ pub fn validate_args(action: &ActionType, args: &Value) -> Result<Value, ArgErro
             continue;
         }
 
-        // Its own branch rather than the optional-text path below, for one
-        // reason that path cannot give it: an empty value has to survive.
-        // Blank-and-optional is dropped down there, which is right for an
-        // argument the model declined to fill and wrong here — a splice that
-        // deletes a note's last line resolves to an empty body, and dropping it
-        // would reach `build_events` looking exactly like a resolution that never
-        // ran. Those two must stay distinguishable: one is a legal edit, the
-        // other is a bug that would overwrite a note with nothing.
+        // Its own branch so an empty value survives: deleting a note's last line resolves to an
+        // empty body, which must stay distinguishable from a resolution that never ran.
         if param.source == ParamSource::ResolvedAtApproval {
             if let Some(value) = obj.get(param.key) {
                 let Some(text) = value.as_str() else {
@@ -1426,15 +1258,9 @@ pub fn validate_args(action: &ActionType, args: &Value) -> Result<Value, ArgErro
 
 /// One text value held to a parameter's rules, or the reason it is not one.
 ///
-/// Shared by [`ParamShape::Text`] and by every element of a
-/// [`ParamShape::TextList`], so that what counts as a valid text argument has
-/// exactly one definition. `label` is what the message names — the key itself
-/// for a lone value, `key[3]` for an element — because a batch refused without
-/// saying *which* element is a batch the model can only fix by guessing.
-///
-/// `Ok(None)` means blank. The caller decides what that is worth: dropped for a
-/// lone optional argument, refused inside a list, where it is a hole that would
-/// otherwise silently shorten the batch.
+/// One definition for [`ParamShape::Text`] and each [`ParamShape::TextList`] element; `label`
+/// names `key[3]` so the model knows which. `Ok(None)` is blank: dropped when lone and optional,
+/// refused in a list, where it would shorten the batch.
 fn checked_text(
     action: &ActionType,
     param: &ActionParam,
@@ -1494,14 +1320,8 @@ pub fn evidence_key(action: &ActionType) -> Option<&'static str> {
 
 /// Turn approved arguments into the events that carry them out.
 ///
-/// The only place per-kind branching lives. Adding an action means one arm
-/// here and one entry above; anything else that grows a match on [`ActionKind`]
-/// has put a second copy of this decision somewhere it will drift.
-///
-/// Identity is minted *here*, at approval, not at proposal: a proposal is an
-/// intention and carries none. That is what makes approving the same proposal
-/// twice a question the caller must answer (it checks the status) rather than a
-/// silent duplicate with two different ids.
+/// The only per-kind branching: a new action is one arm here and one entry above. Identity is
+/// minted at approval, so approving twice is the caller's status check, not a silent duplicate.
 pub fn build_events(
     action: &ActionType,
     args: &Value,

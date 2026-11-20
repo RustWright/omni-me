@@ -1,24 +1,8 @@
 //! The scheduled check-in: the assistant asking on the user's behalf.
 //!
-//! ## Why this is a question and not a new subsystem
-//!
-//! The tempting shape for "initiative" is a task runner with its own outputs, its
-//! own storage and its own screen. This is deliberately not that. A scheduled run
-//! authors an ordinary `AssistantQuestionAsked`, the ordinary answering loop
-//! picks it up, and anything it wants to change goes through the ordinary
-//! proposal gate into the ordinary inbox.
-//!
-//! That is not only less code. It means initiative inherits every property the
-//! ask path already has: the answer is durable, it syncs to every device, the
-//! journal stays unwritable, nothing is applied without approval, and the whole
-//! exchange is readable in the same thread list as everything else. A parallel
-//! path would have had to re-earn each of those, and would have been the obvious
-//! place for one of them to quietly not hold.
-//!
-//! ## What decides whether it is due
-//!
-//! [`is_due`] is pure and takes both clocks it needs, so the policy can be tested
-//! without waiting a day. The agent owns only the timer.
+//! An ordinary `AssistantQuestionAsked`, not a subsystem, so initiative inherits every property of
+//! the ask path (durable, synced, journal unwritable, approval-gated); a parallel path would have
+//! to re-earn each. [`is_due`] is pure, taking both clocks; the agent owns only the timer.
 
 use chrono::{DateTime, Datelike, Timelike, Utc};
 use chrono_tz::Tz;
@@ -30,11 +14,8 @@ use crate::events::EventError;
 /// When the last scheduled check-in was raised, or `None` if there has never
 /// been one.
 ///
-/// Derived from the log, not from a state file. A file would have to be
-/// written after each run and would then be wrong in three ordinary situations:
-/// a restart between raising the question and writing the file, a fresh data
-/// directory, and a second agent that never sees the first one's disk. The
-/// question itself is the record that it happened, and it syncs.
+/// From the log, never a state file, which a restart, a fresh data dir or a second agent would
+/// make wrong. The question itself is the record, and it syncs.
 pub async fn last_check_in(db: &Database) -> Result<Option<DateTime<Utc>>, EventError> {
     let mut resp = db
         .query(
@@ -194,12 +175,8 @@ pub fn is_due_now(policy: &CheckInPolicy, last_run: Option<DateTime<Utc>>) -> bo
 
 /// Whether a check-in should run now.
 ///
-/// Once per calendar day, decided against the last run rather than against a
-/// countdown. An agent restarted four times in an afternoon must not check in
-/// four times, and an agent that was down at the scheduled hour should still
-/// check in when it comes back rather than skipping the day — a missed day is
-/// indistinguishable to the user from the feature being broken. Both fall out of
-/// comparing dates instead of measuring intervals.
+/// Once per calendar day against the last run, never a countdown: restarts must not repeat it,
+/// and an agent down at the hour still checks in on return.
 pub fn is_due(policy: &CheckInPolicy, last_run: Option<DateTime<Utc>>, now: DateTime<Utc>) -> bool {
     if !policy.enabled || policy.prompt.trim().is_empty() {
         return false;

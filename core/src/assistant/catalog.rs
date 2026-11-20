@@ -1,35 +1,9 @@
 //! The read catalog: what the assistant can find and fetch.
 //!
-//! One entry per queryable collection, describing how to search it, how to fetch
-//! one row, and what a row is made of. `list_types`, `describe_type`, `search`
-//! and `read` are all driven from here, which is what keeps the verb set generic
-//! over data instead of growing a tool per feature.
-//!
-//! ## Why this is not `RecordType`
-//!
-//! [`crate::record_type::RecordType`] describes a document form — identity
-//! rule, template, property set, completeness rule — so the client can render an
-//! editor for a note and decide whether it is finished. Its properties are YAML
-//! frontmatter keys; `validate()` rejects colons and newlines specifically to
-//! protect that round-trip. It has no notion of a table, a relation, a number or
-//! a date range, and could not describe a routine.
-//!
-//! The two overlap only for journal and notes, which happen to be both a
-//! form-backed document *and* a searchable collection. Where an entry does
-//! describe a document type, [`CatalogEntry::record_type`] names the declaration
-//! to merge in, so `describe_type("journal")` reflects the user's own declared
-//! prompts. They compose; neither absorbs the other.
-//!
-//! ## Why code rather than events
-//!
-//! Every table here is created by a projection, in code. A second user cannot add
-//! a table without a rebuild, so a declaration event pointing at a table that does
-//! not exist would be genericity in name only. The rationale in full is in
-//! `docs/src/assistant.md`.
-//!
-//! A projection whose tables are queryable but which has no entry here is
-//! invisible to the assistant, and nothing else would say so.
-//! [`every_queryable_projection_is_catalogued`] is what stops that being silent.
+//! One entry per queryable collection drives `list_types`, `describe_type`, `search` and
+//! `read`, keeping verbs generic. Not `RecordType`, a form with no tables; they compose via
+//! [`CatalogEntry::record_type`]. In code, as tables are (`docs/src/assistant.md`). An
+//! uncatalogued projection is invisible: [`every_queryable_projection_is_catalogued`].
 
 use crate::config::{Feature, ResolvedConfig};
 use crate::events::{
@@ -115,35 +89,21 @@ pub struct ChildCollection {
     pub description: &'static str,
     /// Columns on [`ChildCollection::table`] the model must never be handed.
     ///
-    /// Empty for both of today's collections, and present anyway:
-    /// `fetch_children` selects `*` exactly as `read` does, so a bookkeeping
-    /// column on a child table is the same defect in the same function. Fixing
-    /// only the parent row would have left the twin shipping — and made it look
-    /// deliberate, since the other half had clearly been reviewed. See
-    /// [`CatalogEntry::hidden_fields`].
+    /// Empty today but present: `fetch_children` selects `*` as `read` does, so a child's
+    /// bookkeeping column is the same defect ([`CatalogEntry::hidden_fields`]).
     pub hidden_fields: &'static [&'static str],
     /// Column marking a row on [`ChildCollection::table`] as hidden, for a child
     /// table no entry of its own owns.
     ///
-    /// `routine_items` is that case: it has a `removed` column and no entry, so
-    /// there is nothing for `store::fetch_children` to inherit a rule from. Where
-    /// the table *does* have an entry — `documents`, read by its own `attachments`
-    /// collection — leave this `None` and let the entry's
-    /// [`CatalogEntry::hidden_when`] be the single declaration, rather than
-    /// restating it here where the two can drift apart.
+    /// For `routine_items`, which has no entry to inherit from. Where the table has one
+    /// (`documents`), leave `None` so [`CatalogEntry::hidden_when`] is the single declaration.
     pub hidden_when: Option<&'static str>,
 }
 
 /// A computed view `read` returns alongside the raw child rows.
 ///
-/// Exists because raw rows can be *technically complete and practically
-/// unanswerable*: a routine's completion history is one row per item per day, so
-/// "did I do my morning routine on Tuesday" means re-deriving a rule the routines
-/// screen already owns — and a second reader that re-derives it can disagree with
-/// what the user sees on screen. The computed view carries the app's own answer.
-///
-/// One variant today. Left as an enum rather than a bool so the second case has
-/// somewhere to go, and so `store` matches exhaustively and cannot forget one.
+/// Raw completion rows make "did I do my routine on Tuesday" a re-derivation that could disagree
+/// with the screen; this carries the app's own answer. An enum so `store` matches exhaustively.
 #[derive(Debug, Clone, Copy)]
 pub enum DerivedView {
     /// Per-day rollup of a parent's item completions, via
@@ -192,41 +152,17 @@ pub struct CatalogEntry {
     pub record_type: Option<&'static str>,
     /// Columns on [`CatalogEntry::table`] the model must never be handed.
     ///
-    /// Bookkeeping columns exist, and `read` selects `*`. A projection is
-    /// free to keep state on a row that makes the *fold* work and means nothing to
-    /// a reader — `generic_notes.applied_appends` is the ids of the append events
-    /// already folded in, which is how replay converges. Handed to a model inside
-    /// a record described as a note, those become event ids it can quote back as
-    /// though the user had written them.
-    ///
-    /// The two ends of this live in different files, which is the whole
-    /// hazard: the column is declared in the projection's schema and hidden here.
-    /// Adding a bookkeeping column without adding it to this list is silent. The
-    /// projection's own definition carries a pointer back to this field; keep it.
-    ///
-    /// Deliberately *not* an allow-list of visible columns. That would make the
-    /// failure "a real column silently stopped reaching the model", which is far
-    /// harder to notice than one extra key.
+    /// `read` selects `*`, so fold bookkeeping (`generic_notes.applied_appends`) would reach the
+    /// model as if the user wrote it. Declared in the projection, hidden here: a new bookkeeping
+    /// column not added here leaks silently (keep the projection's pointer). A deny-list, on
+    /// purpose.
     pub hidden_fields: &'static [&'static str],
     /// A boolean column whose `true` rows this catalog never returns, from
     /// `search`, `list` or `read` alike.
     ///
-    /// Soft-deletion is invisible to a filter-driven query. Every entry
-    /// here predates this field because none of their tables had one: a note is
-    /// deleted outright, and a routine's `removed` lives on its *items*, which
-    /// `derive` already filters. `transactions` is the first top-level table
-    /// where a row can be gone and still be selected, and the queries build their
-    /// `WHERE` purely from model-supplied narrowings — so without a declaration
-    /// the assistant reads deleted ledger entries and cites them as evidence.
-    ///
-    /// Not a filter. A filter is something the model chooses to apply, and
-    /// "the model remembered to exclude deleted rows" is not a property worth
-    /// having. This is applied to every query over the table whatever was asked.
-    ///
-    /// Distinct from retirement, which is deliberately visible. A retired
-    /// belief stays readable on purpose — `memory.rs` keeps the audit trail — so
-    /// that is a filter's job, not this one. The test is whether a person would
-    /// call the row *gone*.
+    /// Applied to every query, never a filter the model chooses, or deleted ledger entries become
+    /// evidence. Not for retirement, which stays visible on purpose; the test is whether a person
+    /// would call the row gone.
     pub hidden_when: Option<&'static str>,
     /// A column that hides the row whenever it holds a value: a transaction
     /// merged into its twin keeps its row, with `superseded_by` naming the twin.
@@ -414,13 +350,8 @@ const ROUTINE: CatalogEntry = CatalogEntry {
 
 /// What the assistant has concluded about the user, and is allowed to read back.
 ///
-/// This is the one sanctioned form of recall, and the contrast with
-/// `assistant_messages` is the point. Conversations are deliberately absent
-/// from this catalog, because letting the assistant search its own past answers
-/// means it cites its own earlier guesses as evidence about the user's life. A
-/// belief is the opposite: it was proposed, it carries the records it was drawn
-/// from, and a person accepted it before it existed. Recall is allowed here
-/// precisely because every entry has been through that gate.
+/// The one sanctioned recall: unlike conversations, each belief carries its sources and was
+/// accepted by a person before it existed.
 const BELIEF: CatalogEntry = CatalogEntry {
     name: "belief",
     table: "beliefs",
@@ -575,27 +506,15 @@ const DOCUMENT: CatalogEntry = CatalogEntry {
 
 /// Reconciliation bookkeeping on `transactions`, and the merge trail.
 ///
-/// `superseded_by` and `merged_ids` exist so the unified reconciliation engine
-/// can collapse two sightings of one payment into a single row while keeping both
-/// originals in the log. To a reader they are ULIDs of rows that are either the
-/// same transaction under another name or no longer shown at all — quoted back,
-/// they look like distinct payments. `balancing_posting` is the engine's
-/// hidden-fee correction, not a posting the user made.
+/// Merge bookkeeping that, quoted back, looks like distinct payments; `balancing_posting` is the
+/// engine's fee correction, not the user's posting.
 const TRANSACTION_INTERNALS: &[&str] = &["superseded_by", "merged_ids", "balancing_posting"];
 
 /// The ledger: what was actually spent, and what it was for.
 ///
-/// The counter-example the catalog was designed against. Journal, note and
-/// belief are all "a record is a text body with metadata"; a transaction's meaning
-/// is in its amounts and accounts, and full-text over `description` finds almost
-/// nothing worth having. That is why `filters` carries the weight here and
-/// `text_fields` is one entry long — do not widen it to make search feel more
-/// productive, because a match on a payee name is not evidence about money.
-///
-/// `category` is `option<string>` — most rows have none until something
-/// categorises them, which is exactly what `transaction.categorize` is for. It is
-/// an `Exact` filter and not a text field, so the `string::concat(NONE, …)` trap
-/// that bit `documents` does not reach it; keep it that way.
+/// Meaning lives in amounts and accounts, so `filters` carry the weight; never widen
+/// `text_fields`, since a payee match is not evidence about money. `category` stays an `Exact`
+/// filter, out of reach of the `string::concat(NONE, …)` trap.
 const TRANSACTION: CatalogEntry = CatalogEntry {
     name: "transaction",
     table: "transactions",
@@ -750,13 +669,8 @@ mod tests {
 
     /// The ledger entry must stay findable by its numbers, not by its prose.
     ///
-    /// This was `transaction_shape_is_expressible` and asserted the entry was
-    /// not registered, under a finance hold the user lifted on 2026-09-11.
-    /// The hold is gone; the property it was really protecting is not. Journal,
-    /// note and belief are three variations of "a record is a text body", and a
-    /// transaction is the counter-example that stops the catalog quietly becoming
-    /// a document search — its meaning is in amounts and accounts, and full-text
-    /// over `description` finds almost nothing worth having.
+    /// Keeps the catalog from quietly becoming a document search: a transaction's meaning is in
+    /// amounts and accounts.
     #[test]
     fn a_ledger_entry_is_findable_by_its_numbers() {
         let txn = ALL_ENTRIES
@@ -791,17 +705,9 @@ mod tests {
 
     /// Whatever an entry hides, a child collection must not hand back.
     ///
-    /// This used to forbid the shape outright — no child could read a table
-    /// with hidden rows — because `fetch_children` ignored the rule entirely and
-    /// the only safe answer was "never do that". `documents` is self-referential
-    /// and gained `hidden_when: Some("purged")`, so the shape now exists.
-    ///
-    /// The guarantee moved rather than weakened: `store::fetch_children` now
-    /// applies the child's own rule, or the rule of the entry owning its table.
-    /// What this asserts is that exactly one of those is declared, because two
-    /// declarations for one table is how they come to disagree. The behaviour is
-    /// covered by `store::tests::a_purged_attachment_is_not_returned_through_its_parent`
-    /// and `store::tests::a_removed_routine_item_is_not_returned_through_its_group`.
+    /// `store::fetch_children` applies the child's rule or its table's entry's; this asserts
+    /// exactly one is declared. Behaviour: `store::tests::a_purged_attachment_is_not_returned_*`
+    /// and `a_removed_routine_item_is_not_returned_through_its_group`.
     #[test]
     fn a_child_tables_hidden_rule_is_declared_exactly_once() {
         for entry in ALL_ENTRIES {
