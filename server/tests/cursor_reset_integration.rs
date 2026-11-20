@@ -1,14 +1,8 @@
 //! `POST /auto_import/sources/{name}/cursor/reset` end to end.
 //!
-//! What a reset does to a source is proved in the engine's own tests, where a
-//! second pull re-fetches what the first one read. What those cannot reach is
-//! the gate, and the gate is the reason this route exists separately from the
-//! wipe: rewinding a live mailbox re-archives every message it passes, so a
-//! caller holding the wrong host must be stopped before the registry is touched.
-//!
-//! Over a real socket against the production router, because the declared
-//! instance lives in server state — calling `reset_cursor` in process reaches
-//! neither the gate nor the routing.
+//! The engine's tests prove what a reset does; these prove the gate: rewinding a live mailbox
+//! re-archives everything it passes, so the wrong host is refused before the registry is
+//! touched. Over a real socket, because the declared instance lives in server state.
 
 mod common;
 

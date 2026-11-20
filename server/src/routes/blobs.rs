@@ -94,16 +94,9 @@ fn blob_response(bytes: Vec<u8>) -> Response {
         .map(|t| t.mime_type())
         .unwrap_or("application/octet-stream");
 
-    // `nosniff` + an attachment disposition.
-    //
-    // The content type here is *sniffed from the bytes*, and blob PUT accepts
-    // any content that matches its claimed hash — so without these headers,
-    // storing a blob that sniffs as `text/html` and then opening its URL
-    // executes script on the server's own origin, with whatever that origin can
-    // reach. `nosniff` stops the browser second-guessing the type, and
-    // `attachment` stops it rendering the response as a document at all. The
-    // app's own reader fetches these bytes programmatically, so neither header
-    // changes anything for the legitimate caller.
+    // `nosniff` and `attachment` are load-bearing: PUT accepts any bytes matching their hash,
+    // so a blob that sniffs as `text/html` would run script on the server's origin when opened.
+    // The app fetches blobs programmatically, so neither header affects it.
     (
         [
             (header::CONTENT_TYPE, mime),

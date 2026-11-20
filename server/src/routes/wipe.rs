@@ -20,13 +20,8 @@ use crate::AppState;
 
 /// A preview that has been shown, and the only wipe that may act on it.
 ///
-/// The same gate the document purge uses, for the same reason: a confirm may
-/// only ever narrow what a preview described. There the unit is a document id;
-/// here it is a feature, so "shrink" means the confirmed set must be a subset of
-/// the previewed one. Nothing may add a feature that was never counted.
-///
-/// Single-use and single-slot, so a stale token cannot be replayed later
-/// against a log that has since moved on.
+/// The document purge's gate, by feature: the confirmed set must be a subset of the
+/// previewed one. Single-use and single-slot, so a stale token cannot be replayed.
 #[derive(Debug, Clone)]
 pub struct WipeTicket {
     pub token: String,

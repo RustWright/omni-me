@@ -1,18 +1,6 @@
-//! Reading filed problem reports off the box.
-//!
-//! This is the whole retrieval half of feedback capture. The box holds every
-//! report because every device pushes its events here, so one endpoint over the
-//! tailnet serves all of them regardless of which device filed them.
-//!
-//! Two representations, one query. `?format=md` renders markdown for a
-//! person (the default, because the reader is a session at a terminal); JSON is
-//! there for anything that wants to route reports onward. Whatever calls this is
-//! what makes the destination pluggable — a script writing into a private
-//! overlay, or one opening issues — so the app needs no plugin seam of its own.
-//!
-//! What this endpoint deliberately is not: a triage API. There is no state
-//! to mark a report done, because the acting-on happens in a repo and a commit,
-//! not in the app.
+//! Reading filed problem reports off the box, which holds every device's reports.
+//! Markdown by default (the reader is a terminal session), JSON for routing them onward.
+//! Not a triage API: acting on a report happens in a repo, so there is no "done" state.
 
 use axum::{
     Json, Router,

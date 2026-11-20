@@ -217,6 +217,14 @@ It does not run a model. Lifting a PDF's text layer and parsing a statement's ro
 deterministic and both happen here; reading a scan is not, and arrives later as
 `document_text_transcribed`.
 
+A statement is parsed, never read by a model, for a reason a receipt does not share: it states
+figures about itself (declared totals, transaction counts, opening and closing balances), so a
+parse can be checked rather than trusted, and that check is the only thing that makes a bulk
+import of a few hundred rows verifiable. `POST /statements/parse` therefore parses by column
+position and returns the rows with everything it could not read and every check that failed.
+It writes nothing, but it does say whether the statement is fit to import, because that
+judgement belongs with the parser rather than being re-derived by each client.
+
 Deriving the parser's fields belongs to ingest itself rather than to each caller of it, and that
 placement is the point. Ingest is the one function that knows a document has just been created;
 every caller — the HTTP route today, a device capture or a backfill later — gets fields without

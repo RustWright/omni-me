@@ -1,13 +1,8 @@
 //! `POST /documents/archive` end to end.
 //!
-//! The unit tests in `core::archive` prove what ingest makes of a file. What
-//! they cannot prove is that the route wires it up: that the bytes actually
-//! reach the blob directory under the hash the response names, and that a
-//! document nothing can read still comes back as a success rather than an error.
-//!
-//! Archiving deliberately runs no model, so `NullExtractor` in the harness is
-//! not a limitation here — it is the point. A route that needed an extractor to
-//! file a document would refuse every scan.
+//! `core::archive` proves what ingest makes of a file; these prove the route stores the bytes
+//! under the hash it names and answers success for a document nothing can read.
+//! `NullExtractor` is the point, not a limitation: archiving runs no model.
 
 mod common;
 
@@ -353,8 +348,8 @@ async fn a_field_corrected_on_a_phone_reaches_the_servers_documents_table() {
     let client = reqwest::Client::new();
     let document_id = archive_a_scan(&client, &url).await;
 
-    // Kind and retention category both, which is what "classified" means since
-    // R4-6: a document without a category is read once more for one.
+    // Kind and retention category both, which is what "classified" means under ruling 39
+    // (RULINGS.md): a document without a category is read once more for one.
     let events = ["kind", "retention"]
         .into_iter()
         .map(|key| {

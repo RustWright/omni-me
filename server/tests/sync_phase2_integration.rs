@@ -119,14 +119,8 @@ async fn start_server_ephemeral() -> (u16, omni_me_core::db::Database, tokio::ta
     (port, server_db, handle)
 }
 
-/// Full Phase 2 round-trip:
-/// 1. Start server + client pipeline + monitor.
-/// 2. Kill server.
-/// 3. Append event through the buffer.
-/// 4. Verify buffer flush + push fails + retry engine schedules.
-/// 5. Restart server on same port.
-/// 6. Hint the retry engine (simulating network recovery) + verify Recovered.
-/// 7. Verify the event landed on the server.
+/// Round trip: kill the server, append through the buffer, see the push fail and a retry
+/// scheduled, restart on the same port, hint recovery, and find the event on the server.
 #[tokio::test]
 async fn kill_server_edit_queue_retry_recover() {
     // Step 1: real server up.
