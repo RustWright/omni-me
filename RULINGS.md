@@ -353,3 +353,7 @@ edit site carries their reasoning. These are settled. Do not re-open one without
   2 s timeout, skipped with one line when unreachable), and the session marks them `cut`, "moved
   to omni-me". omni-me never writes the repo; the server keeps a receipt until a pushed index
   shows the cut. Revises 90 for `~/life`, whose indexes go unrefreshed for months.
+- **122.** Coursework deadlines come from the LEARN calendar feed, read-only like the calendar
+  (96): each due date attaches to a matching task or proposes one. Never routed through Google
+  Calendar, where a deadline would become an event. Deadlines an instructor did not post are
+  given in chat. The feed address is a credential.
