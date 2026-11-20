@@ -1,16 +1,6 @@
-//! Background scheduler that invokes
-//! `omni_me_core::auto_close::auto_close_stale_journals`.
-//!
-//! Timing: a catch-up tick shortly after start, then one per local
-//! midnight (`+ GRACE_SECONDS`, to avoid racing a midnight-adjacent write). If
-//! the timezone string can't be parsed, fall back to UTC and log a warning —
-//! the app should never panic on a bad timezone setting.
-//!
-//! The startup tick is load-bearing, not belt-and-braces. Sleeping until the
-//! next midnight *first* meant the app had to be alive at 00:00:30 for
-//! auto-close to fire at all, which on a phone is essentially never — the
-//! process is backgrounded or killed long before. Sweeping at startup instead
-//! makes the scheduler catch up on whatever it missed while the app was shut.
+//! Runs `omni_me_core::auto_close::auto_close_stale_journals` once at start, then each local
+//! midnight plus `GRACE_SECONDS`; a bad timezone falls back to UTC. The startup tick is
+//! load-bearing: a phone app is almost never alive at midnight.
 
 use std::sync::Arc;
 use std::time::Duration;

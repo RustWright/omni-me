@@ -1,15 +1,8 @@
 //! Tauri command for document extraction.
 //!
-//! Forwards captured document bytes to `omni-me-server`'s
-//! `/documents/extract` endpoint, which runs the configured extractor.
-//! Server-side host honors `feedback_llm_server_side.md` — API keys never live
-//! on the client.
-//!
-//! Attachment wiring: every call sets `attach=true` so the server stores the
-//! bytes content-addressably as well as extracting from them. The
-//! `AttachmentRef` round-trips back so the client can mirror the bytes into
-//! the local LRU cache (see `commands::attachments`) and surface the ref to
-//! the confirm-draft form for inclusion on the `TransactionRecorded` event.
+//! Forwards captured bytes to the server's `/documents/extract`; API keys never live on the
+//! client. Every call sets `attach=true`, and the returned `AttachmentRef` fills the local cache
+//! (`commands::attachments`) and the draft's `TransactionRecorded`.
 
 use serde::{Deserialize, Serialize};
 use tauri::State;

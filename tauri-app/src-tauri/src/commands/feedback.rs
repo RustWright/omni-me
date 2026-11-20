@@ -1,17 +1,8 @@
 //! In-app problem reporting.
 //!
-//! One command appends one `FeedbackCaptured` event. There is no projection, no
-//! table and no review screen: feedback is written on a device that may be
-//! offline and read later in bulk from a terminal, which is the access pattern
-//! an append-only log already serves. Riding the existing write path buys the
-//! offline queue, retry, dedup and cross-device replication that carry every
-//! other event, none of which had to be rebuilt here.
-//!
-//! The split of responsibilities is deliberate. The frontend supplies only
-//! what it alone can know — the sentence, which screen was open, and what was on
-//! it. Everything identifying the *installation* (device, build, sync target,
-//! sandbox flag) is filled in here, where it cannot be stale or forged by a
-//! frontend that has been open across an update.
+//! One command appends one `FeedbackCaptured` event, riding sync for offline queueing and
+//! replication; reports are read in bulk off the box. The frontend supplies only the sentence and
+//! screen; installation identity is filled in here, where a stale frontend cannot misreport it.
 
 use tauri::State;
 
@@ -58,13 +49,8 @@ pub async fn get_app_context(
 
 /// Append one problem report.
 ///
-/// Returns the report's id so the UI can confirm with something concrete rather
-/// than a bare "sent".
-///
-/// `body` is the only field that must be non-empty. Every context argument is
-/// optional and every one of them is droppable in the modal — a report filed
-/// mid-friction must never fail because a screen declined to describe itself,
-/// or because the user chose not to attach their draft.
+/// Returns the report's id for the UI's confirmation. Only `body` is required: a report filed
+/// mid-friction must never fail for want of optional context.
 #[tauri::command(rename_all = "snake_case")]
 #[allow(clippy::too_many_arguments)]
 pub async fn submit_feedback(
@@ -126,20 +112,9 @@ const RECENT_EVENT_LIMIT: u32 = 20;
 /// The last few events authored on this device, oldest first, as
 /// `<timestamp> <event_type> <aggregate_id>` lines.
 ///
-/// Built here rather than in the frontend, deliberately. This is the same
-/// split the module header draws for device and build identity: anything
-/// describing the *installation* is filled in on this side, where a stale or
-/// forged frontend cannot reach it. It also keeps the event list off the IPC
-/// wire entirely — the modal never needs to see it.
-///
-/// Payloads are never included. Event payloads carry journal prose and
-/// transaction amounts; the type and aggregate id are what let a reader
-/// reconstruct a sequence, and a report is not a data export.
-///
-/// A store error yields an empty list, matching `queries::list_feedback`'s
-/// skip-don't-fail discipline. A report must never fail because its optional
-/// context could not be gathered — the sentence the user typed is the part that
-/// matters, and it is already in hand by the time this runs.
+/// Built here, off the IPC wire, like the installation identity. Never payloads: they carry
+/// journal prose and amounts, and a report is not a data export. A store error yields an empty
+/// list, so optional context never fails a report.
 async fn recent_event_lines(state: &AppState, limit: u32) -> Vec<String> {
     let events = match state
         .event_store

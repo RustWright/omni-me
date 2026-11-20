@@ -1,20 +1,9 @@
 //! hledger journal import Tauri commands.
 //!
-//! `preview_journal_import` parses a journal at a given path and returns a
-//! summary (per-account counts, sample transactions, parse errors). The path
-//! is canonicalized and stored on `AppState::last_journal_import_path` so the
-//! companion commit command can only ever ingest a path the user previewed.
-//!
-//! `commit_journal_import` re-parses, applies the A2 rewriter +
-//! the user's per-account drop/rename plan, then emits a `TransactionRecorded`
-//! event per surviving draft. Idempotent by deterministic `txn_id`
-//! (`import-<content_hash>-<occurrence>`) — re-running the commit against the
-//! same journal skips transactions whose `txn_id` already exists in the
-//! `transactions` projection.
-//!
-//! Pure value work (parsing, A2 rewriting, plan application, content hashing)
-//! lives in `omni_me_core::journal_import`. This module is the I/O + event-
-//! emission boundary only.
+//! Preview stores the canonical path on `AppState::last_journal_import_path`, so commit can only
+//! ingest a previewed path. Commit applies the rewriter and the per-account plan; ids are
+//! `import-<content_hash>-<occurrence>`, so a re-run skips what exists. Logic lives in
+//! `core::journal_import`.
 
 use std::collections::HashMap;
 use std::path::PathBuf;

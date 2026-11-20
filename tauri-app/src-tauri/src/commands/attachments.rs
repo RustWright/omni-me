@@ -1,15 +1,8 @@
 //! Local attachment cache.
 //!
-//! On-device LRU mirror of the server-side `/blobs/{sha256}` store. Capture
-//! flows write through here so a captured receipt stays viewable offline, and
-//! the transaction detail view fetches through here too (`fetch_attachment`,
-//! reached from `finances.rs`), falling back to a `GET /blobs/{sha256}` and
-//! re-populating the cache on miss.
-//!
-//! Eviction policy: when `cache_size > CAP_BYTES`, sort entries by mtime
-//! ascending and delete until under the cap. `atime` is unreliable on
-//! `noatime`-mounted filesystems (Linux default), so cache hits explicitly
-//! `touch` mtime to keep frequently-accessed blobs in residency.
+//! On-device LRU mirror of the server's `/blobs/{sha256}`: captures write through it, reads
+//! fall back to the server and refill it. Eviction is oldest mtime first past `CAP_BYTES`;
+//! hits `touch` mtime because `atime` is unreliable under `noatime`.
 
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};

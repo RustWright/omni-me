@@ -264,17 +264,9 @@ pub async fn get_routine_history(
 // Destructive: emit DataWiped + clear events + rebuild projections.
 // -----------------------------------------------------------------------------
 
-/// Confirmation phrase the caller must pass to authorize a wipe. Re-validated
-/// on the backend so a DevTools-driven `invoke('wipe_all_data', ...)` call
-/// can't bypass the UI's typed-phrase gate.
-///
-/// The same literal is declared independently in
-/// `frontend/src/pages/settings.rs`, because the wasm frontend does not depend
-/// on any crate this one can export a const through. If the two drift the
-/// failure is silent and total: the UI keeps accepting the phrase it prints,
-/// this side rejects it, and the wipe button simply stops working with a
-/// "confirmation phrase mismatch" the user cannot act on.
-/// `wipe_phrase_matches_the_frontend_copy` below is the guard for that.
+/// Re-checked here so a DevTools `invoke('wipe_all_data')` cannot skip the typed phrase.
+/// Also declared in `frontend/src/pages/settings.rs` (no shared crate); if they drift the wipe
+/// button silently stops working. `wipe_phrase_matches_the_frontend_copy` guards it.
 const WIPE_CONFIRM_PHRASE: &str = "wipe everything zkqp";
 
 /// Pure helper so the validation is testable without spinning up an
