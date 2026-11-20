@@ -3,7 +3,7 @@
 //!
 //! Local and deterministic, over a fixture whose cases are labelled [`CaseKind::Lexical`] or
 //! [`CaseKind::Semantic`] and reported apart. Why, and what each arm reports:
-//! `docs/src/retrieval.md` § How it is measured.
+//! `docs/src/retrieval.md` § "How it is measured".
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};

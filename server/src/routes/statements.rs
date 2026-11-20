@@ -1,6 +1,6 @@
 //! `POST /statements/parse`: read a bank statement deterministically, with no model, because
-//! a statement's own totals let a parse be checked (`docs/src/archive.md` § What ingest
-//! deliberately does not do). The request names a secret, so no password crosses the wire.
+//! a statement's own totals let a parse be checked (`docs/src/archive.md` § "What ingest
+//! deliberately does not do"). The request names a secret, so no password crosses the wire.
 
 use axum::{
     Json, Router,

@@ -1454,8 +1454,8 @@ struct SkippedLineWire {
 /// a PDF, possibly encrypted.
 ///
 /// Parsed on the server, where the credentials and `poppler` live; the client sends bytes and a
-/// secret's name. Refuses a statement that fails its own checks (`docs/src/archive.md` § What
-/// ingest deliberately does not do); `force` is for failures judged benign, never a default.
+/// secret's name. Refuses a statement that fails its own checks (`docs/src/archive.md`
+/// § "What ingest deliberately does not do"); `force` is for failures judged benign only.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn import_statement_document(
     state: State<'_, AppState>,
