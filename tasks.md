@@ -215,9 +215,6 @@ generic IMAP config source.
 
 ## Alongside Cycle 6
 
-- [0101] **Comment sweep tier 2** (`CLAUDE.md` § Comments): blocks of 8+ lines. Server, agent,
-  src-tauri and frontend are done; core (~420 blocks) remains, one module per commit. Also replace
-  pre-reset IDs (`R3-7`, `R4-6`) in core comments with ruling numbers. No proposals: apply, commit. [L]
 - [0111] **Standing test debt** (Cycle 5 review): T5, T8, T9, T14, T15, T16, T18, T19, each
   written when its code is next edited. T5 (stored rows after a type change) also gates areas. [M]
 

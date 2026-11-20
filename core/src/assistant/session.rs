@@ -369,7 +369,7 @@ impl<'a> Session<'a> {
                 // all the model can form: the nudge alone is advice, and this
                 // model ignored the response schema seven times in one bench run.
                 // `propose` stays so research that ran long can still end in the
-                // change asked for (R3-11: ten lookups, then nothing).
+                // change asked for (ten lookups, then nothing).
                 request = request.with_tools(
                     verbs::tools()
                         .into_iter()
@@ -453,7 +453,7 @@ impl<'a> Session<'a> {
                     Some(_) => unwrap_constrained_answer(reply.content),
                     None => reply.content,
                 };
-                // R3-7: a reply saying a change was made when nothing was
+                // A reply saying a change was made when nothing was
                 // proposed gets one chance to propose it or say otherwise.
                 let proposed = trace
                     .iter()
@@ -897,7 +897,7 @@ mod tests {
         ResolvedConfig::new(Default::default(), Default::default())
     }
 
-    /// R3-7: "Done ✅" with nothing proposed gets one correction, and the reply
+    /// "Done ✅" with nothing proposed gets one correction, and the reply
     /// that follows it is the answer.
     #[tokio::test]
     async fn a_claimed_change_with_nothing_proposed_is_sent_back_once() {

@@ -2176,7 +2176,7 @@ mod tests {
         assert_eq!(events[0].payload["order"], json!(APPEND_ORDER));
     }
 
-    /// R3-10: a routine and its steps arrive as one proposal, so building one no
+    /// A routine and its steps arrive as one proposal, so building one no
     /// longer needs a second request that knows the new routine's id.
     #[test]
     fn a_routine_is_created_with_its_steps_in_order() {

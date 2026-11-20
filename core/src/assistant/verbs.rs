@@ -427,7 +427,7 @@ async fn propose(db: &Database, config: &ResolvedConfig, args: &Value) -> Value 
             Err(refusal) => return refusal,
         }
     }
-    // R4-15 covers moving an entry's date as much as recording one.
+    // Ruling 8 (RULINGS.md) covers moving an entry's date as much as recording one.
     if action.name == "transaction.update"
         && let Some(date) = validated.get("date").and_then(Value::as_str)
         && let Ok(date) = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")

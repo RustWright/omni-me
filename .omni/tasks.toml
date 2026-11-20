@@ -724,7 +724,7 @@ ref    = "tasks.md § Bugs"
 [[task]]
 id     = "omni-me-0101"
 title  = "Comment sweep tier 2: blocks of 8+ lines, crate by crate"
-status = "todo"
+status = "done"
 size   = "L"
 ref    = "tasks.md § Alongside Cycle 6"
 

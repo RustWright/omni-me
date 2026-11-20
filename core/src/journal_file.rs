@@ -332,7 +332,7 @@ fn unrenderable_reason(t: &TransactionRecordedPayload) -> Option<String> {
     None
 }
 
-/// Make a description safe for an hledger header line. Characters that change the header's structure (`DATE [*|!] [(CODE)] [DESCRIPTION]`):
+/// Make a description safe for a header line (`DATE [*|!] [(CODE)] [DESCRIPTION]`). Breakers:
 /// - a leading `*` or `!` reads as status (`**PAYEE**`), and an unspaced one aborts the file;
 /// - a leading `(` opens a code; a `;` starts a comment, truncating the payee;
 /// - a newline orphans the postings, and an empty payee aborts the whole file.

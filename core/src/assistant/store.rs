@@ -1221,7 +1221,7 @@ mod tests {
         assert_eq!(names, vec!["Stretch"], "a removed item came back");
     }
 
-    /// "My most recent Uber" (R3-9): search ranked an older ride first. A text
+    /// "My most recent Uber": search ranked an older ride first. A text
     /// filter on `list` keeps list's newest-first order, so the first hit is it.
     #[tokio::test]
     async fn a_description_filter_lists_the_newest_match_first() {

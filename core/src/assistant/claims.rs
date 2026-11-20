@@ -1,4 +1,4 @@
-//! Telling a reply that reports a change from one that proposes it (R3-7).
+//! Telling a reply that reports a change from one that proposes it.
 //!
 //! A heuristic over the reply's wording. It runs only when the run proposed
 //! nothing, so a false positive costs one more model call, never a wrong write.

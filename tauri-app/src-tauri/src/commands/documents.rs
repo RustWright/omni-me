@@ -236,7 +236,7 @@ pub async fn set_document_retention(
     append_new_and_apply(&state, event).await.map(|_| ())
 }
 
-/// The retention categories (R4-6), as (tag, label), so the retention screen can
+/// The retention categories, ruling 39 (RULINGS.md), as (tag, label), so the retention screen can
 /// offer them before any document carries one. Served from core rather than
 /// copied into the frontend, where a second list would drift.
 #[tauri::command(rename_all = "snake_case")]

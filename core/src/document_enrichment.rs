@@ -725,7 +725,7 @@ mod tests {
         assert_eq!(reader.calls.load(Ordering::SeqCst), 1);
     }
 
-    /// The backfill (R4-6): a document catalogued before retention categories
+    /// The backfill, ruling 39 (RULINGS.md): a document catalogued before retention categories
     /// existed is read once more for one, and then left alone.
     #[tokio::test]
     async fn a_document_without_a_retention_category_is_read_once_more() {
