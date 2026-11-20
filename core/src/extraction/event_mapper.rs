@@ -3,6 +3,7 @@
 //! - receipt: one draft per purchase, anchored on the stated total (what a bank charge cancels
 //!   against), lines as expense legs, the credit side `Unmatched`; zero-sum postings are used as
 //!   given, and no total means the lines' sum.
+//!
 //! External ids derive from a caller prefix, so reprocessing a source never duplicates rows.
 
 use chrono::{NaiveDate, Utc};

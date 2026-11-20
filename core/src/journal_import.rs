@@ -466,6 +466,7 @@ fn convert_transaction(
 /// - virtual postings (`[Assets:Budget:Food]`) were imported as real money;
 /// - a balance assertion (`= 500.00 CAD`, no amount) was taken as the elided leg;
 /// - a lot price (`{50.00 CAD}`) was ignored, minting a nonsense commodity on cash.
+///
 /// Refused, not supported: a real journal had none of them, and a refusal is visible.
 fn unsupported_syntax(t: &ParserTxn) -> Option<String> {
     for p in &t.postings {

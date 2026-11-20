@@ -336,6 +336,7 @@ fn unrenderable_reason(t: &TransactionRecordedPayload) -> Option<String> {
 /// - a leading `*` or `!` reads as status (`**PAYEE**`), and an unspaced one aborts the file;
 /// - a leading `(` opens a code; a `;` starts a comment, truncating the payee;
 /// - a newline orphans the postings, and an empty payee aborts the whole file.
+///
 /// The only guard covering every writer and replay. Lossy on the payee, exact on the money; the
 /// projection keeps the original string.
 fn sanitize_description(raw: &str, txn_id: &str) -> String {

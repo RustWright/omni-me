@@ -2,6 +2,7 @@
 //! - `Ok`: reset backoff, sleep the interval;
 //! - `NeedsReauth`: halt (repeated real bank logins risk lockout) until `SourceRegistry::reauth`;
 //! - any other `Err`: back off from 1 s, doubling to 1 h, and retry.
+//!
 //! `NullSource` is for tests and unconfigured placeholders.
 
 use async_trait::async_trait;
