@@ -21,11 +21,6 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 Rulings 90–124, the UI ruled in `design/0102/`, the task prep in overlay `TASKS_PREP.md`;
 evidence in `PUSH_0074_RESEARCH.md`. In dependency order. Prep and design sessions need him;
 builds follow them.
-- [0104] **Reminder spike** (ruling 96): does `tauri-plugin-notification` `Schedule::At` with
-  `allow_while_idle` fire on his phone with the app killed? Plugin 2.8.1 needs tauri ^2.12 and the
-  stack is held below it (deep-link pin): an older plugin, or the upgrade. Also: does a scheduled
-  reminder carry a Start action, and does its tap reach a killed app (timer, ruling 93; docs are
-  silent on both, `PUSH_0074_RESEARCH.md` Appendix B)? [S]
 - [0106] **`CheckInPolicy` into named scheduled prompts**, each with its own tier, due-check and
   housekeeping (`check_in.rs` selects every scheduled message today). Gates every ritual. [M]
 - [0107] **Task records and hub intake:** native tasks and projects, estimates and actuals (93),
@@ -42,7 +37,9 @@ builds follow them.
   116), and enter his routines, places and travel
   times (114, 115) so the fit check has real minutes. Before [0109]. [USER, M]
 - [0109] **Planning build:** read-only calendar (96), plan records, the ritual tier and summary
-  lines (98), block reminders, the load measure (99). Needs [0104], [0106]. [L]
+  lines (98), block reminders, the load measure (99). Needs [0106]. Reminders per [0104]'s results
+  (`PUSH_0074_RESEARCH.md` Appendix B): plugin 2.4.0, reschedule on every start, an exact-alarm
+  permission, `start:<block>` action ids; Start on a killed app is his call (asked). [L]
 - [0110] **People build:** mentions, facts, resolution, pickers and group cards (102–104), merge
   and unmerge reversible for every attached record from the first event, the person view and the
   People tab with model-free search (118–120), per `design/0102/`; task text as a source (124).

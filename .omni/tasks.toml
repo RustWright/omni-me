@@ -745,7 +745,7 @@ ref    = "tasks.md § Cycle 6"
 [[task]]
 id     = "omni-me-0104"
 title  = "Spike: scheduled local notification fires with the app killed"
-status = "todo"
+status = "done"
 size   = "S"
 ref    = "tasks.md § Cycle 6"
 

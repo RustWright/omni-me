@@ -1113,6 +1113,27 @@ silent, not that the answer is no.
 - The stack is held below tauri 2.12, so [0104] may run an older plugin than these docs [P,
   `tasks.md` [0104]]; recheck its API before relying on any of the above.
 
+**[0104] results (2026-11-20)**: plugin 2.4.0, the last on tauri ^2.10, on the S9 (Android 10),
+driven over DevTools from branch `spike/0104-notifications`. [T] = tested on the phone, [S] =
+read in the 2.4.0 or tauri 2.10.3 source.
+- [T] A `Schedule::At` reminder with `allowWhileIdle` fires with the app killed (swiped, not
+  force-stopped): Android starts the process for the broadcast and posts it 4 ms after the time.
+- [T] A force-stop (Settings, or a battery "sleeping apps" list) cancels every scheduled reminder;
+  none fires. [S] The plugin reschedules only on boot, so the app must reschedule upcoming block
+  reminders on every start, which also covers reboots.
+- [S] On Android 12+ without the exact-alarm permission the plugin falls back to an inexact alarm,
+  and it declares no such permission: the app must declare `USE_EXACT_ALARM` or
+  `SCHEDULE_EXACT_ALARM`. Untested: the S9 cannot show it; his daily phone's version decides.
+- [T] An action button shows on a scheduled reminder. With the app alive, a tap reaches the
+  `onAction` listener. [T][S] With the app killed, the tap cold-starts it, but the plugin fires
+  the event in `load()`, before any listener exists, and tauri's `Plugin.trigger` drops it.
+- [T][S] The action payload is only `{actionId}`: 2.4.0 never sets `sourceJson`, so it never says
+  which notification was tapped. Encode the block in the action id (`start:<block>`, one action
+  type per block).
+- Consequence for ruling 93's Start on the block reminder: it works only while the app is alive.
+  A cold-start tap needs the launch intent's extras read by the app itself (MainActivity already
+  carries custom code), or Start falls back to the block in the view, which the tap opens.
+
 ---
 
 ## Appendix A — his answers, as recorded (2026-11-16, idea 7b added 2026-11-18)

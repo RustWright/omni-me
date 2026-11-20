@@ -7,8 +7,9 @@ live in `RULINGS.md`, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`
 ## ▶ NEXT ACTION — [0112] calendar prep, with him (his pick, 2026-11-20)
 [0103] is done (121–124; seed and evidence in overlay `TASKS_PREP.md`; the import moved to [0107]).
 Read other repos from their remote: this laptop's `~/life` lagged 119 commits.
-While he was out: [0105] done (CI green); [0104] spike in progress on the S9, branch
-`spike/0104-notifications`. Both logged in overlay `DECISION_LOG_2026-11-20.md`.
+While he was out: [0105] and [0104] done (results: `PUSH_0074_RESEARCH.md` Appendix B; calls in
+overlay `DECISION_LOG_2026-11-20.md`). Ask him: his daily phone's Android version, and Start on a
+killed app (custom intent code vs Start in the view), before [0109].
 [0101]'s judgment calls are in overlay `DECISION_LOG_2026-11-20.md`, worth a skim.
 
 ⛔ Live is the pause: every live step waits for his go, one at a time.
