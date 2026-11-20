@@ -785,7 +785,7 @@ title  = "Planning build: read-only calendar, plans, rituals, reminders"
 status = "todo"
 size   = "L"
 ref    = "tasks.md § Cycle 6"
-blocked_by = ["omni-me-0104", "omni-me-0106"]
+blocked_by = ["omni-me-0104", "omni-me-0106", "omni-me-0112"]
 
 [[task]]
 id     = "omni-me-0110"
@@ -801,3 +801,10 @@ title  = "Standing test debt from the Cycle 5 review"
 status = "todo"
 size   = "M"
 ref    = "tasks.md § Alongside Cycle 6"
+
+[[task]]
+id     = "omni-me-0112"
+title  = "Calendar and routines data prep, offline"
+status = "todo"
+size   = "USER"
+ref    = "tasks.md § Cycle 6"

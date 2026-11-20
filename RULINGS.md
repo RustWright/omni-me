@@ -294,3 +294,16 @@ edit site carries their reasoning. These are settled. Do not re-open one without
 - **109.** Order: tasks, planning, people, with the people data prep beside the task build. The UI
   design session comes before any build, and the Cycle 5 test gaps on the summary and tiers come
   before the scheduled-prompt work.
+- **110.** The read-only view beside chat (100) is one scroll: what is left of today, then the rest
+  of the week as planned-against-free rows, then the month's goals (candidate C, `design/0102/`).
+  Provisional until he has used it.
+- **111.** An all-day calendar event is a label: it never takes free time and never enters the
+  timeline. One that looks like it takes the day is asked about once, and the answer holds for
+  that event or series. "Show me as" is not trusted, since hand-entered birthdays are ordinary
+  events. Reviewed after the calendar data prep ([0112]).
+- **112.** Planning is a specialist, as the ledger is (15): routing picks a planning brief, code
+  tools compute free time and fit, and a validator refuses a plan with a block on an event, outside
+  the window or overlapping another, back to the model on the same turn. The morning ritual is a
+  job with that brief and its own seat. Not a separate agent: re-planning lives in the chat thread.
+- **113.** The server checks the calendar for changes every 15 minutes, and every plan or re-plan
+  fetches it fresh first. Only the "now overlaps" flag on an accepted block waits on the interval.
