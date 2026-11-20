@@ -1,15 +1,8 @@
 //! The append boundary — guard, append, project, nudge the pusher, as one type.
 //!
-//! Every binary that authors events constructs an [`EventWriter`]; nothing else
-//! may call [`EventStore::append`] directly. Rationale in `docs/src/assistant.md`
-//! § "The assistant is a device, not a feature".
-//!
-//! This covers local authoring only. The sync pull path builds its own
-//! store from the `Database` handle (`sync::SyncClient::pull_only`), so inbound
-//! events never pass through here — which is what lets a device keep a complete
-//! log of features it has switched off. Injecting a writer into the pull path
-//! would silently start dropping other devices' history;
-//! `inbound_events_are_not_feature_guarded` is what stands against that.
+//! Nothing but [`EventWriter`] may call [`EventStore::append`] (`docs/src/assistant.md` § "The
+//! assistant is a device, not a feature"). Local authoring only: pulls bypass it, so a device keeps
+//! history for switched-off features (`inbound_events_are_not_feature_guarded`).
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -35,12 +28,8 @@ pub enum WriteError {
 
 /// The sanctioned way to author events.
 ///
-/// Holds the three things that must happen together on every local write. They
-/// are welded into one type rather than left as a convention because the
-/// convention had already been forgotten six times: `sync::pusher`'s loop blocks
-/// on a trigger with no interval fallback, so an append that skips the nudge
-/// does not sync slowly — it does not sync at all, until an unrelated edit or a
-/// manual sync happens along.
+/// Welds the steps of every local write into one type, since the convention kept being forgotten:
+/// without the nudge an append never syncs (`sync::pusher` has no interval fallback).
 pub struct EventWriter {
     store: Arc<dyn EventStore>,
     projections: ProjectionRunner,
@@ -284,13 +273,8 @@ mod tests {
     /// Inbound events are never feature-guarded, and this is the test that
     /// keeps it that way.
     ///
-    /// The separation is currently structural — `SyncClient::pull_only` builds
-    /// its own `SurrealEventStore` from the `Database` handle and so cannot see
-    /// a writer. If that path is ever refactored to take an injected store and
-    /// is handed this one, a device would silently stop recording history for
-    /// every feature it has switched off, and would keep failing to record it
-    /// after the feature came back on. This asserts the append the pull path
-    /// performs still works with the feature off.
+    /// Structural today (`pull_only` builds its own store); if the pull path were ever handed a
+    /// writer, a device would silently lose history for every switched-off feature.
     #[tokio::test]
     async fn inbound_events_are_not_feature_guarded() {
         let (_writer, db) = writer_without(&[Feature::Journal]).await;
@@ -315,27 +299,9 @@ mod tests {
 
     /// The write-side map must not quietly acquire an unowned event type.
     ///
-    /// The match in `authoring_features` is exhaustive, so a new variant cannot
-    /// compile without an arm — but an arm returning `&[]` is the easy way to
-    /// silence it, and `&[]` means ungated forever. This pins the four that are
-    /// legitimately unowned so a fifth has to be argued for here.
-    ///
-    /// `record_type_declared` is the fourth: a declaration is the shape of your
-    /// own data, so it must not depend on the feature that renders it being on,
-    /// and the first-run seed is emitted at startup before any feature has been
-    /// consulted. `events::registry` makes the same call on the read side, where
-    /// `RecordTypeProjection` sits in `NEVER_GATED` beside config's.
-    ///
-    /// `assistant_proposal_decided` is the fifth, added 2026-09-10 with Phase D,
-    /// and it is the only one that is unowned for a *user-protection* reason
-    /// rather than a bootstrap one. Deciding a proposal is the user clearing
-    /// something already in their inbox, not the assistant acting. Gated on
-    /// `Llm`, switching the assistant off would strand every pending proposal
-    /// with no way to dismiss it — which is exactly what `AutoImportBatchDismissed`
-    /// does today, and the wart this deliberately does not copy. Nothing is
-    /// weakened: approving authors the action's real events in the same batch and
-    /// those carry their own guards, so the protection sits on the effect instead
-    /// of on the bookkeeping.
+    /// An arm returning `&[]` silences the exhaustive match and means ungated forever, so this
+    /// pins the five legitimate ones and a sixth must be argued for here. Each one's reason is at
+    /// its arm in `authoring_features`.
     #[test]
     fn only_the_five_app_level_events_are_unowned() {
         let unowned: Vec<String> = EventType::ALL

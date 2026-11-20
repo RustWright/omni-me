@@ -1,26 +1,6 @@
-//! SurrealDB projection over budget events (1.7).
-//!
-//! Four read-optimized tables:
-//! - `transactions` — one row per `TransactionRecorded`. Rows can be hidden
-//!   via `removed = true` (Delete) or `superseded_by` (Merged); list queries
-//!   filter both.
-//! - `accounts` — declared accounts + last-reconciled state.
-//! - `budgets` — category targets per period; `removed` for soft delete.
-//! - `recurring_patterns` — detected/confirmed/dismissed lifecycle.
-//!
-//! Idempotency: CREATE uses deterministic record ids (txn_id, account name,
-//! category, pattern_id) so re-applying a sequence — e.g., during
-//! `ProjectionRunner::rebuild` — overwrites cleanly.
-//!
-//! Merge semantics (`TransactionsMerged`): the projected row count drops by
-//! `merged_ids.len()` even though the *event* log still carries every original
-//! `TransactionRecorded`. Originals get `superseded_by = primary_id`; the
-//! `primary_id` row is rewritten with `combined_postings` (+ balancing
-//! posting if present) and `combined_description`.
-//!
-//! Cleared semantics (`TransactionCleared`): orthogonal to merge — flips
-//! `cleared = true` plus audit fields. A txn can be cleared without merge or
-//! merged without clearing or both or neither.
+//! `transactions` (hidden by `removed` or `superseded_by`), `accounts`, `budgets`,
+//! `recurring_patterns`, all on deterministic ids so a rebuild overwrites cleanly. A merge marks
+//! originals `superseded_by` and rewrites the primary; clearing is independent of merging.
 
 use async_trait::async_trait;
 
@@ -91,18 +71,9 @@ impl Projection for BudgetProjection {
              DEFINE FIELD IF NOT EXISTS pattern ON recurring_patterns TYPE object FLEXIBLE;
              DEFINE FIELD IF NOT EXISTS status ON recurring_patterns TYPE string;",
         )
-        // `.check()` is what makes a failed DEFINE visible. Without it a
-        // statement can fail and `init_schema` still returns `Ok` — which is
-        // exactly how a missing FULLTEXT index would present: `search` over the
-        // ledger returns zero hits and reports no error, so the assistant
-        // concludes the user has no such transaction.
-        //
-        // Six of the nine projections still omit this (2026-09-13); the three
-        // that have it are the three newest. Adding it to the rest was tried and
-        // the whole suite passed, so nothing fails on a *fresh* database — but a
-        // statement that has been failing silently against the user's *existing*
-        // data would turn into a refusal to start, and that is not a thing to
-        // discover from an unattended change. Left as a deliberate follow-up.
+        // `.check()` makes a failed DEFINE visible; without it a missing index means silent empty
+        // searches. Not every projection checks yet, on purpose: on existing data a long-silent
+        // failure would become a refusal to start, which wants a watched rollout.
         .await?
         .check()?;
         Ok(())
@@ -183,21 +154,9 @@ impl BudgetProjection {
             .collect();
         let ts = event.timestamp.to_rfc3339();
 
-        // UPSERT (not CREATE) so a create that arrives *after* a mutation already
-        // materialized a partial row (the lost-create-then-recovered case) fills
-        // the row instead of erroring on the existing id — mirrors the resilient
-        // notes/journal create handlers. On the normal fresh path this is
-        // byte-identical to the old CREATE. Create-owned fields (date/description/
-        // postings/attachment/statement_source) are authoritative; mutation-owned
-        // fields use `?? default` so a partial row's already-applied edits
-        // (category/tags/cleared/removed) aren't clobbered when the create fills in.
-        //
-        // `tags_top = $tags_top ?? tags_top` (not the reverse): header tags are
-        // create-owned, the same way `category` is mutation-owned. The old order
-        // treated them as mutation-owned and silently dropped an import's
-        // `top_tags` whenever a mutation had already materialized the row —
-        // contradicting the "create-owned fields are authoritative" rule stated
-        // three lines up.
+        // UPSERT, so a create arriving after a mutation fills the partial row. Create-owned fields
+        // (date, description, postings, attachment, statement source, header tags) win; mutation-
+        // owned ones keep `?? default`. Hence `tags_top = $tags_top ?? tags_top`, not the reverse.
         db.query(
             "UPSERT type::record('transactions', $txn_id) SET
                 date = $date,
@@ -472,14 +431,9 @@ impl BudgetProjection {
         let balancing_posting = event.payload.get("balancing_posting").cloned();
         let ts = event.timestamp.to_rfc3339();
 
-        // Bare UPDATEs (not UPSERT-materialize): a merge rewrites the primary and
-        // supersedes real originals, so materializing phantom rows from a merge
-        // whose constituents this device never saw would be semantically wrong
-        // (they'd lack postings/amounts). If the row is genuinely missing here the
-        // merge no-ops, and a later sync of the originals + re-derived state
-        // reconciles it. Two statements coupled (mark merged_ids superseded +
-        // rewrite primary) — wrap in BEGIN/COMMIT so a partial-failure can't leave
-        // a half-merge.
+        // Bare UPDATEs: materializing a merge whose originals this device never saw would invent
+        // postingless rows, so a missing row no-ops until they sync. The two coupled writes share
+        // a transaction, so a failure cannot leave a half-merge.
         let mut parts = vec!["BEGIN TRANSACTION;".to_string()];
         for i in 0..merged_ids.len() {
             parts.push(format!(

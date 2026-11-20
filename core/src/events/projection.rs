@@ -128,28 +128,11 @@ impl ProjectionRunner {
                 stale.push(name.clone());
             }
 
-            // Upsert the version record, seeding `last_received_at` on first
-            // sight. The two first-sight cases need opposite seeds, and
-            // `stored` is what tells them apart: `version` is a non-optional
-            // field, so no version read back means no row at all.
-            //
-            // - No row — this projection has never run, so it has projected
-            //   nothing and must replay whatever the log already holds. Seeding
-            //   `now` here skipped the entire backfill, silently and
-            //   permanently: the mark sat ahead of those events forever, so no
-            //   later launch recovered them either. That is the cold-start path
-            //   — `SyncClient::pull_only` appends without projecting, so an
-            //   agent pulls the whole log *before* any projection exists, and
-            //   booted on default features no matter what the user configured.
-            //
-            // - Row present, field NONE — an install upgrading into this
-            //   field, which is as caught-up as it ever was. Epoch there would
-            //   mean a surprise full replay on the upgrade launch.
-            //
-            // A full replay through already-caught-up projections is the
-            // accepted cost either way: `catch_up` takes the min across
-            // registered rows, so re-enabling a feature already replays through
-            // all of them, and projections are idempotent by construction.
+            // Seed `last_received_at` on first sight; `stored` tells the two cases apart:
+            // - no row: never ran, so replay the whole log (a `now` seed silently skipped the
+            //   cold-start backfill forever);
+            // - row with the field NONE: an upgrading install, already caught up.
+            // Replaying through caught-up projections is accepted; they are idempotent.
             let seed = if stored.is_none() {
                 chrono::DateTime::UNIX_EPOCH
             } else {
@@ -212,26 +195,13 @@ impl ProjectionRunner {
 
     /// Replay events that were durably appended but never projected.
     ///
-    /// `commands::shared` appends to the event store and *then* folds through
-    /// the projections, and nothing makes that pair atomic. A crash between the
-    /// two — or an Android process kill, which is routine — left the event
-    /// stored and its projection update permanently missing, because nothing
-    /// ever retried: `last_event_id` was written and never read anywhere in
-    /// production. The only path that recovered it was `wipe_all_data`, which
-    /// is also the only caller of `rebuild()`.
-    ///
-    /// Resilient rather than fail-fast: one bad historical event must not stop
-    /// the rest of the backlog from landing.
+    /// An append and its projection fold are not atomic, so a crash or Android kill between them
+    /// left the event stored and unprojected until this. Resilient: one bad old event must not
+    /// block the backlog.
     async fn catch_up(&self) -> Result<usize, EventError> {
-        // Filtered to the registered set, and the filtering happens in Rust
-        // rather than in the query. A feature-gated build registers a subset
-        // (`events::registry`), and `advance_bookmark` only advances rows it
-        // registered — so a de-registered projection's row freezes while the rest
-        // move on. Read unfiltered, `min()` would pick that frozen mark and replay
-        // the entire log on every launch, forever. The freeze itself is correct:
-        // it is what makes re-enabling a feature replay from the right point.
-        // The derive expands to `impl SurrealValue`, so the trait has to be in
-        // scope here rather than only being named in the attribute.
+        // Filtered, in Rust, to registered projections: a de-registered one's frozen mark would
+        // make `min()` replay the log every launch. The freeze itself is correct, letting a
+        // re-enabled feature replay from the right point. The derive needs `SurrealValue` in scope.
         use surrealdb::types::SurrealValue;
 
         /// One watermark row. Read as a row rather than as two column vectors so
@@ -291,12 +261,8 @@ impl ProjectionRunner {
     /// Apply a batch of events through all matching projections, fail-fast:
     /// the first projection error aborts the batch and propagates.
     ///
-    /// This is the right semantics for local single-event commands (via
-    /// `commands::shared::append_and_apply`): the caller is the user whose
-    /// action just failed, so surfacing the error — and refusing to advance —
-    /// is correct. For the sync-pull path use [`apply_events_resilient`]
-    /// instead: there, one malformed/colliding *remote* event must not strand
-    /// every later event in the batch.
+    /// Right for a local command, whose user should see the failure. Sync pulls use
+    /// [`apply_events_resilient`], so one bad remote event cannot strand the batch.
     pub async fn apply_events(&self, events: &[Event]) -> Result<(), EventError> {
         for event in events {
             for proj in self.projections.iter() {
@@ -316,15 +282,8 @@ impl ProjectionRunner {
     /// skipped rather than aborting the batch. Returns the count of events that
     /// failed to apply (`0` = all clean).
     ///
-    /// This is the sync-pull apply path. Two properties make it safe:
-    /// - The pulled events are already durably appended to the event store
-    ///   before this runs, so a skipped event is never *lost* — a `rebuild()`
-    ///   (full replay) always recovers it, and with idempotent projections a
-    ///   replay is a no-op for the events that did apply.
-    /// - Not aborting means the pull cursor (already advanced past this batch)
-    ///   stays consistent with "we applied everything we could," instead of the
-    ///   old fail-fast behaviour where one bad event silently dropped every
-    ///   later event in the batch and they were never re-pulled.
+    /// The sync-pull path. Safe because pulled events are already stored, so a skipped one is
+    /// recovered by a rebuild, and the advanced cursor then means "applied all we could".
     pub async fn apply_events_resilient(&self, events: &[Event]) -> usize {
         self.apply_events_scoped(events, None).await
     }
@@ -377,15 +336,8 @@ impl ProjectionRunner {
     /// Fold the log through the selected projections one page at a time,
     /// resuming strictly after `after`. Returns `(events seen, events skipped)`.
     ///
-    /// Paged rather than read whole because the whole log does not fit: 16k
-    /// events peaked at 1.3 GB on the S9, with every query blocked behind it.
-    /// The fold is per event and keeps no cross-event state but `last_applied`,
-    /// so an ordered page walk is exactly the same computation.
-    ///
-    /// The bookmark advances per page, which also fixes the kill-partway-through
-    /// hole named on `rebuild_only`: a rebuild killed mid-replay now resumes
-    /// from the last applied page instead of leaving the tables cleared with the
-    /// watermark still at the newest event.
+    /// Paged, since a whole log peaked at 1.3 GB on a phone; the fold keeps no cross-event state,
+    /// so it is the same computation. The bookmark advances per page, so a killed rebuild resumes.
     async fn replay_paged(
         &self,
         after: Option<(chrono::DateTime<chrono::Utc>, String)>,
@@ -466,15 +418,8 @@ impl ProjectionRunner {
 
     /// Rebuild only the named projections, leaving the others as they are.
     ///
-    /// This is what a version bump needs, and it used to call [`Self::rebuild`].
-    /// One stale projection therefore wiped all ten and replayed the whole log
-    /// through every one of them. Slow is the lesser half: Android kills a
-    /// backgrounded app routinely, and a kill partway through left every
-    /// projection emptied with no route back but another full rebuild.
-    ///
-    /// A name that matches no registered projection is ignored rather than an
-    /// error — a feature-gated build legitimately registers a subset, and the
-    /// caller reads its names off the same registry.
+    /// For a version bump: [`Self::rebuild`] wiped every projection for one stale one. An unknown
+    /// name is ignored, since a feature-gated build registers a subset.
     pub async fn rebuild_only(&self, names: &[&str]) -> Result<(), EventError> {
         self.rebuild_inner(Some(names)).await
     }
@@ -1063,13 +1008,8 @@ mod tests {
 
     /// An event appended but never projected must be replayed at next startup.
     ///
-    /// Absence test for a silent durability hole: `commands::shared` appends and
-    /// *then* applies, with nothing making the pair atomic, so a crash (or an
-    /// Android process kill, which is routine) between them left the event
-    /// durably stored and its projection update permanently missing. Nothing
-    /// retried it — `last_event_id` was written and never read in production —
-    /// so the edit was absent from every view until `wipe_all_data`, the only
-    /// path that reaches `rebuild()`.
+    /// Pins the crash window between an append and its projection fold, which used to lose the
+    /// projection update until a full wipe.
     #[tokio::test]
     async fn startup_replays_events_that_were_appended_but_never_projected() {
         let db = test_db().await;
@@ -1134,19 +1074,8 @@ mod tests {
     /// Events already in the store when a projection is registered for the
     /// first time must be projected, not skipped.
     ///
-    /// This is the cold-start order, and it is the reverse of the crash-window
-    /// test above: there the projection is registered first and the event lands
-    /// after, here the log is populated before the projection has ever existed.
-    /// The agent does exactly this — `learn_config` pulls the whole log via
-    /// `pull_only`, which appends without projecting, and only then builds the
-    /// runner.
-    ///
-    /// It regressed because the first-sight watermark seed was `time::now()`,
-    /// which lands *after* the events the pull just wrote: catch-up then asked
-    /// for everything since a point already past them and got nothing. Silent
-    /// and permanent — the mark stays ahead forever, so no later launch recovers
-    /// it either, and an agent would boot on default features no matter what the
-    /// user had configured.
+    /// The cold-start order the agent uses (`pull_only`, then the runner). A first-sight seed of
+    /// `now` lands past the pulled events, silently skipping them forever.
     #[tokio::test]
     async fn a_first_registration_projects_a_log_that_already_has_events() {
         let db = test_db().await;
@@ -1198,17 +1127,8 @@ mod tests {
         );
     }
 
-    /// Feature gating means a launch can register a *subset* of the projections
-    /// the previous launch did. `advance_bookmark` only advances rows it
-    /// registered, so a de-registered projection's watermark freezes — and
-    /// `catch_up` used to read every row unfiltered, so `min()` picked that
-    /// frozen mark and replayed the whole log on every launch, forever.
-    ///
-    /// The second half asserts the freeze is still load-bearing: re-registering
-    /// the projection brings its stale mark back into the min, and the history it
-    /// missed replays. That round trip is what makes turning a feature off
-    /// non-destructive, and it is why the fix filters the read rather than
-    /// deleting or advancing the row.
+    /// A de-registered projection's frozen mark must not drive `min()`. The second half pins the
+    /// freeze: re-registering replays what it missed, which makes a feature toggle non-destructive.
     #[tokio::test]
     async fn a_deregistered_projection_neither_forces_nor_loses_a_replay() {
         let db = test_db().await;

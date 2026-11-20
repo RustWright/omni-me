@@ -1,16 +1,8 @@
 //! SurrealDB projection over the assistant's conversations.
 //!
-//! Two tables. `assistant_threads` carries what a thread list needs — title,
-//! timestamps, counts — and `assistant_messages` carries the turns. One table
-//! with an embedded message array would have been fewer rows, and would have made
-//! the thread list drag every answer body through to render a preview.
-//!
-//! `assistant_messages` is deliberately absent from `assistant::catalog`.
-//! Registering it would make past conversations retrievable, which sounds like
-//! recall and is actually the assistant citing its own earlier guesses as
-//! evidence about the user's life. Derived belief with provenance is Phase E's
-//! job and is a decision to take deliberately; `the_catalog_does_not_expose_conversations`
-//! is what stops it happening as a side effect of this table existing.
+//! `assistant_threads` holds what a list needs, `assistant_messages` the turns, so a list never
+//! drags answer bodies. `assistant_messages` stays out of `assistant::catalog` on purpose: the
+//! assistant would cite its own guesses as evidence (`the_catalog_does_not_expose_conversations`).
 
 use async_trait::async_trait;
 
@@ -518,23 +510,10 @@ impl AssistantProjection {
 
     /// Create the thread row if it is new, and move its clock forward.
     ///
-    /// `message_count` is recounted from `assistant_messages` rather than
-    /// incremented. Incrementing is correct exactly once per event and this
-    /// projection re-applies events routinely — a counter would drift upward on
-    /// every rebuild, and drift silently, because nothing else reads a number
-    /// that only ever looks plausible.
-    ///
-    /// `last_message_at` moves forward only, so a late-arriving older message
-    /// cannot drag a thread back down a list ordered by it. `created_at` moves
-    /// backward only, for the mirror-image reason: sync delivers a thread's
-    /// messages in arrival order, which is not authoring order, so the first
-    /// message to *land* is not necessarily the first one asked.
-    /// The comparisons happen in Rust, not in the query. `ConfigProjection`
-    /// resolves its own last-write-wins the same way, and the reason to copy it
-    /// rather than reach for a conditional `SET` is that this file's queries run
-    /// against SurrealDB's embedded engine with no schema check to catch a clause
-    /// that parses and means something else. Every construct used here is one the
-    /// rest of the codebase already proves.
+    /// `message_count` is recounted, never incremented, since events re-apply. `last_message_at`
+    /// only moves forward and `created_at` only back, as messages arrive out of authoring order.
+    /// Compared in Rust, like `ConfigProjection`: a conditional `SET` could parse and mean
+    /// something else, unchecked.
     async fn touch_thread(
         &self,
         db: &Database,
@@ -872,12 +851,8 @@ mod tests {
 
     /// An answer that cites a record must materialize like any other.
     ///
-    /// The regression this pins is not obvious: `Surreal::query` returns `Ok`
-    /// for a statement that *failed*, holding the error in the `Response` until
-    /// something calls `.take()` or `.check()`. A projection that discards the
-    /// response therefore reports success while writing nothing, and the row
-    /// simply is not there — the agent then re-answers the question on its next
-    /// sweep, forever, paying each time.
+    /// `Surreal::query` returns `Ok` for a failed statement until `.take()` or `.check()`, so
+    /// a discarded response writes nothing and the agent re-answers forever, paying each time.
     #[tokio::test]
     async fn an_answer_citing_a_record_still_materializes() {
         let db = test_db().await;

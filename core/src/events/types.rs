@@ -300,22 +300,10 @@ impl EventType {
 
     /// Every event type a set of features owns, for a scoped wipe.
     ///
-    /// Derived from [`EventType::authoring_features`] rather than from a second list,
-    /// because a second list is how one of them ends up stale — a new finance event
-    /// would be gated correctly and then survive a finances wipe, leaving a ledger
-    /// that is neither empty nor complete.
-    ///
-    /// Ownership is read off the authoring gate, and the two are not quite the
-    /// same question. `TransactionRecorded` is authored under *either* finances or
-    /// auto-import, so it belongs to both and a wipe of either claims it — which is
-    /// right for a ledger wipe (a transaction is a transaction, whoever proposed it)
-    /// and is the reason a finances wipe cannot leave auto-import's own events alone.
-    /// See `docs/src/features.md` § Wiping one feature's data.
-    ///
-    /// The four types with no feature at all — `DataWiped`, `FeedbackCaptured`,
-    /// `ConfigSet`, `RecordTypeDeclared` — are owned by nothing and so survive every
-    /// scoped wipe. That is deliberate: a wipe must not take the config that says
-    /// which features are on, nor the audit record of itself.
+    /// Derived from [`EventType::authoring_features`], never a second list that could go stale.
+    /// `TransactionRecorded` belongs to finances and auto-import, so wiping either claims it.
+    /// The five unowned types survive every wipe, keeping the config and the wipe's own record.
+    /// `docs/src/features.md` § "Wiping one feature's data".
     pub fn owned_by(features: &[Feature]) -> Vec<&'static EventType> {
         EventType::ALL
             .iter()
@@ -330,23 +318,10 @@ impl EventType {
     /// The features that may author this event, or `None` for an event no feature
     /// owns.
     ///
-    /// This is the write half of the feature map, and it is a match rather
-    /// than a lookup table so a new event type cannot be added without deciding
-    /// which feature is allowed to emit it. Guarding here instead of at each of
-    /// the ~70 commands means one site covers every write path, including ones
-    /// that do not exist yet.
-    ///
-    /// Empty for `DataWiped` (the wipe has to work with everything off, or a
-    /// disabled feature's data would be unreachable *and* unremovable),
-    /// `FeedbackCaptured` (reporting a problem must never depend on the feature
-    /// you are reporting about), `ConfigSet` (it is what the gating reads) and
-    /// `RecordTypeDeclared` (declaring the shape of your own data must not depend
-    /// on the feature that renders it being switched on, and the first-run seed is
-    /// emitted at startup, before any feature has been consulted).
-    ///
-    /// This says nothing about inbound events: the sync pull path applies
-    /// whatever the log contains, so every device keeps a complete log no matter
-    /// which features it has switched on.
+    /// A match, so no event type exists without deciding who may emit it; one site guards every
+    /// write path. Empty for the five that must work with features off (`DataWiped`,
+    /// `FeedbackCaptured`, `ConfigSet`, `RecordTypeDeclared`, `AssistantProposalDecided`).
+    /// Outbound only: pulls apply everything.
     pub fn authoring_features(&self) -> &'static [Feature] {
         match self {
             EventType::JournalEntryCreated
@@ -440,16 +415,9 @@ impl EventType {
             | EventType::FeedbackCaptured
             | EventType::ConfigSet
             | EventType::RecordTypeDeclared
-            // Deliberately ungated, and this differs from the auto-import
-            // precedent. `AutoImportBatchDismissed` requires its own feature,
-            // so switching auto-import off strands every pending batch in the
-            // inbox with no way to clear it. Deciding a proposal is the *user*
-            // closing something already in front of them, not the assistant
-            // acting, and a feature switch must never be able to trap an item
-            // there permanently. Nothing is weakened by this: approving a
-            // proposal authors the real events in the same batch, and those
-            // carry their own guards — turn Notes off and the note is still
-            // refused. The guard belongs on the effect, not on the bookkeeping.
+            // Ungated on purpose: deciding is the user closing an item, which a switch must never
+            // trap (auto-import-off strands pending batches). The approved events carry their own
+            // guards; the guard belongs on the effect, not the bookkeeping.
             | EventType::AssistantProposalDecided => &[],
         }
     }
@@ -517,22 +485,9 @@ pub struct GenericNoteRenamedPayload {
 
 /// Text added to the end of a note, without restating what is already there.
 ///
-/// The only payload in this file whose fold is not a plain overwrite, and
-/// the reason it exists. [`GenericNoteUpdatedPayload`] carries the whole body, so
-/// an assistant asked to add a line has to reproduce the rest of the note
-/// exactly — costing tokens in proportion to the note's length and, worse, able
-/// to silently reword the part it was never asked to touch. This one cannot drop
-/// what it did not send.
-///
-/// Appending only. Inserting or replacing text in the middle is a
-/// different problem — it needs a position that survives concurrent edits from
-/// two devices — and is deliberately not attempted here. Do not widen this
-/// payload with an offset; a byte index into a body another device has already
-/// rewritten points at the wrong place, and the corruption is silent.
-///
-/// Folding this is not naturally idempotent — concatenation applied twice
-/// is wrong, where an overwrite applied twice is not. `NotesProjection` keeps the
-/// applied event ids on the row to make replay safe; see `on_generic_appended`.
+/// Unlike [`GenericNoteUpdatedPayload`]'s whole body, it cannot reword what it did not send.
+/// Append only: never add an offset, since a byte index into a body another device rewrote
+/// corrupts silently. Not idempotent; see `NotesProjection::on_generic_appended`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenericNoteAppendedPayload {
     pub note_id: String,
@@ -695,16 +650,8 @@ pub const TAG_SEPARATOR: char = ',';
 impl Tag {
     /// Parse into the form a tag is stored and compared in: trimmed, lowercased.
     ///
-    /// Stricter than [`FromStr`], which rejects only the empty string and so
-    /// accepts `" Foo "`, `":x"` and a value carrying [`TAG_SEPARATOR`]. Every
-    /// comparison downstream is against the stored string — SurrealDB `CONTAINS`
-    /// on the hoisted column is exact — so a tag differing from another only by
-    /// case or padding is a second tag, and the filter comes back empty for a
-    /// document that visibly carries the tag.
-    ///
-    /// `FromStr` keeps its lenient behaviour: it parses tags already in the
-    /// event log, written before this existed, and tightening it would fail
-    /// events that cannot be rewritten.
+    /// Stricter than [`FromStr`], since comparisons are exact and a case or padding variant is a
+    /// second tag. `FromStr` stays lenient: it parses old log events that cannot be rewritten.
     pub fn normalize(raw: &str) -> Result<Self, String> {
         let trimmed = raw.trim().to_lowercase();
         if trimmed.is_empty() {
@@ -728,12 +675,8 @@ impl Tag {
 
 /// Normalize a caller's tags into the set to store: ordered and deduplicated.
 ///
-/// Ordered so that two writes of the same set produce the same stored value and
-/// the fold has nothing to do; deduplicated because the column is an array and
-/// SurrealDB enforces no uniqueness on one.
-///
-/// Rejects the whole set on the first bad tag rather than dropping it. A
-/// silently-skipped tag is a tag the user typed, watched land, and cannot find.
+/// Ordered so equal sets store equally; deduped, since arrays enforce no uniqueness. A bad tag
+/// rejects the whole set, never dropped silently.
 pub fn normalize_tag_set<I, S>(raw: I) -> Result<Vec<Tag>, String>
 where
     I: IntoIterator<Item = S>,
@@ -818,15 +761,8 @@ pub struct TransactionRecordedPayload {
 }
 
 impl TransactionRecordedPayload {
-    /// The single canonical constructor for a transaction payload. Every path
-    /// that records a transaction — the interactive command, the in-app journal
-    /// import, auto-import accept, and the headless importer — MUST build the
-    /// payload through here so the field shape and its defaults live in exactly
-    /// one place. Two hand-rolled builders drifting is precisely what produced
-    /// the sync-stranding bug this guards against.
-    ///
-    /// `tags` / `attachment` / `statement_source` default to empty/None; layer
-    /// them on with the `with_*` builders.
+    /// The one constructor every path recording a transaction must use, since drifting hand-built
+    /// payloads once stranded synced data. Optional fields come from the `with_*` builders.
     pub fn new(
         txn_id: String,
         date: chrono::NaiveDate,
@@ -1013,12 +949,8 @@ pub struct ExchangeRateRecordedPayload {
 /// Transaction-level tag key recording which upstream row a committed
 /// auto-import draft came from, e.g. `autoimport-id:globepay-TRANSFER-123`.
 ///
-/// Lives here rather than beside either user because both sides need it and
-/// they cannot share a feature-gated module: the commit path is in the Tauri
-/// client (core without `auto-import`) while the sources that read it back are
-/// in the server overlay (core *with* `auto-import`). Two copies of the literal
-/// would drift silently — the writer would tag one way and the dedup filter
-/// would look for another, which reads exactly like the filter doing nothing.
+/// Here because the writer (client, no `auto-import`) and the reader (server, with it) share no
+/// gated module; two copies would drift and the dedup filter would silently do nothing.
 pub const AUTOIMPORT_TAG_KEY: &str = "autoimport-id";
 
 /// One row in a proposed auto-import batch — a single draft transaction the
@@ -1148,18 +1080,9 @@ impl DataWipedPayload {
 
 /// A problem report filed from inside the app at the moment of friction.
 ///
-/// This is the only event about the app rather than about the user's own
-/// content, and that difference is why it has no projection: nothing derives
-/// state from it, and its only reader is a query that renders markdown for a
-/// person. Storing it as an event anyway buys the offline queue, retry, dedup
-/// and cross-device replication that the write path already provides — the
-/// alternative was rebuilding all four for a handful of rows a week.
-///
-/// Only `feedback_id` and `body` are required. Every context field is
-/// optional and defaults, so a screen that declines to describe itself costs
-/// the report a line rather than costing the user their report. Capture that
-/// can fail validation is capture that gets abandoned mid-friction, which is
-/// exactly the moment it is most needed.
+/// About the app, not the user's content, so no projection; an event for the free offline queue
+/// and replication. Only `feedback_id` and `body` are required, so capture never fails
+/// mid-friction.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FeedbackCapturedPayload {
     /// Stable id for this report. `aggregate_id` mirrors it, per the factory
@@ -1220,13 +1143,8 @@ pub struct FeedbackCapturedPayload {
 
 /// A change to one configuration key's shared value.
 ///
-/// `aggregate_id` is the key's wire name, so `get_by_aggregate` yields that key's
-/// history for free. Per-device overrides are deliberately absent from this
-/// payload: they are local by definition and must never travel over sync.
-///
-/// `value: None` means "clear back to the built-in default" rather than "set to
-/// nothing" — the projection deletes the row, and resolution falls through to
-/// [`crate::config::ConfigKey::default_value`].
+/// `aggregate_id` is the key's wire name, giving its history. Device overrides never travel.
+/// `value: None` clears to [`crate::config::ConfigKey::default_value`], not "set to nothing".
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigSetPayload {
     pub key: crate::config::ConfigKey,
@@ -1272,25 +1190,16 @@ pub struct AssistantQuestionAskedPayload {
     /// True when the agent asked this on the user's behalf rather than the user
     /// typing it.
     ///
-    /// An explicit field rather than inferring it from `device_id`. The agent
-    /// is a device like any other, so "authored by the agent" is not the same
-    /// claim as "nobody asked for this" — and the difference is exactly what a
-    /// person needs to see before reading an answer they did not request.
-    /// Defaults to false, so every question in the log before this field existed
-    /// reads correctly as user-asked.
+    /// Explicit, not inferred from `device_id`: authored by the agent is not "nobody asked".
+    /// Defaults false, so older questions read as user-asked.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub scheduled: bool,
 }
 
 /// Why an answer stopped, at the write site.
 ///
-/// This is not the type carried on the wire — the payload's `stopped` is a
-/// `String`, and this enum is how authors produce it. Same asymmetry as
-/// [`EventType`] against `NewEvent::event_type`, and for a sharper reason here: a
-/// newer build's stop reason must not make this one reject the payload, because a
-/// rejected answer leaves its question with no terminal event and the UI spinning
-/// forever — the exact state the field exists to end. Readers treat an
-/// unrecognised value as "finished, reason unknown", never as "not finished".
+/// Writes `stopped`, which travels as a `String`, so a newer build's reason never makes this one
+/// reject the answer and spin forever. Readers treat an unknown value as finished.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnswerStop {
     /// The model replied in prose. The good ending.
@@ -1413,16 +1322,9 @@ pub struct AssistantAnswerGivenPayload {
 
 /// One thing the assistant offered to do.
 ///
-/// `aggregate_id` is the `proposal_id`: a proposal is its own aggregate, unlike a
-/// message, which belongs to the thread that owns it. That is what lets the
-/// approval inbox pull one proposal by identity without reading the conversation
-/// it came out of — the inbox is reachable from the phone whether or not the user
-/// ever opens that thread.
-///
-/// This event is the whole proposal, including everything needed to carry it
-/// out. Same reasoning as [`AutoImportBatchProposedPayload`] keeping its draft
-/// rows: a decision may be taken days later, from another device, and must not
-/// depend on re-deriving anything from a model run that is long gone.
+/// Its own aggregate (`proposal_id`), so the inbox reads it without the conversation. Carries
+/// everything needed to act, like [`AutoImportBatchProposedPayload`]: a decision days later must
+/// not depend on a model run long gone.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssistantProposalMadePayload {
     pub proposal_id: String,
@@ -1586,15 +1488,9 @@ pub struct BeliefSupersededPayload {
 
 /// The user allowing one action type to be carried out without being asked.
 ///
-/// Authored by the user, never by the assistant. There is no verb and no
-/// action that produces this; an assistant able to propose its own promotion is
-/// the thing the whole permission model exists to prevent. What it may do is
-/// accumulate the approval record that makes the user's decision an informed one.
-///
-/// Only ever granted for a reversible action. `docs/src/assistant.md`'s
-/// destination is "reversible things it may do freely; irreversible things it
-/// always asks about", so a grant on an irreversible action is refused at the
-/// write site rather than merely discouraged — see `promotion::grant`.
+/// Authored by the user only: no verb produces it, since an assistant proposing its own promotion
+/// is what the permission model prevents. Reversible actions only; `promotion::grant` refuses
+/// the rest at the write site.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AutonomyGrantedPayload {
     /// The action type name, e.g. `note.create`.
@@ -1623,12 +1519,8 @@ pub struct AutonomyRevokedPayload {
 
 /// A file entering the archive: the bytes, and the text they were found to hold.
 ///
-/// The text travels in the event, and that is deliberate. Every instinct
-/// says to derive it on each device from the blob — but blobs do not sync.
-/// `tauri-app/src-tauri/src/commands/attachments.rs` is a 200 MB LRU cache, so a
-/// device that has never opened a document does not hold its bytes and never
-/// will. Text left out of the event would make the archive searchable only on
-/// whichever machine happened to have cached the file, which is not an archive.
+/// The text travels in the event because blobs do not sync: a device that never opened a
+/// document lacks its bytes, and the archive would be searchable only where it was cached.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentArchivedPayload {
     /// Identity of the archive entry.
@@ -1663,20 +1555,9 @@ pub struct DocumentArchivedPayload {
     pub text_source: String,
     /// The document this one arrived *inside*, when it arrived inside anything.
     ///
-    /// An email is archived whole and each of its attachments is archived as a
-    /// document of its own, pointing back here. That is what lets the review
-    /// screen show a draft transaction beside the message it was derived from,
-    /// and what answers "where did this statement come from" years later —
-    /// [`Self::source`] names the channel, never the specific message.
-    ///
-    /// `Option`, and it stays optional forever. Most documents arrive on
-    /// their own, and every event written before this field existed must keep
-    /// deserializing.
-    ///
-    /// A link, not ownership. The child is a full document — its own
-    /// text, its own fields, correctable on its own. Do not infer a
-    /// cascading delete from it: the same attachment bytes may be filed again
-    /// from another channel, and each filing is real.
+    /// An attachment points to its email, so a draft shows beside its message; [`Self::source`]
+    /// names only the channel. Optional forever, for older events. A link, not ownership: never
+    /// cascade a delete, as the same bytes may be filed again from another channel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_document_id: Option<String>,
 }
@@ -1694,24 +1575,16 @@ pub struct DocumentField {
     pub source: String,
     /// Whether anything actually checked this value against something.
     ///
-    /// True only for a value with a real oracle — a statement's closing
-    /// balance agreeing with figures the bank states about itself. A model's
-    /// output is never verified, however confident it sounded: the existing
-    /// verification pass inspects arithmetic, and there is no arithmetic in
-    /// "this is a 2023 notice of assessment". Do not add a confidence score
-    /// beside this; a number would imply a calibration nothing here provides.
+    /// True only against a real oracle, such as a statement's own figures; model output never is.
+    /// Never add a confidence score beside it: a number implies a calibration nothing provides.
     pub verified: bool,
 }
 
 impl DocumentField {
     /// How far this field's origin outranks another's when both claim one key.
     ///
-    /// This is what stops a re-extraction quietly undoing the user's work.
-    /// Fields fold by key, and the obvious rule — latest arrival wins — means a
-    /// model re-run months later overwrites every correction a person made by
-    /// hand. Ranking the *source* instead: a human beats anything, a parser
-    /// checked against declared figures beats a model, and equal ranks fall back
-    /// to arrival order.
+    /// Stops a re-extraction undoing hand corrections, which latest-wins would: a human beats
+    /// anything, a checked parser beats a model, and equal ranks fall back to arrival.
     pub fn rank(source: &str) -> u8 {
         if source == "human" {
             2
@@ -1737,30 +1610,17 @@ pub struct DocumentFieldsExtractedPayload {
     pub extracted_at: String,
     /// Every extracted value, folded by key.
     ///
-    /// `kind`, `title` and `document_date` are keys in here, not fields of
-    /// their own. The projection hoists those three into real columns because
-    /// the archive list and every date filter read them directly — but they are
-    /// ranked, folded and corrected by exactly the same rule as any other key.
-    /// Giving them their own payload fields was the first shape tried and it
-    /// bought a second provenance mechanism running beside the first, which is
-    /// two places for the human-beats-model rule to be got wrong.
+    /// `kind`, `title` and `document_date` are keys here, hoisted to columns by the projection but
+    /// ranked like any key; their own fields would be a second provenance mechanism.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fields: Vec<DocumentField>,
 }
 
 /// A model's reading of a document that carried no text layer of its own.
 ///
-/// A third event rather than either of the obvious alternatives. It is not a
-/// second [`DocumentArchivedPayload`], because that one is written once at
-/// ingest and a scan filed today would have no route to gain text later. It is
-/// not a reserved key on [`DocumentFieldsExtractedPayload`], because fields fold
-/// through a read-modify-write of the whole array — a document body would be
-/// re-serialized on every subsequent extraction — and because
-/// [`DocumentField::source`] speaks `human`/`parser:`/`model:` while text
-/// provenance speaks `extracted`/`transcribed`/`none`. One mechanism carrying
-/// two vocabularies is how the rank rule gets got wrong.
-///
-/// Re-emittable, like fields: a better model later is simply another of these.
+/// Its own event: [`DocumentArchivedPayload`] is written once at ingest, and a fields key would
+/// re-serialize the body on every extraction and mix two provenance vocabularies. Re-emittable,
+/// as a better model is just another one.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentTextTranscribedPayload {
     /// The archive entry this reading belongs to — `DocumentArchivedPayload::document_id`.
@@ -1789,18 +1649,9 @@ pub struct DocumentTextTranscribedPayload {
 
 /// A document purged on purpose: its row tombstoned and its bytes reclaimed.
 ///
-/// Not soft-delete, and not a row deletion either. The point is reclaiming
-/// storage, so the blob has to go — but the `document_archived` event stays in the
-/// log and a projection rebuild replays it, so without this the row would come
-/// back looking ordinary while its bytes were gone. Every reader must be able to
-/// tell *purged* from *broken*.
-///
-/// Deliberately carries no `sha256`. Which blob a document pointed at is
-/// already on its archive event, and bytes are shared — a statement that arrived
-/// by email and the same statement scanned are one blob and two documents. Naming
-/// the hash here would invite a reader to treat this event as authority to delete
-/// it, when that is only ever safe after counting every other document *and*
-/// transaction attachment still referencing it.
+/// A tombstone: the archive event replays on rebuild, so without it the row would return with its
+/// bytes gone; readers must tell purged from broken. No `sha256` on purpose: blobs are shared,
+/// and deleting one is safe only after counting every referrer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentPurgedPayload {
     /// The archive entry being purged — `DocumentArchivedPayload::document_id`.
@@ -1817,12 +1668,8 @@ pub struct DocumentPurgedPayload {
 
 /// How long documents carrying one tag are kept.
 ///
-/// `aggregate_id` is the tag, so `get_by_aggregate` yields that tag's rule history
-/// for free. Why a rule per tag rather than a `ConfigKey`, and what an absent rule
-/// means: [`crate::retention`].
-///
-/// `keep_days: None` clears the rule, which is the same state as never having
-/// set one. There is deliberately no separate "never".
+/// `aggregate_id` is the tag, giving its rule history (why per tag: [`crate::retention`]).
+/// `keep_days: None` clears the rule, the same as never set; there is no separate "never".
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentRetentionSetPayload {
     /// The tag this governs, already normalized by [`normalize_tag_set`]'s rules.

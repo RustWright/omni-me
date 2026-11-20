@@ -9,13 +9,8 @@ use super::store::{Event, EventError};
 
 /// Projection over routine events.
 ///
-/// Tables:
-/// - `routine_groups` — user-ordered list. `removed` tristates: false = active,
-///   true = soft-deleted (hidden but history preserved).
-/// - `routine_items` — group-owned checklist items, also soft-deleted via `removed`.
-/// - `routine_completions` — one row per completion/skip. Undo deletes the row
-///   outright (leaves no ghost record), keeping the "completed today?" check
-///   trivial: any row with matching (item_id, date) means done.
+/// `routine_groups` and `routine_items`, soft-deleted by `removed`; `routine_completions`, one
+/// row per completion or skip, deleted on undo, so a matching (item_id, date) row means done.
 pub struct RoutinesProjection;
 
 impl RoutinesProjection {
@@ -503,12 +498,8 @@ mod tests {
     /// A mutation that arrives before the create it depends on must still
     /// land, and must survive the create arriving afterwards.
     ///
-    /// This is an absence test for a silent no-op: routines was the projection
-    /// family nobody converted to UPSERT-materialize. Device A adds an item and
-    /// renames it; on device B the create is skipped by `apply_events_resilient`
-    /// or simply hasn't been pulled, the rename's bare `UPDATE` matches nothing,
-    /// and when the create finally lands B shows the pre-rename name
-    /// forever, because nothing ever retries a no-op'd mutation.
+    /// Pins UPSERT-materialize: a rename's bare `UPDATE` before its create matched nothing, and the
+    /// device showed the old name forever.
     #[tokio::test]
     async fn item_rename_before_its_create_survives_the_create() {
         let (db, store, runner) = routines_fixture().await;
