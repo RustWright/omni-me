@@ -261,10 +261,11 @@ edit site carries their reasoning. These are settled. Do not re-open one without
 - **97.** The day plan is mixed: blocks for deep work, an untimed list for small things.
 - **98.** Rituals are assistant-initiated: a morning day-plan proposal, an evening shutdown, a weekly
   plan and a light monthly review. The morning plan has its own ritual tier: one silent push,
-  drafted at his first activity of the day with a set time only as the fallback (114). Its noon
-  expiry is open, since a late start can pass noon (mine: until its first block starts). Evening,
-  weekly and monthly ride
-  the 19:00 summary (60) as code-built count lines that tap through to chat.
+  drafted at his first activity of the day with a set time only as the fallback (114). Unanswered,
+  it lapses when its first block would start, not at a fixed hour, since a late start can pass
+  noon; the day then runs as after "Skip today", and asking for a plan drafts a fresh one.
+  Evening, weekly and monthly ride the 19:00 summary (60) as code-built count lines that tap
+  through to chat.
 - **99.** Ritual load is measured, never enforced, as in 55: at most 30 minutes a week, a weekly
   review of at most 10 decisions with the rest rolling over, and at most 2 planning or people
   pushes a day. Block reminders do not count, and burst days are measured, not blocked. A ritual

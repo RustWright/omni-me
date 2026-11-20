@@ -5,11 +5,9 @@ live in `RULINGS.md`, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`
 `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
 ## ▶ NEXT ACTION — finish [0102] with him: his reactions to sections 1–3 of `design/0102/index.html`
-Section 4 is ruled (110). The session also ruled 111–115 and revised 93 and 98. First, update the
-plan card render to show them: all-day label line, the day starting at his first activity, travel
-buffer before campus events, timer controls. Then take sections 1, 2, 3 one at a time.
-Open from 98: when an unanswered morning plan expires (mine: when its first block starts).
-[0101] is done; its judgment calls are in overlay `DECISION_LOG_2026-11-20.md`, worth a skim.
+Section 4 is ruled (110); the render already shows 93 and 111–115, and 98's expiry is ruled. Next,
+section 1's remaining "To react to" points (the "From:" row is the one open), then 2, then 3, one
+at a time. [0101] is done; its judgment calls are in overlay `DECISION_LOG_2026-11-20.md`, worth a skim.
 
 ⛔ Live is the pause: every live step waits for his go, one at a time.
 ⛔ **Never `cargo build`/`test` on this box** (`project-dev-machines-and-build-limits`); the mock demo
