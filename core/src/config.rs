@@ -390,15 +390,9 @@ impl ConfigKey {
             // zone. The app stamps its own zone here whenever the schedule is
             // edited; UTC only until then.
             ConfigKey::AssistantCheckInTimezone => ConfigValue::Text("UTC".to_string()),
-            // Ten, raised from six 2026-09-14. Confirming a record exists costs
-            // two to four turns; establishing one does NOT exist was measured at
-            // eight, because the model has to narrow, widen, enumerate and check
-            // other types before the negative is honest. Six sat between the two,
-            // so every "not found" answer died on the budget. A ceiling costs
-            // nothing on the runs that never reach it.
-            // Fifteen from 2026-10-11: a request to research the journal and then
-            // write something read 15+ entries and ran out before proposing
-            // Quality over token cost: ruling 15 (RULINGS.md).
+            // Proving a record absent takes about eight turns and research-then-write needs
+            // more; a ceiling costs nothing on runs that never reach it. Quality over token
+            // cost: ruling 15 (RULINGS.md).
             ConfigKey::AssistantMaxTurns => ConfigValue::Int(15),
             // Ruling 19 (RULINGS.md): untouched a month, archived; archived a
             // quarter, deleted. Events remain, so a deleted chat is recoverable.
@@ -661,16 +655,8 @@ impl ConfigKey {
 
     /// The inclusive range an [`ValueKind::Int`] key accepts.
     ///
-    /// [`ConfigKey::AssistantMaxTurns`] is the reason this exists, and its
-    /// lower bound is a correctness property, not a preference. The agent
-    /// loop has no terminal verb — it ends when the model stops calling tools —
-    /// so the turn budget is its only guarantee of halting. A key that could be
-    /// set to zero, or left unbounded, would hand that guarantee to whoever last
-    /// edited a settings field. Tunable and uncappable are different things.
-    ///
-    /// `AssistantCheckInHour` had no bounds before this and would have accepted
-    /// hour 99 — a sibling of the same gap, fixed here rather than left to look
-    /// deliberate next to a neighbour that is clearly checked.
+    /// For [`ConfigKey::AssistantMaxTurns`] the floor is correctness: the turn budget is the agent
+    /// loop's only halting guarantee, ruling 17 (RULINGS.md). Tunable is not uncappable.
     pub fn int_range(self) -> Option<(i64, i64)> {
         match self {
             ConfigKey::AssistantCheckInHour => Some((0, 23)),
@@ -740,13 +726,9 @@ impl ConfigKey {
 
 /// A user-facing feature that can be switched off whole.
 ///
-/// A type rather than a convention about which `ConfigKey`s happen to start with
-/// `feature.`: every site in the feature map matches exhaustively on this, so a
-/// seventh feature stops the build at each place that has to decide about it
-/// instead of silently defaulting to ungated. What each feature owns — tab,
-/// projections, schedulers, commands, settings sections — is published in
-/// `docs/src/features.md`; the projection half is enforced in
-/// [`crate::events::registry`].
+/// A type, not a `feature.` key convention, so a new feature stops the build wherever the map
+/// must decide, never defaulting to ungated. Ownership: `docs/src/features.md`, enforced for
+/// projections in [`crate::events::registry`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Feature {
     Journal,
@@ -864,21 +846,9 @@ impl ResolvedConfig {
         }
     }
 
-    /// The effective value of an integer key, with the same fall-back reasoning
-    /// as [`ResolvedConfig::bool_of`].
-    ///
-    /// Range is not checked here. The bounds belong to whoever reads the
-    /// value — an hour and a retry count have nothing in common — and enforcing a
-    /// guess at this layer would silently rewrite a value the caller could have
-    /// clamped meaningfully.
-    /// An `Int` key's effective value, clamped to its own range.
-    ///
-    /// The clamp is here as well as in `validate`, deliberately. Validation
-    /// guards the write path and the projection fold, but neither runs over a
-    /// value that was already stored — by an older build, or by one whose range
-    /// was wider. For [`ConfigKey::AssistantMaxTurns`] that difference is the
-    /// halting guarantee, so the reader refuses to hand back a value it would not
-    /// have accepted.
+    /// An `Int` key's effective value, clamped to its range here as well as in `validate`: a value
+    /// stored by an older or wider build never passed validation, and for
+    /// [`ConfigKey::AssistantMaxTurns`] that is the halting guarantee.
     pub fn int_of(&self, key: ConfigKey) -> i64 {
         let (value, _) = self.get(key);
         let n = match value {
@@ -911,18 +881,9 @@ mod tests {
         }
     }
 
-    /// `ALL_KEYS` is hand-written, and a key missing from it is invisible to the
-    /// settings screen and to the override file — so the omission is silent.
-    ///
-    /// This test narrows that gap rather than closing it. The match below is
-    /// exhaustive, so a new variant stops the build here and whoever adds it is
-    /// standing in the right file; the length assertion then fails until they add
-    /// it to `ALL_KEYS` too. What it cannot catch is someone updating both the
-    /// match and the count while still not touching `ALL_KEYS`. Closing it
-    /// properly means generating the enum and the list from one table, which is
-    /// not how this codebase writes its other key spaces (see
-    /// `events::types::event_type_display_roundtrip`, which has the same shape and
-    /// the same hole).
+    /// A key missing from hand-written `ALL_KEYS` is silently invisible. This narrows the gap (the
+    /// match stops the build, the count fails until listed) but cannot catch both being updated
+    /// without the list; closing it needs one generating table.
     #[test]
     fn all_keys_lists_every_variant() {
         let mut counted = 0;
@@ -1059,12 +1020,8 @@ mod tests {
     /// A build that gains a key must behave as the build before it did for
     /// anyone who never opens the control.
     ///
-    /// That is not the same as "every boolean defaults on", which is what
-    /// this test used to assert. It held only while every boolean key was a
-    /// feature switch; `assistant.rerank` is a boolean whose backward-compatible
-    /// default is *off*, because reranking did not exist before it. Asserting
-    /// "on" would have forced the new key to change behaviour on upgrade in order
-    /// to pass a test named for not doing that.
+    /// Not "every boolean defaults on": `assistant.rerank` defaults off, because reranking did not
+    /// exist before it.
     #[test]
     fn defaults_preserve_todays_behaviour() {
         let empty = ResolvedConfig::default();

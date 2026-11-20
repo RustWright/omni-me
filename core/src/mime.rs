@@ -42,12 +42,8 @@ pub struct MimeAttachment {
     /// True for a part the message body *renders* — a logo or banner carried by
     /// `Content-Disposition: inline` with a `Content-ID` the HTML references.
     ///
-    /// Not a formality. A real bank statement email in the fixtures
-    /// carries five inline JPEGs of branding beside its one real PDF, so
-    /// anything treating every part as a file ends up handling ~173 KB of
-    /// furniture per message. Kept as a flag rather than filtered here, because
-    /// the two callers want different sets: the archive catalogues only real
-    /// attachments, while text extraction should still read an oddly-inline PDF.
+    /// Statement emails carry inline branding images beside the real PDF. A flag, not a filter:
+    /// the archive skips inline parts, but text extraction still reads an inline PDF.
     pub is_inline: bool,
 }
 

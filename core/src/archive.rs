@@ -1,8 +1,4 @@
-//! Document ingest — bytes in, a blob and the events that record them out.
-//!
-//! Why the archive is three events, how fields fold, and why text travels in
-//! the event: `docs/src/archive.md`.
-//!
+//! Document ingest: bytes in, a blob and its events out (design: `docs/src/archive.md`).
 //! No model here: the line is the network. Local deterministic work (text layers, statement
 //! fields) runs at ingest; a scan's reading arrives later as `DocumentTextTranscribed`, so an
 //! offline capture still archives.

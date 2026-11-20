@@ -1,25 +1,8 @@
 //! Server-side credential store for the public engine.
 //!
-//! Storage is a single TOML file at `$XDG_CONFIG_HOME/omni-me/credentials.toml`
-//! (or `$HOME/.config/omni-me/credentials.toml` if XDG is unset), with file
-//! permissions set to `0600` on write. The OS keyring approach (`keyring`
-//! crate) is the right answer for the Tauri client but headless VPS servers
-//! generally lack a Secret Service daemon — this TOML approach is the
-//! pragmatic equivalent.
-//!
-//! The public engine knows only two *generic* credential kinds: IMAP mailbox
-//! pollers and the `[llm]` endpoint. Bank-specific credentials live in the
-//! private overlay, which deserializes its own struct from the same
-//! `credentials.toml` — serde ignores unknown sections in both directions
-//! (neither struct uses `deny_unknown_fields`), so the public and private
-//! views of the file coexist without either knowing the other's sections.
-//!
-//! Add a new generic integration by extending `Credentials` with a new field.
-//! Missing fields deserialize as `None`/empty — partially-configured installs
-//! are valid (e.g. `[llm]` set up but no IMAP accounts yet).
-//!
-//! Tauri-client side credentials (sync token, etc.) stay separate and use
-//! Tauri's storage plugins; this module is server-only.
+//! Server-only: `$XDG_CONFIG_HOME/omni-me/credentials.toml`, written `0600` (headless servers
+//! lack a keyring daemon). Public and overlay structs read the same file; neither denies unknown
+//! sections, so they coexist. Missing fields are `None`, so partial setups are valid.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -54,15 +37,9 @@ pub struct Credentials {
     /// no IMAP accounts configured.
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub imap: std::collections::HashMap<String, ImapCredentials>,
-    /// The one LLM endpoint, shared by the text client and — when
-    /// `vision = true` — the document extractor. `provider =
-    /// "openai_compatible"` with `base_url`/`model`/`api_key` is the only
-    /// supported shape; absent or incomplete yields a `NullLlmClient` that
-    /// reports the gap at call time rather than failing boot.
-    ///
-    /// A `[gemini]` section may still be present in an existing file. It is
-    /// ignored: serde has no `deny_unknown_fields` here, and the closed-model
-    /// path was removed.
+    /// The LLM endpoint, shared with the extractor when `vision = true`. Only
+    /// `openai_compatible` is supported; incomplete yields a `NullLlmClient`. An old `[gemini]`
+    /// section is ignored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub llm: Option<LlmProviderConfig>,
     /// Generic name→secret map for config-driven sources that authenticate by
@@ -191,16 +168,9 @@ pub struct LlmProviderConfig {
     /// Permit a closed-weights model, disabling the open-weights allowlist in
     /// `llm::provider`.
     ///
-    /// Default `false`, and that default is the privacy guarantee: an
-    /// open-weights provider that also *proxies* Anthropic or Google models
-    /// applies the model owner's policy to those, not its own, and the id is one
-    /// line away in the same catalogue. Refusing by default makes that a loud
-    /// failure instead of an invisible one.
-    ///
-    /// Setting it `true` is a deliberate, documented trade — a commercial
-    /// frontier model is a supported configuration for anyone running their own
-    /// omni-me, and it will be better at the hard reasoning. See
-    /// `docs/src/assistant.md`.
+    /// `false` by default, which is the privacy guarantee: a provider proxying closed models
+    /// applies their owner's policy. `true` is a supported, documented trade for self-hosters
+    /// (`docs/src/assistant.md`).
     #[serde(default)]
     pub allow_closed_weights: bool,
 
@@ -222,17 +192,9 @@ pub struct LlmProviderConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<u64>,
 
-    // --- Per-role overrides (`docs/src/assistant.md` § One model per job) ---
-    //
-    // The roles are NOT interchangeable and never were: A is chosen on
-    // latency, B on quality, C on reading images, D on cost-per-call and
-    // knowing when to abstain. One endpoint cannot be right for all four, and
-    // A vs C already proves it — A's leading candidate (`gpt-oss-120b`) is
-    // text-only while C must read receipts.
-    //
-    // Role E (local: embeddings, reranking, speech) is deliberately absent.
-    // It is `fastembed` running on the machine, not an HTTP endpoint, and
-    // forcing it into this table would describe a connection it does not make.
+    // Per-role overrides (`docs/src/assistant.md` § "One model per job"): A on latency, B on
+    // quality, C on reading images, D on cost and abstaining. Role E is absent: it runs locally,
+    // no endpoint.
     /// Role A — the assistant loop and chat. Chosen on latency.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interactive: Option<LlmRoleOverride>,
@@ -299,10 +261,8 @@ pub enum LlmRole {
 /// vision = true
 /// ```
 ///
-/// `deny_unknown_fields` is load-bearing here. A misspelt key inside a role
-/// table would otherwise parse cleanly and do nothing — the silent-config
-/// failure this project has been bitten by repeatedly. A typo in the role
-/// *name* (`[llm.extracter]`) is caught separately, by [`check_role_names`].
+/// `deny_unknown_fields` is load-bearing: a misspelt key would parse and do nothing. A misspelt
+/// role name is caught by [`check_role_names`].
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LlmRoleOverride {
@@ -452,21 +412,9 @@ fn default_imap_label() -> String {
     "omni-me".to_string()
 }
 
-// ---------------------------------------------------------------------------
-// Redacted Debug
-// ---------------------------------------------------------------------------
-//
-// Every struct in this module previously derived `Debug` with no redaction —
-// including the plaintext `secrets` map, `ImapCredentials.app_password`
-// and `LlmProviderConfig.api_key`. Nothing logged
-// them (checked across both repos, and `GET /llm/config` correctly returns
-// `has_key`), so this was one careless `tracing::debug!(?creds, ...)` away from
-// a log file holding every credential on the box.
-//
-// Hand-written impls rather than a `Secret<String>` newtype: the newtype would
-// touch every construction and read site across two repositories, while what
-// actually needs to change is only what happens when someone formats one of
-// these. Shape is preserved so `?creds` still tells you what is configured.
+// Redacted Debug, so one careless `?creds` never logs a secret. Hand-written rather than a
+// `Secret<String>` newtype, which would touch every site in two repos; shape is kept, so `?creds`
+// still shows what is configured.
 
 /// Render a secret as its presence plus length — enough to answer "is it set?"
 /// and "is it plausibly the right value?", never enough to use.
@@ -606,11 +554,8 @@ pub fn save(path: &Path, creds: &Credentials) -> Result<(), CredentialError> {
 /// Write `bytes` to `path` such that the file is never readable by other
 /// users, not even briefly.
 ///
-/// The distinction matters: `std::fs::write` creates with `0666 & !umask`
-/// (usually `0644`) and a follow-up `set_permissions` only narrows it
-/// *afterwards*, leaving a window in which any local user can read the secret.
-/// Creating with `.mode(0o600)` closes that window. Public so every secret
-/// write in the workspace can share this one implementation.
+/// Created with `.mode(0o600)`: `fs::write` then `set_permissions` leaves a window readable by
+/// any local user. Public, so every secret write shares it.
 #[cfg(unix)]
 pub fn write_secret_file(path: &Path, bytes: &[u8]) -> Result<(), CredentialError> {
     use std::io::Write;
