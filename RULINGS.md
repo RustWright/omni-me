@@ -328,3 +328,7 @@ edit site carries their reasoning. These are settled. Do not re-open one without
   and time) merge silently. A real clash is one line on the plan card asking which he is going
   to; travel (115) assumes the earlier until he answers, and an answer holds for that day only.
   Reviewed after the calendar data prep ([0112]), as 111 is.
+- **117.** The morning plan card is section 1 of `design/0102/`: calendar events inline and greyed
+  so the fit can be checked, the fit line the one coloured line and never blocking Accept, "Skip
+  today" free of any follow-up, and a re-plan collapsing the old card to one line, its approval
+  refused. No "From:" row; a line appears only when an input could not be read.

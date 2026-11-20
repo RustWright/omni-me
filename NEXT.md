@@ -5,8 +5,8 @@ live in `RULINGS.md`, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`
 `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
 ## ▶ NEXT ACTION — finish [0102] with him: his reactions to sections 1–3 of `design/0102/index.html`
-Section 4 is ruled (110); the render already shows 93 and 111–115, and 98's expiry is ruled. Next,
-his verdict on section 1's four unruled "To react to" points (asked), then 2, then 3, one at a time. [0101] is done; its judgment calls are in overlay `DECISION_LOG_2026-11-20.md`, worth a skim.
+Section 4 is ruled (110); the render already shows 93 and 111–115, and 98's expiry is ruled. Section 1 is
+ruled (117). Next, his verdict on section 2's "To react to" points (asked), then 3. [0101] is done; its judgment calls are in overlay `DECISION_LOG_2026-11-20.md`, worth a skim.
 
 ⛔ Live is the pause: every live step waits for his go, one at a time.
 ⛔ **Never `cargo build`/`test` on this box** (`project-dev-machines-and-build-limits`); the mock demo
