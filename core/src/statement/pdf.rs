@@ -1,28 +1,9 @@
 //! Turn a statement PDF into the layout-preserved text
 //! [`super::rendered`] parses.
 //!
-//! Shells out to `pdftotext -layout` (poppler), which is a system
-//! dependency — the dev box has it, and any host running this needs
-//! `poppler-utils` installed.
-//!
-//! ## Why `-layout` is not optional
-//!
-//! Plain `pdftotext` emits reading-order text with the column structure
-//! discarded. [`super::rendered`] decides what a figure *means* from the
-//! character column it sits in, so without `-layout` every amount collapses
-//! into the same position and the parser returns confident nonsense instead of
-//! failing. The flag is the parser's whole input contract, which is why
-//! extraction lives here rather than at each call site.
-//!
-//! ## Why the password is just a string
-//!
-//! Banks that publish encrypted statements each invent their own rule for the
-//! password — some slice of an account number, a date of birth, a surname
-//! fragment. None of that belongs in a general engine, so this takes a password
-//! someone else derived and knows nothing about where it came from. Callers
-//! resolve it from the credentials file's name-keyed `secrets` map, the same
-//! "secrets referenced by name" pattern the LLM provider config and the
-//! subprocess helpers already use.
+//! Shells out to `pdftotext -layout` (needs `poppler-utils`). `-layout` is the parser's whole
+//! input contract: without it every figure lands in one column, silently. The password is a
+//! plain string another layer derived, resolved by name from the `secrets` map.
 
 use std::path::Path;
 use std::process::Stdio;
@@ -58,14 +39,9 @@ pub enum PdfTextError {
 
 /// What poppler prints when the password is wrong.
 ///
-/// A string match, and it has to be: measured against poppler 24.02, a wrong
-/// password, an empty password and a damaged file all exit 1. The man page
-/// documents no code for encryption — only 0, 1, 2, 3 and 99 — so stderr is the
-/// only place the two are distinguishable, and the callers need to be: "none of
-/// your passwords opened this" and "this file is damaged" are different jobs.
-/// If a poppler release rewords this, [`is_wrong_password`] silently stops
-/// recognising it, and an encrypted document is then reported as a damaged one
-/// rather than mis-opened. That is why the fallback keeps poppler's own words.
+/// A string match by necessity: poppler 24.02 exits 1 for a wrong password and a damaged file
+/// alike. If a release rewords it, [`is_wrong_password`] silently misses it, so the fallback
+/// keeps poppler's own words.
 const WRONG_PASSWORD_STDERR: &str = "Incorrect password";
 
 /// Whether a failure was the password rather than the file.
@@ -102,13 +78,8 @@ impl std::fmt::Debug for Opened {
 
 /// Extract text, trying each candidate password until one opens the file.
 ///
-/// The empty password is always tried first, and that is what keeps this cheap:
-/// an unencrypted file opens on it, and poppler *succeeds* on an unencrypted file
-/// given a wrong password anyway — so the 80% of a corpus that is not encrypted
-/// still costs exactly one `pdftotext` run however many passwords are configured.
-///
-/// Why every password rather than the right one: ingest has no document-to-issuer
-/// attribution to key on. `docs/src/archive.md` § Encrypted documents.
+/// The empty password goes first, so an unencrypted file costs one run. Every password, not
+/// the right one, since ingest knows no issuer: `docs/src/archive.md` § "Encrypted documents".
 pub async fn extract_layout_text_with_any(
     pdf_bytes: &[u8],
     passwords: &[&str],
@@ -172,13 +143,8 @@ pub async fn extract_layout_text(pdf_bytes: &[u8], password: &str) -> Result<Str
 
 /// As [`extract_layout_text`], for a file already on disk.
 ///
-/// The password is passed on argv, where it is visible to anything that
-/// can read the process table. The obvious fix — a password *file* — does not
-/// exist: checked against poppler 24.02, `pdftotext` offers only `-opw` and
-/// `-upw`, both taking the value inline, with no stdin or file variant.
-/// Closing this needs either `qpdf --password-file=-` piped into pdftotext (a
-/// new dependency) or a Rust PDF decryption crate. Left deliberately, recorded
-/// here so it is a known trade rather than an oversight.
+/// The password goes on argv, visible in the process table: poppler 24.02 has no file or stdin
+/// option. A known trade; closing it needs `qpdf --password-file=-` or a decryption crate.
 pub async fn extract_layout_text_from_path(
     path: &Path,
     password: &str,

@@ -1,47 +1,10 @@
 //! Statements that arrive as a rendered document rather than a data export.
 //!
-//! The parsers in [`super::parse`] read CSV, where the format states its own
-//! structure: a comma ends a field and (usually) a header names it. Some banks
-//! publish no export at all — only a monthly PDF laid out for a human to read —
-//! and the structure there is *visual*. Columns are positions on a page, and a
-//! transaction can spill across several lines of which only the first is a
-//! transaction.
-//!
-//! ## The input contract
-//!
-//! `text` must come from a layout-preserving extraction
-//! (`pdftotext -layout`, not plain `pdftotext`). Without it the columns
-//! collapse into a single run of words, every amount lands in the same place,
-//! and the parse becomes confident nonsense rather than a loud failure — so
-//! this is the one precondition a caller cannot get wrong quietly. Nothing here
-//! opens a PDF; decryption and extraction live with the credentials, and this
-//! module takes text.
-//!
-//! ## Why this format is checkable *despite* being the flimsiest to parse
-//!
-//! Position-based parsing is exactly what [`super::parse`] warns against, and
-//! that warning stands. What makes it safe here is that a rendered statement is
-//! written for a reader who wants to verify it, so it states figures about
-//! itself: an opening and closing balance, and — depending on the layout —
-//! per-row running balances, sum totals, or transaction *counts*.
-//!
-//! That turns the usual weakness inside out. In a CSV parser the skip ledger is
-//! the only guard, because a line quietly treated as boilerplate leaves no
-//! trace. Here, boilerplate misread as a transaction breaks the declared count,
-//! and a transaction misread as boilerplate breaks it the other way. The
-//! failures are caught by arithmetic the *bank* published, not by a rule this
-//! parser invented, and they land in
-//! [`StatementParse::declared_check_failures`].
-//!
-//! ## Two layouts, and why both are mandatory
-//!
-//! The same bank changed its statement design partway through the record, and
-//! the two forms share no structure worth abstracting over. The earlier
-//! importer of this data handled only the newer one and silently skipped 41
-//! statements — roughly two years of history, which then looked like an
-//! account that opened mid-life with an unexplained balance. So a file matching
-//! neither layout is rejected outright rather than parsed partially: an
-//! unreadable statement is a visible problem, and a half-read one is not.
+//! Statements published only as a PDF for people, where columns are page positions. Input must
+//! be `pdftotext -layout` text, or every figure lands in one column, silently. Checkable because
+//! the statement declares its own figures, failing into
+//! [`StatementParse::declared_check_failures`]; a file matching neither layout is rejected
+//! outright. Rationale: `docs/src/statements.md` § "Rendered statements".
 
 use super::parse::parse_money;
 use super::{SkippedLine, StatementParse, StatementRow};
@@ -133,13 +96,8 @@ impl AmountColumns {
     /// Which column a figure belongs to: the one whose header edge is nearest
     /// its own right edge.
     ///
-    /// Nearest-edge rather than a span test, because a layout-preserving
-    /// extractor right-aligns figures under their heading without promising
-    /// they fit inside the heading *word* — `1,234,567.89` is far wider than
-    /// `Deposit`. A span test would need per-format padding tuned by hand;
-    /// nearest-edge needs none and stays unambiguous while the columns are
-    /// further apart than the figures are wide, which both layouts satisfy with
-    /// room to spare.
+    /// Nearest edge, not a span test: figures right-align under a heading but can be far wider
+    /// than its word. Unambiguous while columns are further apart than figures are wide.
     fn classify(&self, right_edge: usize) -> Column {
         let d = |edge: usize| right_edge.abs_diff(edge);
         let mut best = (Column::Credit, d(self.credit));
@@ -237,12 +195,8 @@ fn row_balance(found: &[(Column, Decimal)]) -> Option<Decimal> {
 
 /// Check the parsed rows against everything the statement claims about itself.
 ///
-/// The balance walk here is deliberately stronger than
-/// [`StatementParse::verify_running_balance`], which compares consecutive rows
-/// and therefore cannot check the *first* one and skips any pair with a gap.
-/// This walk is seeded from the declared opening and carries a running total
-/// across rows that state no balance, so it checks every row in both layouts —
-/// including the grouped one, where most rows have no balance of their own.
+/// Stronger than [`StatementParse::verify_running_balance`]: seeded from the declared opening
+/// and carried across rows with no balance, it checks every row, the first included.
 fn check_declared(rows: &[StatementRow], declared: &Declared) -> Vec<String> {
     let mut fails = Vec::new();
 
@@ -457,13 +411,8 @@ fn parse_per_row_balance(text: &str) -> Result<StatementParse, String> {
 /// The layout where rows are grouped under an entry date and only the last row
 /// of a group states a balance.
 ///
-/// Each row's date is taken from the value date column specifically, not
-/// from "the first date on the line" or "the last". A group's first row shows
-/// both entry and value date while the rows under it show only the value date,
-/// so any positional shortcut would read a different column depending on where
-/// the row sits in its group — and a date inside a description (these
-/// statements embed the original transaction date in card rows) would be
-/// eligible too.
+/// Dates come from the value-date column specifically: a group's first row also shows the entry
+/// date, and card descriptions embed dates, so a positional shortcut reads the wrong one.
 fn parse_grouped_balance(text: &str) -> Result<StatementParse, String> {
     let header = text
         .lines()

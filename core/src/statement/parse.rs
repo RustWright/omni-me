@@ -1,18 +1,10 @@
 //! Statement format parsers.
 //!
-//! Each parser turns one bank's export into [`StatementParse`]. They share two
-//! rules, and both exist because this output is used as an *oracle*:
-//!
-//! - Nothing is skipped silently. A line that is not a transaction is
-//!   counted as `structural`; a line that looks like one but cannot be read
-//!   goes to `skipped` with its raw text. Neither is a bare `continue`.
-//! - Signs are normalised at the boundary into "negative means money left
-//!   this account", so no downstream caller re-derives a convention.
-//!
-//! Column layouts are matched by header name, not position. Bank exports
-//! reorder and add columns between versions, and a positional parser silently
-//! reads the wrong field when they do — it does not fail, it just returns
-//! confident nonsense.
+//! Each parser turns one export into [`StatementParse`], an oracle, so:
+//! - nothing is skipped silently: non-transactions count as `structural`, unreadable rows go to
+//!   `skipped` with their text;
+//! - signs are normalised at the boundary (negative means money left the account);
+//! - columns are matched by name: a positional read of a reordered export is confident nonsense.
 
 use super::{SkippedLine, StatementParse, StatementRow};
 use chrono::NaiveDate;
@@ -79,37 +71,18 @@ fn missing(name: &str, header: &[String]) -> String {
     format!("statement has no {name:?} column; header was {header:?}")
 }
 
-/// Parse a brokerage monthly transaction export.
-///
-/// Header, verified against the real files:
-/// `date, transaction, description, amount, balance, currency`
-///
-/// `amount` is already signed from the account's perspective and `balance` is
-/// the running total after the row — so these files are self-checking via
-/// [`StatementParse::verify_running_balance`].
-///
-/// Note what is *not* here: there is no per-transaction id column. That was
-/// confirmed against the raw exports rather than assumed, which is why this
-/// source cannot dedup on identity and uses a date floor instead — no algorithm
-/// reconstructs an identifier the source never wrote.
-/// The first non-blank line's cells, for a caller that has to discover a
-/// format rather than being told it.
-///
-/// The import path never needs this: the user picks the format, so each
-/// parser can afford to be lenient about columns it merely *prefers*. The
-/// archive has no such caller — a bulk-ingested file arrives with nothing but
-/// bytes — and that leniency then makes two parsers accept the same file. See
-/// `document_fields::claim_statement`, which layers a real signature test on
-/// top of these parsers rather than tightening them and breaking import.
-///
-/// Exposed rather than re-splitting the line at the call site so that quoted
-/// cells stay the business of one function.
+/// The first non-blank line's cells, for a caller discovering a format (the archive) rather than
+/// told it. The parsers stay lenient for import; `document_fields::claim_statement` adds the
+/// signature test. One function owns quoted cells.
 pub fn header_columns(csv: &str) -> Option<Vec<String>> {
     csv.lines()
         .find(|l| !l.trim().is_empty())
         .map(split_csv_line)
 }
 
+/// Brokerage monthly export (`date, transaction, description, amount, balance, currency`):
+/// signed amounts and a running balance, so self-checking. No per-row id exists (checked on the
+/// raw files), so dedup uses a date floor.
 pub fn parse_brokerage_statement(csv: &str) -> Result<StatementParse, String> {
     parse_with(csv, &["date", "amount", "balance"], |header| {
         Ok(ColumnMap {
@@ -125,35 +98,10 @@ pub fn parse_brokerage_statement(csv: &str) -> Result<StatementParse, String> {
     })
 }
 
-/// Parse a transfer-service statement export.
-///
-/// That format is much wider (23 columns) and carries both a per-row
-/// `TransferWise ID` and a `Running Balance`, so it supports identity-based
-/// dedup *and* the closing-balance check. Only the columns needed are read; the
-/// rest are ignored by name lookup, so added columns are harmless.
-/// Fold each `FEE-<parent_id>` row into the transaction it belongs to.
-///
-/// The transfer service bills a service fee as a separate statement row
-/// whose id is the parent's id with a `FEE-` prefix
-/// (`FEE-CARD-1234` → `CARD-1234`), and reports the parent row
-/// exclusive of it. The books record one transaction carrying both — an
-/// `Expenses:Fees` posting alongside the category, with the asset leg net. So
-/// left alone, every fee costs the count check exactly one false extra while
-/// the balance check stays clean, which is precisely the "counts differ,
-/// balances agree" verdict these statements were producing.
-///
-/// The join is exact rather than heuristic — a literal prefix strip against
-/// ids the export itself assigns — so this cannot quietly merge two unrelated
-/// rows. An orphan `FEE-*` whose parent is not in the file (a period boundary
-/// splitting the pair) keeps its own row rather than vanishing.
-///
-/// The parent keeps its `running_balance`, which assumes the fee is charged
-/// *before* its transaction (true in every pair observed). That assumption is
-/// self-checking: if it is ever wrong, `verify_running_balance` fails loudly
-/// rather than the statement quietly reconciling against the wrong figure.
-///
-/// Folded rows move to `structural` — they are not transactions of their own,
-/// and the `lines_seen == rows + structural + skipped` identity has to hold.
+/// Fold each `FEE-<id>` row into its parent, as the books record one transaction; left apart,
+/// every fee is a false extra in the count. The join is an exact prefix strip; an orphan fee
+/// keeps its row. The parent keeps its balance, assuming the fee comes first, which
+/// `verify_running_balance` checks. Folded rows count as `structural`.
 fn fold_fee_rows(parse: &mut StatementParse) {
     let parent_of = |id: &str| id.strip_prefix("FEE-").map(str::to_string);
 
@@ -194,6 +142,8 @@ fn fold_fee_rows(parse: &mut StatementParse) {
     parse.structural += folded.iter().filter(|f| **f).count();
 }
 
+/// Transfer-service export: 23 columns with a per-row id and a running balance, so both id
+/// dedup and the closing-balance check work. Columns are read by name; extras are harmless.
 pub fn parse_transfer_statement(csv: &str) -> Result<StatementParse, String> {
     let mut parse = parse_transfer_rows(csv)?;
     fold_fee_rows(&mut parse);
@@ -220,22 +170,10 @@ fn parse_transfer_rows(csv: &str) -> Result<StatementParse, String> {
 
 /// Parse a chequing-account CSV export.
 ///
-/// `Date, Description, Debit, Credit` with no header row, so the columns
-/// are read positionally — forced by the format, not chosen. Exactly one of
-/// Debit / Credit carries a value per row; see [`AmountCols::DebitCredit`] for
-/// why the sign falls out of which one.
-///
-/// This replaces an earlier parser that split on bare commas and silently
-/// `continue`d past any line it could not read. Both defects mattered on real
-/// files: descriptions routinely contain commas, and a silent skip on a
-/// statement import means money vanishing with no trace anywhere. Rows that
-/// cannot be read now land in [`StatementParse::skipped`] with their raw text.
-///
-/// This format carries no running-balance column, so `running_balance`
-/// is `None` on every row and the closing-balance half of the oracle is
-/// *unavailable* here — which [`crate::statement::replay`] reports as `None`
-/// rather than as a pass. The count check and the skip ledger are the whole
-/// check for this format. Do not let a caller render that as a clean bill.
+/// `Date, Description, Debit, Credit` with no header, so positional by force; the sign follows
+/// which of Debit and Credit is filled ([`AmountCols::DebitCredit`]). No running balance, so
+/// the closing check is unavailable (`None` in [`crate::statement::replay`]): never render the
+/// count and skip ledger alone as a clean bill.
 pub fn parse_chequing_statement(csv: &str) -> Result<StatementParse, String> {
     let parse = parse_chequing_rows(csv)?;
     // A file that yielded nothing is an error, not an empty success — matching
@@ -321,32 +259,17 @@ fn parse_with(
 /// Parse a format that carries no header row, against a caller-supplied
 /// column map.
 ///
-/// Positional reading is a liability — [`parse_with`] exists because a bank
-/// that reorders its columns otherwise returns confident nonsense — so this is
-/// only for formats that genuinely ship without a header and therefore offer
-/// nothing to match on.
-///
-/// The distinction is load-bearing rather than cosmetic: [`parse_with`]
-/// *consumes* the first non-blank line, so pointing it at a headerless export
-/// would silently eat that file's first transaction. Losing a row without a
-/// trace is the one thing this module exists to prevent, and it would be
-/// especially hard to spot here — the count is off by one and every remaining
-/// row is perfectly correct.
+/// Only for formats with no header to match on. Never point [`parse_with`] at a headerless
+/// export: it consumes the first line, silently eating the first transaction.
 fn parse_fixed(csv: &str, map: &ColumnMap) -> Result<StatementParse, String> {
     parse_rows(csv.lines().enumerate(), map)
 }
 
 /// Read one row's amount, whichever shape the format uses.
 ///
-/// `Ok(None)` means "no amount on this row" — the caller decides whether that
-/// is a footer or a finding. An unparseable *value* is an `Err`, which is a
-/// different thing from an absent one and must never be collapsed into it.
-///
-/// A debit/credit row with both columns populated is an error rather than a
-/// subtraction. The formats in use fill exactly one, so both being present
-/// means the column map is wrong for this file — and quietly netting them would
-/// turn a misread layout into a plausible number, which is the failure mode
-/// this module is built to refuse.
+/// `Ok(None)` is no amount (footer or finding, the caller decides); an unparseable value is `Err`,
+/// never collapsed into absent. Both debit and credit filled is an error, not a subtraction:
+/// it means the column map is wrong.
 fn read_amount<'a>(
     cols: &AmountCols,
     get: impl Fn(usize) -> &'a str,
@@ -405,18 +328,9 @@ fn parse_rows<'a>(
             .iter()
             .find_map(|f| NaiveDate::parse_from_str(date_raw, f).ok())
         else {
-            // A row whose date cell is empty is almost always a trailing total
-            // or a continuation line; one with an unreadable *value* is a real
-            // problem. Distinguishing them keeps `skipped` meaningful — a skip
-            // ledger full of footers is one nobody reads.
-            //
-            // A line carrying no readable money either is the same case by
-            // a stated rule rather than a guess: whatever it is, it cannot be a
-            // transaction, because nothing on it could supply an amount. That
-            // covers headers a user pasted onto a headerless export, section
-            // titles and rules. It is deliberately narrow — a line with a bad
-            // date but a real amount stays a finding, because that one *is* a
-            // transaction we failed to read.
+            // An empty date or no readable money means structure (a footer, pasted header, title),
+            // keeping `skipped` meaningful. Narrow on purpose: a bad date beside a real amount is a
+            // transaction we failed to read, and stays a finding.
             let carries_money = matches!(read_amount(&map.amount, get), Ok(Some(_)));
             if date_raw.is_empty() || !carries_money {
                 out.structural += 1;
@@ -481,18 +395,9 @@ fn parse_rows<'a>(
 /// Put rows in ascending date order, reversing the whole vec if the file is
 /// newest-first.
 ///
-/// Formats disagree about this: the brokerage exports oldest-first, the
-/// transfer service newest-first. Everything downstream assumes ascending —
-/// `opening_balance` reads the first row, `closing_balance` the last, and the
-/// running-balance self-check walks consecutive pairs — so a descending file
-/// silently inverts all three. The first real run against transfer statements
-/// produced the period `2026-06-29..2026-06-01`, which matched zero rows and
-/// then reported "0/0 rows OK": a vacuous pass on a statement full of data.
-///
-/// Reversed rather than sorted, deliberately. A sort would reorder rows that
-/// share a date, and the running-balance chain is only meaningful in the bank's
-/// own sequence — several transactions on one day have a definite order that
-/// their shared date cannot express.
+/// Downstream assumes ascending (opening, closing, the balance walk), and a descending file
+/// once produced an inverted period that matched nothing and passed vacuously. Reversed, never
+/// sorted: same-day rows keep the bank's order, which the balance chain depends on.
 fn normalise_order(parse: &mut StatementParse) {
     let (Some(first), Some(last)) = (parse.rows.first(), parse.rows.last()) else {
         return;
@@ -863,17 +768,9 @@ Date,Description,Debit,Credit
         assert_eq!(p.lines_seen, p.rows.len() + p.structural + p.skipped.len());
     }
 
-    /// A dated row with no amount is a finding, not structure — deliberately
-    /// unlike the old parser, which dropped it silently as a closing-balance
-    /// marker. A date is what makes a line look like a transaction, so an
-    /// amount-less one is exactly the shape of a row we failed to read. The user
-    /// sees the raw line and confirms it is a footer; the alternative is a
-    /// parser that decides that for them and is sometimes wrong in the
-    /// direction of losing money.
-    ///
-    /// Contrast `ported_pasted_header_row_is_structural_not_a_finding`: no date
-    /// *and* no amount is structure, because nothing about it reads as a
-    /// transaction.
+    /// A dated row with no amount is a finding the user confirms, not structure: it has the shape
+    /// of a row we failed to read. No date and no amount is structure
+    /// (`ported_pasted_header_row_is_structural_not_a_finding`).
     #[test]
     fn ported_dated_row_without_an_amount_is_a_finding() {
         let csv = "\

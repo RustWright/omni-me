@@ -13,5 +13,6 @@
 - [Reading documents](extraction.md)
 - [What counts as one purchase](auto-import.md)
 - [The document archive](archive.md)
+- [Checking an import against the bank](statements.md)
 - [Hiding amounts](privacy-eye.md)
 - [How retrieval is built](retrieval.md)
