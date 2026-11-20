@@ -1224,4 +1224,19 @@ mod tab_visibility_tests {
         assert!(!stored.visible(&features));
         assert_eq!(home_tab(&features).as_key(), "journal");
     }
+
+    /// Core's twin is `every_tab_a_notification_names_is_listed`; both read one fixture.
+    #[test]
+    fn every_tab_a_notification_names_opens_a_tab() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/notification_tabs.json");
+        let raw = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+        let fixture: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        for tab in fixture["tabs"].as_array().unwrap() {
+            let key = tab.as_str().unwrap();
+            let parsed = Tab::from_key(key).unwrap_or_else(|| panic!("no tab named {key}"));
+            assert_eq!(parsed.as_key(), key);
+        }
+    }
 }
