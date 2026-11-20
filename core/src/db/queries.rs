@@ -219,13 +219,8 @@ pub async fn list_journal_entries(
 /// One day's calendar-widget stats. Presence in the result set means an entry
 /// exists; the fields carry what the calendar encodes on each cell.
 ///
-/// `raw_text` is returned deliberately rather than a pre-computed word count.
-/// Counting means stripping the `⟦timestamp⟧` line tokens first, and the only
-/// reader of that format lives in the frontend (`journal.rs`), guarded by a
-/// drift test whose whole point is that nothing links the JS writer to its Rust
-/// reader. Counting here would create a *third* copy of that format knowledge
-/// and a third thing to drift. The frontend counts with the reader it already
-/// has and keeps only the resulting number.
+/// `raw_text`, not a word count: counting strips `⟦timestamp⟧` tokens, and the only reader of
+/// that format is the frontend's (`journal.rs`); a third copy here would be one more to drift.
 #[derive(Debug, Clone, Serialize, SurrealValue)]
 pub struct JournalDayStat {
     pub date: String,
@@ -487,31 +482,10 @@ impl TxnFilter {
     }
 }
 
-/// Every distinct value carried by a `key:value` transaction-level tag, read
-/// from the event log. `known_top_tag_values(db, "globepay-id")` answers
-/// "which upstream reference numbers has this ledger already recorded?".
-///
-/// This exists because a polling auto-import source otherwise has no way to ask
-/// what it has already contributed. Without it each tick re-proposes its whole
-/// lookback window — the rows are already in the ledger, but nothing downstream
-/// compares a draft against what is recorded, so the review queue grows forever.
-///
-/// Reads `events`, not the `transactions` projection, and that is the whole
-/// point. The only caller is an auto-import source, which runs in the server
-/// — and the server builds its `ProjectionRunner` with an empty projection list
-/// (`server/src/lib.rs`), because projecting is the clients' job. Querying the
-/// projection here returned an empty set on every real tick while passing a test
-/// whose harness happened to include `BudgetProjection`: a filter that looks
-/// correct, tests green, and silently does nothing in production. The event log
-/// is the one store both sides always have.
-///
-/// Matching is on the `key:` prefix of a `payload.tags` entry — the shape the
-/// ledger importer writes for an inline header tag (`; globepay-id: X`) and the
-/// shape [`TransactionRecordedPayload::with_tags`] renders.
-///
-/// Deliberately counts a transaction that was later removed as still "known":
-/// the log has no cheap notion of current visibility, and for a dedup filter
-/// re-proposing something the user deleted is the worse failure.
+/// Every value of a `key:value` transaction tag in the log, so a polling source skips what the
+/// ledger holds. Reads `events`, never the projection: the server folds no `transactions`
+/// table, and a projection query there returns empty while tests pass. Matches a
+/// `payload.tags` entry's `key:` prefix; a later-deleted transaction still counts.
 pub async fn known_top_tag_values(db: &Database, key: &str) -> Result<HashSet<String>, DbError> {
     let prefix = format!("{key}:");
     let mut resp = db
@@ -606,15 +580,9 @@ pub async fn proposed_payloads(
 /// Every `external_id` this source has already offered for review, read from
 /// the `auto_import_batch_proposed` events in the log.
 ///
-/// Complements [`known_top_tag_values`], which only sees rows that made it into
-/// the journal. Some upstream rows can never match a journal tag — the ledger
-/// records reference numbers for transfers and balance moves but not for card
-/// charges — so without this a polling source keeps re-offering them each time
-/// its lookback window shifts. Together the two give the semantic the review
-/// queue actually wants: each upstream row is proposed at most once.
-///
-/// Deliberately counts dismissed batches as proposed. Dismissing means "not
-/// wanted"; bringing the row back on the next tick is the behaviour being fixed.
+/// With [`known_top_tag_values`], each upstream row is proposed at most once; this covers rows
+/// that never get a journal tag, like card charges. Dismissed batches count: dismissing means
+/// "not wanted".
 pub async fn proposed_external_ids(
     db: &Database,
     source: &str,
@@ -976,35 +944,20 @@ pub struct FeedbackReport {
 
 /// Problem reports, newest first.
 ///
-/// This is the one query in this module that reads the `events` log directly
-/// rather than a projection, and that is the design rather than a shortcut:
-/// feedback has no projection because nothing derives state from it (see
-/// `FeedbackCapturedPayload`). With no derived table there is nothing for a
-/// direct read to disagree with.
-///
-/// A report whose payload will not decode is skipped, not fatal — one
-/// malformed row must not hide every other report from the reader. The count of
-/// skipped rows is returned alongside so the caller can say so out loud instead
-/// of silently serving a partial list.
+/// Reads `events` by design: feedback has no projection (`FeedbackCapturedPayload`). An
+/// undecodable report is skipped, never fatal, and the skipped count is returned so the caller
+/// can say so.
 pub async fn list_feedback(
     db: &Database,
     since: Option<&str>,
     limit: u32,
 ) -> Result<(Vec<FeedbackReport>, usize), DbError> {
-    // `timestamp` is projected twice under two different aliases, and each
-    // of the three tempting simplifications is a distinct bug. SurrealDB
-    // requires every `ORDER BY` idiom to appear in the selection.
-    //   1. `ORDER BY timestamp` with only `AS ts` present → refused as a parse
-    //      error. The endpoint shipped this way and reported it as HTTP 200.
-    //   2. `ORDER BY ts` → parses, and sorts the *string*: `…00Z` lands above
-    //      `…00.5Z` because `Z` (0x5A) > `.` (0x2E), so a fractional second
-    //      reverses two reports. Silently.
-    //   3. Projecting the bare column back as `timestamp` alongside `AS ts` →
-    //      still sorts as a string. The engine resolves the `ORDER BY` idiom to
-    //      the *cast* projection, not the raw one — so the ordering column has
-    //      to carry a name of its own. Hence `sort_ts`.
-    // `sort_ts` is deliberately absent from `FeedbackEventRow`; the driver
-    // ignores columns the struct does not name.
+    // `timestamp` is projected twice; each simpler form is a bug (an ORDER BY idiom must be
+    // selected):
+    // - `ORDER BY timestamp` with only `AS ts`: a parse error;
+    // - `ORDER BY ts`: sorts the string, so a fractional second reverses two reports;
+    // - the bare column beside `AS ts`: still resolves to the cast, so it needs its own name.
+    // Hence `sort_ts`, absent from `FeedbackEventRow` on purpose.
     let base = "SELECT meta::id(id) AS eid, device_id,
                        <string> timestamp AS ts, timestamp AS sort_ts, payload
                 FROM events
@@ -1106,14 +1059,8 @@ pub struct DocumentRow {
 
 /// Rows a purge retired, excluded from every archive read.
 ///
-/// `!= true`, not `= false`, matching `store::hidden_clause`: the column is
-/// `option<bool>` and absent on every document that was never purged, so
-/// `= false` would hide the entire archive.
-///
-/// One constant because this is a class of query, not one query. The
-/// enrichment work queues are the easy ones to forget — a purged document with no
-/// `kind` would otherwise be selected forever, spending a model call per tick on
-/// bytes that no longer exist.
+/// `!= true`, never `= false`: the column is absent on unpurged rows, so `= false` hides the
+/// archive. One constant for a class of query; the enrichment queues are the easy ones to forget.
 const NOT_PURGED: &str = "purged != true";
 
 /// Every column the archive reads, in one place so list and detail cannot drift.
@@ -1127,13 +1074,8 @@ const DOCUMENT_COLUMNS: &str = "document_id, sha256, filename, mime_type, size,
 
 /// How a document list is narrowed.
 ///
-/// An empty string is "no filter", never "match empty". Every field is
-/// always bound; the `WHERE` clause is never built by concatenation, which would
-/// be one interpolation away from a query a filename could steer.
-///
-/// A struct rather than five more parameters: four of them are `&str` in a row,
-/// so a positional call site read `("", "", "", "receipt", false, …)` and only a
-/// careful count told you which filter that was.
+/// An empty string means no filter. Every field is bound, never concatenated into `WHERE`,
+/// which a filename could steer. A struct because four `&str` in a row are unreadable.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DocumentFilter<'a> {
     /// Free text over `filename`, `title` and the document's own extracted text,
@@ -1210,14 +1152,8 @@ pub async fn list_documents(
 
 /// The documents that arrived inside this one — an email's attachments.
 ///
-/// Ordered by filename, not by time. Every part of one message is
-/// archived in a single operation, so `archived_at` orders them arbitrarily and
-/// the order would change between rebuilds.
-///
-/// Attachments stay in [`list_documents`] as well. They are documents in
-/// their own right — a statement PDF is worth finding whether or not the reader
-/// remembers it came by email — and hiding them from the list would make the
-/// archive's own breadth claim false.
+/// By filename: one message's parts share an `archived_at`, which would order them arbitrarily.
+/// Attachments stay in [`list_documents`] too; they are documents in their own right.
 pub async fn document_children(
     db: &Database,
     parent_id: &str,
@@ -1247,12 +1183,8 @@ pub async fn get_document(db: &Database, id: &str) -> Result<Option<DocumentRow>
 
 /// One document's extracted text.
 ///
-/// Its own query, deliberately. [`DocumentRow`] omits `text` so a list of
-/// a thousand filenames does not drag the whole corpus's text through the IPC
-/// boundary. This is the single-document read for the surfaces that genuinely
-/// need the words: an archived email shown beside the draft transactions it
-/// produced, where the reviewer's only alternative is approving a value whose
-/// source they cannot see.
+/// Its own query because [`DocumentRow`] omits `text`, keeping lists light. For surfaces that
+/// need the words, such as an email beside the drafts it produced.
 pub async fn document_text(db: &Database, id: &str) -> Result<Option<String>, DbError> {
     let mut resp = db
         .query("SELECT VALUE text FROM type::record('documents', $id)")
@@ -1286,20 +1218,9 @@ pub async fn document_kinds(db: &Database) -> Result<Vec<String>, DbError> {
 
 /// Every tag in use across the archive, for the filter control.
 ///
-/// Derived from the data for [`document_kinds`]' reason, and more so: tags
-/// come from a person typing them, so no list written in advance could be right.
-///
-/// The split between the two halves is forced, not stylistic. Under
-/// `GROUP ALL`, `array::group` collects each row's array *without* flattening, so
-/// the flatten is needed — and it is the only wrapper allowed: `array::distinct`
-/// and `array::sort` are aggregates too, and nesting one over `array::group`
-/// fails with "Nested aggregate functions are not supported". So the database
-/// flattens and the caller deduplicates.
-///
-/// Verified against a real database, not inferred from the function names. The
-/// first attempt here returned an array of arrays that decoded as an error, and
-/// the shape a wrong-but-parseable aggregate returns is an empty list — which
-/// reads exactly like an archive with no tags in it.
+/// Derived from the data, since people type tags. The database flattens and the caller
+/// dedupes, by necessity: `array::group` does not flatten, and nesting `array::distinct` over it
+/// is refused as a nested aggregate. Verified on a real database; a wrong form returns empty.
 pub async fn document_tags(db: &Database) -> Result<Vec<String>, DbError> {
     let mut resp = db
         .query(format!(
@@ -1371,13 +1292,9 @@ pub async fn blob_reference_count(db: &Database, sha256: &str) -> Result<usize, 
 
 /// How many live things still reference each blob, in one read of the event log.
 ///
-/// Two referrers: `documents.sha256` from the projection, and transaction
-/// attachments from the event log, which every host holds whatever it projects.
-/// Under-counting deletes bytes a committed receipt still points at.
-///
-/// Deliberately conservative: a transaction the user later deleted still counts.
-/// Purged documents do not, which is what frees a blob once every document naming
-/// it has gone. One query per blob ran a 372-document preview past 30 s.
+/// Referrers are `documents.sha256` and transaction attachments from the log; under-counting
+/// deletes bytes a receipt still uses. A deleted transaction still counts; a purged document does
+/// not. One read for all blobs, since one per blob took over 30 s.
 pub async fn blob_reference_counts(
     db: &Database,
     hashes: &[String],
@@ -1416,17 +1333,9 @@ pub async fn blob_reference_counts(
 
 /// Every live document carrying `tag`, oldest first.
 ///
-/// The same selection the purge applies, so a preview cannot promise one
-/// thing and the confirm do another — the rule `preview_obsidian_export` states
-/// outright and the reason it resolves names exactly as the real export does.
-///
-/// Oldest first, unlike every other archive read. A purge queue is worked from
-/// the end a retention window reaches first, and newest-first would put the items
-/// least likely to be purged at the top of the list a person has to scroll.
-///
-/// Uncapped on purpose: the caller needs the true total and the true byte
-/// figures, and truncating here would understate both. The *display* list is cut
-/// by `purge::MAX_PREVIEW_ITEMS`, which is a different decision.
+/// The purge's own selection, so preview and confirm cannot differ. Oldest first, the end a
+/// retention window reaches first. Uncapped for true totals; the display cut is
+/// `purge::MAX_PREVIEW_ITEMS`.
 pub async fn documents_tagged(
     db: &Database,
     tag: &str,
@@ -1480,20 +1389,10 @@ pub async fn retention_rules(db: &Database) -> Result<Vec<(String, u32)>, DbErro
         .collect())
 }
 
-/// Live documents archived before `boundary`, oldest first.
-///
-/// The prefilter under retention's exact evaluation — see `crate::retention`. It
-/// carries `tags`, because the rule the caller applies is a property of them.
-///
-/// `boundary` is RFC3339 and must be cast: the column is a `datetime`, and
-/// comparing it against a bound string matches nothing at all rather than erroring
-/// — an empty candidate list that reads exactly like "nothing is due".
-/// A document's age counts from the earlier of its archive time and its own date,
-/// so old mail backfilled today is as old as it is (R4-6). Shared by the retention
-/// scan and the purge preview, which must agree on every member.
-///
-/// `document_date` is compared as a `YYYY-MM-DD` string: casting a malformed
-/// one would fail the whole query. `<=`, as its midnight is on or before the cutoff.
+/// Age counts from the earlier of archive time and the document's own date, ruling 39
+/// (RULINGS.md); shared by the retention scan and the purge preview, which must agree.
+/// The cutoff is cast, since a datetime against a bound string silently matches nothing.
+/// `document_date` stays a string compare (`<=`): casting a malformed one fails the query.
 const OLDER_THAN_CUTOFF: &str = "((archived_at != NONE AND archived_at < type::datetime($cutoff))
      OR (document_date != NONE AND document_date <= $cutoff_day))";
 
@@ -1502,6 +1401,8 @@ fn cutoff_day(cutoff: &str) -> String {
     cutoff.chars().take(10).collect()
 }
 
+/// Live documents older than the cutoff, oldest first, with `tags` for the retention rule;
+/// the prefilter under `crate::retention`'s exact evaluation.
 pub async fn documents_archived_before(
     db: &Database,
     boundary: &str,
@@ -2660,15 +2561,8 @@ mod tests {
             .collect()
     }
 
-    /// SurrealDB requires every `ORDER BY` idiom to appear in the
-    /// selection, and refuses the whole statement when it does not — an
-    /// `Err`, never an empty list. `timestamp` is projected under the alias
-    /// `ts`, so ordering must name `ts`.
-    ///
-    /// The sub-second row is the point of the third entry: ordering a *string*
-    /// is only equivalent to ordering a datetime if the rendering is
-    /// fixed-width, so a fractional second is where lexicographic ordering
-    /// would diverge from chronological.
+    /// An unselected `ORDER BY` idiom fails the whole statement, so ordering runs on the projected
+    /// `sort_ts`. The sub-second row is where string ordering would diverge from chronological.
     #[tokio::test]
     async fn list_feedback_returns_reports_newest_first() {
         let db = feedback_db(&[

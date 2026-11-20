@@ -1,16 +1,8 @@
 //! Periodic + on-demand pull scheduler.
 //!
-//! The server has no push channel to clients, so a receiving device must poll to
-//! see edits made elsewhere. Nothing did this before — inbound events only landed
-//! when the user pressed Sync — the "auto-sync never fires" bug from the
-//! receiver's side. This task pulls once shortly after boot (the fresh-device
-//! backfill), then on a fixed interval, and immediately when nudged (e.g. the
-//! network just came back online), applying pulled events best-effort through
-//! the projection runner so one bad remote event can't strand the batch (see
-//! `apply_events_resilient`).
-//!
-//! Outcomes are broadcast on a channel so an upstream surface (the Tauri layer)
-//! can tell the UI to refetch after new events land, and tests can observe it.
+//! The server cannot push, so devices poll: once after boot, on an interval, and when nudged.
+//! Applies best-effort (`apply_events_resilient`) so one bad event cannot strand a batch, and
+//! broadcasts outcomes so the UI can refetch.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -35,31 +27,16 @@ const OUTCOME_CHANNEL_CAPACITY: usize = 16;
 
 /// Events per apply chunk on a backfill.
 ///
-/// The apply used to run the whole batch in one call that logged nothing until
-/// it returned. A dev phone sat on `Restoring 16052 events…` for eight hours
-/// with every runtime thread asleep and produced not one line saying how far it
-/// had got — the operation was unbounded *and* silent, so a stall and slow
-/// progress looked identical. Chunking costs nothing (the apply is a sequential
-/// per-event loop either way) and makes both the log and the UI count down.
+/// Chunked so the log and the UI count down; one silent call made a stall look exactly like
+/// slow progress. Free, since the apply is a per-event loop anyway.
 const APPLY_CHUNK: usize = 500;
 
 /// Outcome of a pull attempt, broadcast to consumers.
 #[derive(Debug, Clone)]
 pub enum PullEvent {
-    /// A pull fetched `pulled` new events and is about to project them.
-    /// Emitted before the (potentially long) apply, so a UI can say so while it
-    /// runs — [`Applied`](Self::Applied) is too late for that by construction,
-    /// since it reports work already finished.
-    ///
-    /// This matters on a fresh or just-wiped device, where the first backfill
-    /// *is* the app appearing: tens of thousands of events project behind a UI
-    /// that would otherwise show an empty screen and a "Synced" chip.
-    ///
-    /// Re-emitted after every [`APPLY_CHUNK`] with the count still remaining,
-    /// so `pulled` counts down to 0. A consumer that only wants the announcement
-    /// can take the first one; a consumer showing progress gets it for free, and
-    /// a restore that has stopped dead shows a number that stops moving instead
-    /// of an animation that means nothing.
+    /// About to project `pulled` events; emitted before the apply, which
+    /// [`Applied`](Self::Applied) cannot be, so a fresh device's backfill shows. Re-emitted per
+    /// [`APPLY_CHUNK`] with the count remaining, so a stalled restore shows a frozen number.
     Applying { pulled: usize },
     /// A pull applied `pulled` new events (only emitted when `pulled > 0`), with
     /// `failed` of them failing to project. Consumers refetch on this.

@@ -123,17 +123,9 @@ pub struct SyncClient {
     http: reqwest::Client,
     /// Serializes `pull_only` across every clone of this client.
     ///
-    /// Nothing else stops two pulls overlapping: the Settings "Sync Now" button
-    /// is a bare `spawn` with no disabled state, and the 20s pull scheduler runs
-    /// independently, so a double tap — or one tap landing inside a scheduled
-    /// tick — used to apply the same pulled batch twice concurrently. Every
-    /// projection but one is an UPSERT and absorbed that; `JournalFile` appended,
-    /// so the money numbers parsed back out of `budget.journal` silently drifted
-    /// from the Ledger list. That handler is now anchor-idempotent as well —
-    /// this is the other half, and it also stops the duplicated work.
-    ///
-    /// A waiting caller re-pulls once the first finishes; the cursor has moved
-    /// by then, so the second pull simply returns nothing.
+    /// Without it, "Sync Now" and the scheduler could apply one batch twice at once, which
+    /// drifted the journal file before `JournalFile` became idempotent. A waiting caller pulls
+    /// after the cursor has moved, and gets nothing.
     pull_lock: Arc<Mutex<()>>,
 }
 
@@ -149,15 +141,8 @@ impl SyncClient {
 
     /// Attach the box's bearer token to every request this client makes.
     ///
-    /// A builder rather than a `new` parameter for two reasons: the 17 test
-    /// call sites of `new` stay untouched, and the token rides on the
-    /// `reqwest::Client` itself via `default_headers` instead of being applied
-    /// per-`send`. A request builder that forgets `.bearer_auth()` is a bug
-    /// waiting on the next call site; a client that carries the credential
-    /// cannot forget it.
-    ///
-    /// An empty/blank token is a no-op, matching the server's fail-open
-    /// posture when `[server]` is unconfigured.
+    /// The token rides on the client's `default_headers`, so no request can forget it. A blank
+    /// token is a no-op, matching the server's fail-open posture while `[server]` is unconfigured.
     pub fn with_token(mut self, token: &str) -> Self {
         let token = token.trim();
         if token.is_empty() {
@@ -222,11 +207,7 @@ impl SyncClient {
     /// Pull remote events since our last sync, append them locally (preserving
     /// server-assigned IDs), and advance `sync_state.last_sync_timestamp`.
     ///
-    /// Pulls in a loop, because the server returns a bounded page and hands
-    /// back the cursor to continue from. A device joining an established
-    /// history needs many pages; one call drains as many as it can.
-    ///
-    /// Does NOT push. Callers wanting a full sync should follow with
+    /// Loops over the server's bounded pages until drained. Never pushes: follow with
     /// `push_only`, or use `sync()`.
     pub async fn pull_only(&self, db: &Database) -> Result<PullOutcome, SyncError> {
         let _in_flight = self.pull_lock.lock().await;
@@ -303,16 +284,9 @@ impl SyncClient {
     /// Push local events this device has authored but not yet pushed.
     /// Chunks at 100 events per HTTP request.
     ///
-    /// Keyed on `last_push_received_at` — this device's clock — against each
-    /// event's locally-stamped `received_at`. It used to filter the author
-    /// timestamp against the *server's* pull cursor, so a device whose clock
-    /// trailed the server by more than one pull interval authored events already
-    /// below the cursor and never pushed them: silent, permanent, and invisible
-    /// to the orphan audit because the `device_id` was correct.
-    ///
-    /// The window is bounded above by `hi`, captured before the read. Anything
-    /// stamped after `hi` simply lands in the next push rather than being
-    /// skipped by a watermark that outran it.
+    /// Keyed on this device's own clock (`last_push_received_at` against `received_at`), never
+    /// the server's cursor, or a lagging clock strands events forever. Bounded above by `hi`,
+    /// taken before the read, so a later stamp lands in the next push.
     pub async fn push_only(&self, db: &Database) -> Result<PushOutcome, SyncError> {
         let store = SurrealEventStore::new(db.clone());
         let since = self.last_push_watermark(db).await?;
@@ -483,18 +457,9 @@ impl SyncClient {
 
     /// Push every chunk, isolating any event the server rejects.
     ///
-    /// The push path had no poison-pill escape. The server validates the whole
-    /// request and returns 400 for the *entire chunk* on one bad payload or one
-    /// unknown `event_type`, and `retry_until_success` then resent the identical
-    /// chunk forever at a 60s cap while the cursor never advanced — so all
-    /// outbound sync for that device was permanently wedged, not just the bad
-    /// event. Reachable from a legacy-shaped event still above the cursor, or a
-    /// client that self-updates ahead of the box. This is precisely the
-    /// asymmetry the pull side already fixed with `apply_events_resilient`.
-    ///
-    /// On a rejection the chunk is bisected until the offending event is alone,
-    /// then that one event is skipped and logged. It stays in the local store,
-    /// so nothing is destroyed — it simply stops holding the queue hostage.
+    /// The server 400s a whole chunk for one bad event, which once wedged all outbound sync. A
+    /// rejected chunk is bisected to the offender, which is skipped and logged but kept locally.
+    /// The push-side twin of `apply_events_resilient`.
     async fn push_events(&self, events: &[Event]) -> Result<PushOutcome, SyncError> {
         let url = format!("{}/sync/push", self.server_url);
         let mut out = PushOutcome::default();

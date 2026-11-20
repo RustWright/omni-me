@@ -1,26 +1,9 @@
 //! OS network event listener.
 //!
-//! Emits "online" hints the retry engine can use to nudge its retry schedule.
-//! The emitted signal is edge-triggered: `NetworkEvent::Online` fires on
-//! transitions from `Unknown|Offline -> Online`.
-//!
-//! ## Platform coverage
-//!
-//! The shipped monitor is a simple TCP probe that works on every Rust
-//! platform we support (Linux, macOS, Windows, Android, iOS). It polls TCP
-//! reachability to a configurable probe host on an interval and emits an
-//! `Online` event on reconnect edges.
-//!
-//! The `tauri-plugin-network` crate was evaluated but only exposes *static*
-//! network info (adapters, IPs), not push-based connectivity events. A
-//! richer implementation using Android's `ConnectivityManager.NetworkCallback`
-//! is deferred until a JNI bridge is wired — see TODO below. The probe
-//! monitor is sufficient as a reconnect-hint source on all platforms.
-//!
-//! TODO(android-native-callback): Replace the probe on Android with
-//! `ConnectivityManager.NetworkCallback` once a JNI bridge is available.
-//! Worth doing when probe polling shows up as a measurable battery cost on
-//! device, or when a JNI bridge lands for some other reason — not before.
+//! Edge-triggered `NetworkEvent::Online` hints for the retry engine, from a TCP probe that works
+//! on every platform (`tauri-plugin-network` has no push events).
+//! TODO(android-native-callback): use `ConnectivityManager.NetworkCallback` on Android once a
+//! JNI bridge exists, or when probe polling shows a measurable battery cost.
 
 use std::sync::Arc;
 use std::time::Duration;

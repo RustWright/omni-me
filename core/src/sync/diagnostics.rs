@@ -1,18 +1,8 @@
 //! Durability guardrail 3 — sync orphan-device-id self-check.
 //!
-//! The sync push is device-id filtered: `push_only` sends only events whose
-//! `device_id` matches the client's bound id (correct anti-re-push-storm
-//! behaviour — you don't re-push what you pulled from a peer). The invariant that
-//! keeps local data syncable is therefore: every event this installation
-//! *authors* must carry the bound `device_id`. If a broken authoring path
-//! stamps some other id, those events sit in `local.db` forever — never pushed,
-//! never on the server (the headless-import stranding bug that made the whole
-//! imported ledger invisible on mobile).
-//!
-//! The canonical event-builder removes the *authoring-time* cause. This is the
-//! runtime backstop: a cheap startup audit that flags a db which was created by a
-//! broken authoring path (wrong-id import, restore-from-wrong-backup, a
-//! regenerated `device_id` file). It never mutates anything and never blocks boot.
+//! Push sends only events under the bound `device_id`, so an event authored under any other id
+//! is never pushed. The canonical builder prevents that at authoring; this read-only startup
+//! audit is the backstop for a wrong-id import, a wrong backup, or a regenerated id file.
 
 use chrono::{DateTime, Utc};
 
@@ -48,15 +38,9 @@ impl DeviceIdAudit {
     /// under its bound id, and it has never pulled — so everything present was
     /// authored locally under a foreign id and can never be pushed.
     ///
-    /// This is false-positive-free against the states that *look* similar:
-    /// * a healthy fresh-pulled device has `ever_synced == true` (it DID pull), so
-    ///   its server-origin foreign events don't trip it;
-    /// * a brand-new empty device has `total() == 0`.
-    ///
-    /// It only detects the *pure* orphan case (own authored nothing). A mixed db
-    /// (some own events + stranded foreign events) can't be told apart from
-    /// own-plus-pulled without per-event provenance, so it is left to the
-    /// always-logged distribution rather than auto-flagged.
+    /// No false positives: a freshly pulled device has `ever_synced`, an empty one `total() == 0`.
+    /// Only the pure case; a mixed db needs per-event provenance, so it is left to the logged
+    /// distribution.
     pub fn orphan_signature(&self) -> bool {
         self.total() > 0 && self.own_count == 0 && !self.ever_synced
     }

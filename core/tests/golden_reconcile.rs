@@ -1,22 +1,8 @@
 //! Durability guardrail 1 — CI golden-reconcile.
 //!
-//! Imports a small synthetic fixture journal (fictional banks) through the
-//! real production reconcile pipeline and asserts the projected per-account,
-//! per-commodity balances against a frozen expected table. Any future
-//! parser / grammar / renderer / balance-engine drift that moves a balance fails
-//! this test in CI (it rides the existing `cargo test -p omni-me-core` step — no
-//! workflow change, no external `ledger` binary needed).
-//!
-//! Two independent computations guard the whole chain. Path A is the full
-//! production path: `parse_journal` -> the canonical `TransactionRecordedPayload::new`
-//! builder -> `journal_file::render_transaction` -> `ledger::balances` (the exact
-//! library the app uses to evaluate balances). Path B is a direct per-posting sum
-//! of the parsed drafts, bypassing the render/re-parse round-trip. Path A == frozen
-//! catches render/balance drift; Path B == frozen catches parser/elision drift.
-//!
-//! The frozen table is hand-derived (simple per-account sums, eyeball-verifiable on
-//! the tiny fixture) and was cross-checked once locally against the `ledger` binary
-//! bundled with paisa.
+//! A synthetic journal through the production reconcile pipeline, against a frozen,
+//! hand-derived balance table. Path A (parse, canonical builder, render, `ledger::balances`)
+//! catches render and balance drift; path B (a direct per-posting sum) catches parser drift.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -149,18 +135,9 @@ fn golden_reconcile_matches_frozen_balances() {
 
 /// Merging two halves of a reconciliation must not move a single balance.
 ///
-/// `merge_transactions` strips both `Unmatched` legs and concatenates the rest.
-/// The resulting `TransactionsMerged` event is replayed into the SurrealDB
-/// projection *and* the on-disk hledger file, and nothing downstream re-derives
-/// what the balances ought to be — so a merge that drops or duplicates a leg
-/// surfaces only as numbers that quietly disagree with the bank.
-///
-/// This renders the same money twice through the production writer: once as the
-/// two unreconciled halves, once as the merged entry. The balance library must
-/// reach the same table both times. It is the end-to-end counterpart to the
-/// unit tests on `combine_for_merge` and `plan_merge` — those check the
-/// arithmetic, this checks that the arithmetic survives a render / re-parse
-/// round-trip, which is where the money chain has drifted before.
+/// Renders the same money as two halves and as the merged entry; both must reach the same
+/// balances. The unit tests check the merge arithmetic; this checks it survives a render and
+/// re-parse, where the money chain has drifted before.
 #[test]
 fn merging_two_halves_leaves_every_balance_unchanged() {
     let date = NaiveDate::from_ymd_opt(2026, 3, 1).unwrap();

@@ -1,13 +1,8 @@
 //! Does a cold backfill of a realistic event count wedge the runtime?
 //!
-//! The dev phone sat on `Restoring 16052 events…` for eight hours with every
-//! `tokio-rt-worker` and every `surrealdb-thread` in state `S`, ~68s of worker
-//! CPU spent, and every Tauri command hanging forever. This drives the same
-//! `apply_events_resilient` path against a real SurrealKV directory so the
-//! stall can be watched somewhere a debugger can reach.
-//!
-//! Ignored by default: it writes tens of thousands of rows and is measured in
-//! minutes, which is not what the unit suite is for. Run it by name.
+//! Drives `apply_events_resilient` against a real SurrealKV directory, so a stalled restore
+//! can be watched where a debugger reaches. Ignored by default (minutes, tens of thousands of
+//! rows); run it by name.
 
 use std::time::{Duration, Instant};
 

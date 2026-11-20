@@ -223,11 +223,8 @@ mod tests {
     /// The trap every write in this crate has to know about: a statement the
     /// database *rejects* still comes back as `Ok`.
     ///
-    /// `await?` only forwards transport and parse failures. A statement error
-    /// travels inside the `Response` and reaches the caller solely through
-    /// `.check()` or `.take()`. A write that discards the response therefore
-    /// cannot fail, which reads in the source exactly like a write that
-    /// succeeded — the projections were built on that misreading.
+    /// `await?` forwards only transport and parse failures; a statement error surfaces only
+    /// through `.check()` or `.take()`, so a write that discards the response cannot fail.
     #[tokio::test]
     async fn a_rejected_statement_still_returns_ok_until_it_is_checked() {
         let dir = tempfile::tempdir().unwrap();

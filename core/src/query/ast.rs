@@ -1,16 +1,8 @@
 //! Query AST for the ad-hoc transaction filter.
 //!
-//! The grammar is intentionally flat: a single top-level combinator (`All` /
-//! `Any`) over a list of field predicates. Nested boolean groups, regex account
-//! matching, and per-commodity amount comparison are deliberately absent.
-//! Add them when a query surface actually needs them — nesting is not a
-//! drop-in, it changes this AST's shape and `parser::to_dsl`'s round-trip
-//! contract along with it.
-//!
-//! The [`QueryTxn`] / [`QueryPosting`] view types are the *only* surface the
-//! evaluator touches, and they hold no DB or Tauri dependency — that is what
-//! lets the same engine run host-side in a Tauri command, in workspace tests
-//! against synthetic fixtures, and (later) as a pure WASM demo island.
+//! Flat on purpose: one combinator (`All`/`Any`) over field predicates. Nesting would change
+//! this shape and `parser::to_dsl`'s round trip, so add it only when a surface needs it.
+//! [`QueryTxn`] and [`QueryPosting`] are all the evaluator sees, free of DB and Tauri.
 
 use crate::events::Tag;
 use rust_decimal::Decimal;
