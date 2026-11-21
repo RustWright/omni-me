@@ -371,3 +371,7 @@ edit site carries their reasoning. These are settled. Do not re-open one without
   series without one is asked about once (Campus first, then Home, Elsewhere), and the answer
   holds for the series. A one-off without a location gets no travel buffer. His calendar events
   are mostly on campus, and he focuses better there when nothing keeps him home.
+- **127.** Routine items are ticked from the journal: a line saying one is done ticks it at that
+  line's time, marked inferred and undoable, and the journal itself is never touched. The evening
+  shutdown (98) asks one line about items with no evidence that day, so an unjournaled day is not
+  read as skipped. No reminder pushes: a ticking habit is what he could not start.
