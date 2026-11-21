@@ -490,6 +490,7 @@ pub fn build_app(
         .merge(routes::jobs_routes())
         .merge(routes::feedback_routes())
         .merge(routes::llm_routes())
+        .merge(routes::task_routes())
         // Behind the bearer gate like the rest, and with two gates of its own on
         // top: a preview ticket and a named instance. See `routes::wipe`.
         .merge(routes::wipe_routes());

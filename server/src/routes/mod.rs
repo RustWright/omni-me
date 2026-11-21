@@ -7,6 +7,7 @@ mod llm;
 mod notes;
 mod statements;
 mod sync;
+mod tasks;
 mod wipe;
 
 pub use auto_import::auto_import_routes;
@@ -20,6 +21,7 @@ pub use llm::llm_routes;
 pub use notes::notes_routes;
 pub use statements::statement_routes;
 pub use sync::sync_routes;
+pub use tasks::task_routes;
 // Held on `AppState` for the same reason as `PurgeTicket`.
 pub use wipe::{WipeTicket, wipe_routes};
 

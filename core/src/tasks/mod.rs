@@ -4,6 +4,7 @@
 //! `events::tasks_projection`; this module holds the pure rules both share.
 
 pub mod hub;
+pub mod queries;
 
 use chrono::{Datelike, Duration, Months, NaiveDate, NaiveTime, Weekday};
 use serde::{Deserialize, Serialize};
