@@ -1,23 +1,9 @@
 use dioxus::prelude::*;
 
-/// Boot splash — the animated enso held over the app until the restored tab is
-/// known and its content is genuinely ready. Driven by `main.rs`'s `BootGate`.
-///
-/// Before this, first paint always rendered `Tab::Journal` with a half-built
-/// CodeMirror editor and *then* corrected to the tab the user actually closed
-/// on, so the wait was paid twice and its most visible half looked broken.
-///
-/// The mark is inlined rather than loaded from `tauri-app/branding/` — it is
-/// four elements, and a splash that has to fetch its own artwork can't paint on
-/// the frame it's needed. Keep it in sync with `branding/omni-me-fg.svg`; that
-/// file remains the canonical source for every generated icon.
-///
-/// Two overlaid `<svg>`s, not one with an animated `<g>`. Rotating an
-/// element *inside* an SVG needs `transform-box`/`transform-origin` handling
-/// that differs across engines, and this app ships on webkit2gtk (desktop) and
-/// Android Chromium — where such differences have burned us before (see the
-/// `select` rules in `input.css`). Rotating the whole `<svg>`, an ordinary HTML
-/// element, is unambiguous everywhere.
+/// Boot splash, held until the restored tab's content is ready (`main.rs`'s `BootGate`).
+/// The mark is inlined so it paints on the first frame; keep it in sync with
+/// `branding/omni-me-fg.svg`, the canonical source. Two overlaid `<svg>`s, not an animated
+/// `<g>`: rotating inside an SVG differs between webkit2gtk and Android Chromium.
 #[component]
 pub fn Splash(
     /// Fade the splash out. The parent keeps the component mounted for the

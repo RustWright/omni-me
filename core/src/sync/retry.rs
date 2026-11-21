@@ -1,18 +1,8 @@
 //! Exponential-backoff retry engine for sync pushes.
 //!
-//! Listens on a [`PushDebouncer`]'s outcome channel. When a push Fails, the
-//! engine schedules a retry attempt at `base * 2^n` seconds (jittered ±10%,
-//! capped at 60s). When a push Succeeds or the retry itself succeeds, the
-//! backoff counter resets to zero.
-//!
-//! Retry attempts call `SyncClient::push_only` directly — they do not go
-//! through the debouncer (which is driven by buffer flushes).
-//!
-//! External consumers can call [`RetryEngine::hint`] to signal that the
-//! network might have come back (e.g. from Task 2.5's OS listener). Hints
-//! nudge the sleep: if the scheduled retry is more than ~2s away, the engine
-//! fires a retry now. The backoff counter is NOT reset — the hint shortens
-//! wait time, not step count.
+//! After a failed push, retries at `base * 2^n` s (±10% jitter, capped at 60 s), calling
+//! `push_only` directly; any success resets the counter. [`RetryEngine::hint`] (network back)
+//! fires a retry now if the next is over ~2 s away, without resetting the counter.
 
 use std::sync::Arc;
 use std::time::Duration;

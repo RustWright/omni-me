@@ -1,16 +1,6 @@
-//! Config-driven generic auto-import sources (3.6).
-//!
-//! The public engine ships with zero compiled-in sources. This module lets
-//! a non-coding operator declare *generic* sources — a CSV file, or any
-//! subprocess helper — in a server-side `sources.toml`, which the public binary
-//! loads at boot and turns into live [`AutoImportSource`]s via
-//! [`build_generic_sources`]. Bank-specific adapters still live in the private
-//! overlay; this is the rail for everything that needs no code.
-//!
-//! `sources.toml` is definitions, not secrets — it is deliberately a
-//! separate file from `credentials.toml` (the design's "secrets referenced by
-//! name"): a CSV source needs no secret at all, and secret-bearing types name
-//! their secret rather than inlining it. Example:
+//! Generic sources (CSV, subprocess) declared in a server-side `sources.toml` and built by
+//! [`build_generic_sources`]; bank adapters live in the overlay. Definitions, never secrets:
+//! a source names its secret, kept in `credentials.toml`. Example:
 //!
 //! ```toml
 //! [[source]]
@@ -31,11 +21,8 @@
 //! args = ["--since", "30d"]
 //! ```
 //!
-//! `schedule_secs` sets a per-source poll interval that overrides the engine's
-//! global interval; a source with no `schedule_secs` inherits the global. It is
-//! carried by the source's own [`AutoImportSource::poll_interval`], so honoring
-//! it needs no change to the `SourceBuilder` seam (and thus no private-overlay
-//! change).
+//! `schedule_secs` overrides the global interval per source, via
+//! [`AutoImportSource::poll_interval`], so the `SourceBuilder` seam is untouched.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -149,14 +136,8 @@ pub struct SourceDef {
     pub secret_ref: Option<String>,
 
     // --- attribution (all source kinds) ---
-    /// Institution whose money this source reports, e.g. `"Summit"`. Stamped on
-    /// every real posting as an `institution:` tag.
-    ///
-    /// Not cosmetic: under the MECE account grammar
-    /// (`Assets:<Registration>:<Commodity>`) one balance-bearing account
-    /// deliberately pools every institution, so this tag is the only thing that
-    /// can separate them again in the Accounts drill-down. A source that omits
-    /// it imports money that cannot be attributed to anyone.
+    /// Institution whose money this source reports, stamped as an `institution:` tag. The only
+    /// way to separate institutions an account pools; without it the money is unattributable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub institution: Option<String>,
     /// Product within the institution, e.g. `"chequing"` / `"crypto"`. Stamped

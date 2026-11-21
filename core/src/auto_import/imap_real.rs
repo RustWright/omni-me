@@ -1,12 +1,7 @@
 //! Real `ImapFetcher` impl over `async-imap` + `tokio-rustls`.
 //!
-//! Connection lifecycle: TCP → TLS → login → select label → enumerate → fetch →
-//! logout. Connections aren't kept open between ticks; tick frequency is on the
-//! order of minutes so reconnect cost is negligible.
-//!
-//! The integration test at the bottom is `#[ignore]`-gated — it requires real
-//! Gmail credentials in env. Run with:
-//!     `cargo test -p omni-me-core --lib imap_real -- --ignored --nocapture`
+//! One connection per tick (ticks are minutes apart). The ignored integration test needs real
+//! credentials: `cargo test -p omni-me-core --lib imap_real -- --ignored --nocapture`.
 
 use std::sync::Arc;
 
@@ -30,13 +25,8 @@ const MAX_UIDS_PER_TICK: usize = 200;
 
 /// What one message body fetch asks for.
 ///
-/// `BODY.PEEK[]`, never `RFC822` or a bare `BODY[]`. Those two implicitly
-/// set `\Seen` on the server, so a background poll would mark the user's own mail
-/// read in their email client. PEEK returns the same bytes without touching flags.
-///
-/// `Fetch::body()` accepts either shape — it matches `BodySection { section: None }`
-/// as well as `Rfc822` — so the response side does not care, which is exactly why
-/// a regression here would import mail correctly and be invisible.
+/// `BODY.PEEK[]`, never `RFC822` or `BODY[]`, which set `\Seen` and mark the user's mail read.
+/// `Fetch::body()` accepts every shape, so a regression here would be invisible.
 const BODY_QUERY: &str = "(UID INTERNALDATE BODY.PEEK[])";
 
 /// Largest single message body accepted. Anything above this is skipped
@@ -108,15 +98,8 @@ fn tls_config() -> Result<ClientConfig, ImportError> {
         .map_err(|e| ImportError::Io(format!("tls config: {e}")))
 }
 
-/// Whether the stored cursor belongs to a numbering the mailbox no longer uses.
-///
-/// The IMAP UID range one tick enumerates.
-///
-/// Absent and zero are opposite instructions, and the difference is the whole
-/// reason a rewind stores `Some(0)` rather than deleting the row. `None` means
-/// "never polled", which resolves to `*` — the single highest UID — so a new
-/// account anchors to now instead of back-importing years of mail. `Some(0)`
-/// asks for `1:*`, which is every message the mailbox holds.
+/// The UID range one tick enumerates. `None` (never polled) is `*`, anchoring a new account to
+/// now; `Some(0)` is `1:*`, everything, which is why a rewind stores `Some(0)` and never deletes.
 fn uid_range(cursor: &FetchCursor) -> String {
     match cursor.last_seen_uid {
         Some(uid) => format!("{}:*", uid + 1),
@@ -131,19 +114,9 @@ fn window_range(cursor: &FetchCursor, upto: u32) -> Option<String> {
     (start <= upto).then(|| format!("{start}:{upto}"))
 }
 
-/// A UID means nothing without the `UIDVALIDITY` it was issued under, so a change
-/// voids the cursor: left in place, `{last+1}:*` matches nothing and the mailbox
-/// never polls again. Only a *known* disagreement counts. An unknown on either
-/// side — a cursor stored before this was recorded, or a server that answered
-/// without one — is not evidence of renumbering, and treating it as such would
-/// reset every mailbox on the first tick after an upgrade.
-///
-/// The reset deliberately does not backfill. Re-reading the mailbox would
-/// re-propose every historical receipt, because a proposal with no order reference
-/// keys on `uid` and renumbering gives every message a new one — so the
-/// alternative to losing whatever arrived during the gap is a review queue holding
-/// the entire mail history. It matches the first-run rule, and it is my call
-/// rather than a decision anyone signed off.
+/// Whether the stored cursor belongs to a numbering the mailbox no longer uses. Only a known
+/// disagreement counts, or an upgrade would reset every mailbox. The reset does not backfill:
+/// new UIDs would re-propose all history. My call, not a signed-off ruling.
 fn mailbox_was_renumbered(stored: Option<u32>, observed: Option<u32>) -> bool {
     matches!((stored, observed), (Some(a), Some(b)) if a != b)
 }
@@ -247,17 +220,9 @@ async fn fetch(
         uid_validity,
     };
 
-    // Build UID range. On first run (no cursor), only fetch latest message
-    // so we don't backfill the entire mailbox accidentally.
-    // Two round trips: enumerate UIDs first, then fetch at most
-    // MAX_UIDS_PER_TICK bodies.
-    //
-    // The obvious cap — narrowing the range to `{last+1}:{last+N}` — is WRONG.
-    // IMAP UIDs are monotonic but not contiguous, so if the next real message sits
-    // beyond `last+N` the narrowed fetch returns nothing, `max_uid` never moves, and
-    // every later tick re-requests the same empty window forever. Enumerating first
-    // keeps the range open — only the *body* fetch is bounded — so the cursor always
-    // advances and a backlog simply drains over several ticks.
+    // Enumerate UIDs, then fetch at most MAX_UIDS_PER_TICK bodies. Never narrow the range to
+    // `{last+1}:{last+N}`: UIDs are not contiguous, so a gap past N stalls the cursor forever.
+    // Only the body fetch is bounded, and a backlog drains over ticks.
     let range = match upto {
         None => uid_range(cursor),
         Some(end) => match window_range(cursor, end) {

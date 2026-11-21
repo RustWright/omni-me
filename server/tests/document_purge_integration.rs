@@ -1,14 +1,8 @@
 //! `POST /documents/purge/preview` and `POST /documents/purge` end to end.
 //!
-//! The engine's unit tests prove what a purge does to a database. What they
-//! cannot prove is the route pair, and that is where the irreversible part lives:
-//! that a preview's ticket authorises exactly one confirm, that sparing a
-//! document really keeps its bytes, and that a blob nothing references any more
-//! leaves the disk the server is serving from.
-//!
-//! Every assertion here goes over a real socket against the production router,
-//! because the ticket lives in server state rather than in the engine — an
-//! in-process call to `purge::apply` cannot reach it.
+//! The irreversible part lives in the route pair: a ticket authorises exactly one confirm,
+//! a spared document keeps its bytes, and an unreferenced blob leaves the disk. Over a real
+//! socket, because the ticket lives in server state.
 
 mod common;
 

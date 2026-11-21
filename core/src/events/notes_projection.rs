@@ -11,14 +11,9 @@ use super::store::{Event, EventError};
 /// - `generic_notes`   keyed by `note_id` (ULID), with user-supplied `title`
 pub struct NotesProjection;
 
-// Which properties signal "day complete" is no longer a constant here — it is
-// whatever the journal's record type declares required, read per event rather than
-// cached on this struct. `RecordTypeProjection` is registered ahead of this one and
-// `ProjectionRunner` loops events outer / projections inner, so the table already
-// reflects every declaration at or before the event being applied. That is what
-// makes a replay reconstruct history instead of reinterpreting it through today's
-// shape; a cache would additionally have to be reset in `clear_tables`, or a
-// rebuild would start its replay holding the previous pass's declaration.
+// "Day complete" is whatever the record type declares required, read per event, never cached:
+// `RecordTypeProjection` runs first, so a replay sees each declaration as of its event and
+// reconstructs history rather than reinterpreting it.
 
 impl NotesProjection {
     pub const NAME: &'static str = "notes";
@@ -330,19 +325,9 @@ impl NotesProjection {
 
     /// Add text to the end of a note's body without restating the rest of it.
     ///
-    /// The only arm here that is not a plain overwrite, and the only one
-    /// that has to defend its own idempotency. Every other fold sets an
-    /// absolute value, so replaying it changes nothing for free. Concatenation
-    /// replayed is text duplicated — and replay is routine: `rebuild()` clears
-    /// first, but `catch_up()` re-applies into a live table whenever the
-    /// minimum watermark regresses, which is exactly what turning the Notes
-    /// feature off and on does.
-    ///
-    /// So the event id is recorded on the row and the fold skips an id it has
-    /// already seen. Do not replace this with a timestamp comparison: events
-    /// arrive from other devices whose clocks disagree, so a genuinely new
-    /// append can carry an older stamp than one already folded, and it would be
-    /// dropped in silence. Identity is skew-proof; time is not.
+    /// The one non-idempotent fold, since replayed concatenation duplicates text and `catch_up`
+    /// replays into live tables. So the row records applied event ids. Never compare timestamps
+    /// instead: device clocks disagree, and a real append could be dropped silently.
     async fn on_generic_appended(&self, event: &Event, db: &Database) -> Result<(), EventError> {
         let note_id = event.aggregate_id.clone();
         let added = event.payload["added_text"]
@@ -351,17 +336,9 @@ impl NotesProjection {
             .to_string();
         let ts = event.timestamp.to_rfc3339();
 
-        // Assignments in one SET clause are applied in order, so
-        // `applied_appends` has to be written *after* both clauses that read it.
-        // Moving it up makes every append a no-op on its own first application —
-        // and the note would silently never grow.
-        //
-        // `updated_at` is guarded too. Letting a skipped replay bump it would
-        // make replay change the answer, which is the invariant every projection
-        // here is built to hold, and it reorders anything sorted by recency.
-        //
-        // The separator is bound rather than written into the query so there is
-        // no question about how SurrealQL escapes it.
+        // SET applies in order, so `applied_appends` must come after both clauses reading it, or
+        // every append no-ops. `updated_at` is guarded too, so a skipped replay changes nothing.
+        // The separator is bound, never inlined, to avoid escaping questions.
         db.query(
             "UPSERT type::record('generic_notes', $note_id) SET
                 raw_text = IF $eid IN (applied_appends ?? []) { raw_text ?? '' }
@@ -429,36 +406,13 @@ impl NotesProjection {
     }
 }
 
-/// A journal entry is "complete" when every required property of its record
-/// type has a non-empty value in the YAML frontmatter at the top of the note.
-///
-/// An empty `required` list means `false`, not `true`. `[].iter().all()` is
-/// vacuously true, which would mark every entry complete the moment a record type
-/// declares no required properties — and `complete` is what `auto_close` acts on,
-/// so the whole back catalogue would close itself and go read-only. Nothing to fill
-/// in means nothing to finish, so this fails closed.
-///
-/// Fenced frontmatter is scanned in full. When the note opens with a `---`
-/// fence (what the journal template and the property panel always emit), every
-/// line up to the closing `---` counts as frontmatter. Blank lines, indented
-/// continuation lines, and block-list items (`tags:\n  - daily_note`) are
-/// skipped rather than terminating the scan — so key reordering, block-list
-/// values, and stray blank lines can't hide a later reflection key. This is
-/// the shape that previously broke auto-close (the template worked around it by
-/// keeping `tags` inline; imported Obsidian notes routinely use block lists).
-///
-/// Fence-less notes stay forgiving. For the mobile-entry shape with no
-/// leading `---`, the scan reads the leading run of `key: value` lines and
-/// stops at the first blank or non-kv line once a kv has been seen (that line
-/// is the body). Indented continuation lines still don't terminate it.
-///
-/// Duplicate-key semantics: YAML 1.2 says duplicate keys are undefined.
-/// We use "any-non-empty wins" via the running found-set — if a property key
-/// appears more than once and *any* occurrence has a non-empty value, the
-/// property counts as filled. This differs from Python yaml / Obsidian
-/// (last-wins) but is safe: duplicate keys essentially never occur via normal
-/// edits, and the rule favors the realistic "typed it once, added a blank line
-/// later" mistake mode.
+/// Complete when every required property of the record type has a non-empty frontmatter value.
+/// Fails closed on an empty `required` list: vacuously complete would auto-close the whole
+/// back catalogue read-only.
+/// - Fenced frontmatter is scanned to the closing `---`, skipping blanks, continuations and
+///   block-list items, so none can hide a later key.
+/// - Without a fence, the leading run of `key: value` lines is read, stopping at the body.
+/// - A duplicate key counts as filled if any occurrence is non-empty (unlike last-wins YAML).
 fn is_complete(raw_text: &str, required: &[&str]) -> bool {
     if required.is_empty() {
         return false;
@@ -590,14 +544,9 @@ mod tests {
 
     #[test]
     fn is_complete_recognizes_journal_template_when_filled() {
-        // Cross-crate parity regression (this broke once, 2026-04-24):
-        // the journal template (frontend/src/journal_template.rs) renders the
-        // frontmatter that *this* parser must accept once the user fills in the
-        // three reflection properties. If the template adds a YAML block-list
-        // line (e.g. `tags:\n  - daily_note`), this parser silently terminates
-        // before the properties are scanned, breaking auto-close.
-        // Lock the contract: the parser must accept a filled-in template render.
-        // If you change journal_template::render, update this fixture too.
+        // Cross-crate parity: this parser must accept a filled-in render of the frontend's
+        // `journal_template`, or auto-close breaks. If you change `journal_template::render`,
+        // update this fixture too.
         let filled = "---\n\
             date: 2026-04-25\n\
             tags: [daily_note]\n\

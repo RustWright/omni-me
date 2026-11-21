@@ -1,29 +1,6 @@
-//! `POST /statements/parse` — read a bank statement, deterministically.
-//!
-//! ## Why this is not `/documents/extract`
-//!
-//! The sibling route hands a document to an LLM and asks what it says. That is
-//! the right shape for a receipt, where the layout is whatever the shop's
-//! printer felt like. It is the wrong shape for a statement, because a
-//! statement states figures about itself — declared totals, transaction
-//! counts, opening and closing balances — and a parse can therefore be
-//! *checked* rather than trusted. A model cannot offer that check, and it is
-//! the only reason a bulk import of a few hundred rows is verifiable at all.
-//!
-//! So this route runs no model. It extracts layout-preserved text, parses by
-//! column position, and returns the rows together with everything it could
-//! not read and every check that failed. It does not write anything — the
-//! caller decides — but it does state whether the statement is fit to import,
-//! because that judgement belongs with the parser rather than being re-derived
-//! by each client from the raw fields.
-//!
-//! ## Why the password is a name, not a value
-//!
-//! Encrypted statements are common and every bank derives the password
-//! differently. Rather than teach the engine any of those rules, the request
-//! names a secret and the value is resolved from the credentials file's
-//! `secrets` map. The engine stays institution-agnostic and no password
-//! crosses the wire.
+//! `POST /statements/parse`: read a bank statement deterministically, with no model, because
+//! a statement's own totals let a parse be checked (`docs/src/archive.md` § "What ingest
+//! deliberately does not do"). The request names a secret, so no password crosses the wire.
 
 use axum::{
     Json, Router,

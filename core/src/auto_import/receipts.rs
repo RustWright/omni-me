@@ -1,30 +1,9 @@
 //! Generic receipt-email handler.
 //!
-//! Claims every message no handler ahead of it took, pulls the body text (and
-//! concatenates any text-extractable PDF attachments via pdftotext), and
-//! forwards the combined text to a `DocumentExtractor` with
-//! `ExtractionHint::EmailBody`.
-//!
-//! There is no sender filter, deliberately. Measured on 54 real messages, a
-//! hand-maintained sender list scored 82% recall to the classifier's 100%, and
-//! filtering nothing costs about ten cents a month: `docs/src/auto-import.md`.
-//!
-//! It is therefore a catch-all and belongs last in the dispatch list
-//! (`imap::poll_once` routes to the first handler that claims a message).
-//!
-//! Emits one `AutoImportBatchProposed` per message that carries a charge, built
-//! by `to_proposed_event` at the tail of `handle`. The dedup key is
-//! `<handler-name>-uid-<message-uid>`, so re-polling a mailbox cannot
-//! re-propose mail already seen. A charge-bearing message proposes even when it
-//! yielded no drafts; an empty `Vec` means the message carried no charge.
-//!
-//! A charge-bearing message carrying the vendor's own order number keys on the
-//! order instead, so the several mails about one purchase become one review
-//! item. Why the reference and not a header: `docs/src/auto-import.md`.
-//!
-//! Drafts land in the `pending` review inbox and are never auto-committed. See
-//! the HARD CONSTRAINT note in `handle` before changing that: the review step
-//! is the sole control between a crafted email and a fabricated ledger entry.
+//! The catch-all, last in dispatch: body text plus PDF attachment text to a `DocumentExtractor`.
+//! No sender filter on purpose (`docs/src/auto-import.md`). One proposal per charge-bearing
+//! message, keyed `<handler>-uid-<uid>`, or on the vendor's order number so one purchase is one
+//! item. Drafts are never auto-committed: read the constraint in `handle` before changing that.
 
 use async_trait::async_trait;
 use regex::Regex;
@@ -105,15 +84,9 @@ const PDFTOTEXT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60
 
 /// Whether an attachment is worth handing to pdftotext.
 ///
-/// Deliberately permissive, matching `archive::is_pdf` and the "no MIME gate"
-/// note on `document_fields::parser_fields`: senders mislabel PDFs often enough
-/// that trusting the declared type loses real documents. A rental invoice
-/// arrived as `application/octet-stream` with a `.pdf` name, and its 487 KB of
-/// line items — the only place the amount appeared — was never opened.
-///
-/// The extension arm adds no exposure: `content_type` is attacker-controlled
-/// too, so a crafted file could always reach poppler. What bounds that is
-/// [`MAX_PDF_BYTES`] and [`PDFTOTEXT_TIMEOUT`], not this test.
+/// Permissive, like `archive::is_pdf`: senders mislabel PDFs, and trusting the type lost real
+/// invoices. No added exposure, as `content_type` is attacker-controlled anyway; the bounds are
+/// [`MAX_PDF_BYTES`] and [`PDFTOTEXT_TIMEOUT`].
 fn looks_like_pdf(att: &MimeAttachment) -> bool {
     let declared = att.content_type.to_ascii_lowercase();
     if declared.starts_with("application/pdf") || declared.starts_with("application/x-pdf") {
@@ -210,14 +183,9 @@ fn charge_date(
 async fn pdftotext_bytes(pdf_bytes: &[u8]) -> Result<String, ImportError> {
     use std::io::Write;
 
-    // Refuse oversized attachments before poppler ever sees them.
-    //
-    // This is the least-trusted input in the system: an arbitrary PDF, from an
-    // unauthenticated email, reaching a large C++ parser as the server user
-    // with no sandbox, from any sender: `accepts()` takes every message, and
-    // `sender_auth` only labels the draft. A size cap does not
-    // make poppler safe, but it removes the cheapest attack (a compression bomb
-    // that OOM-kills the box) and costs nothing: real receipts are tiny.
+    // Refuse oversized attachments before poppler sees them: the least-trusted input in the
+    // system, any sender's PDF reaching a C++ parser unsandboxed. The cap stops the cheapest
+    // attack, a compression bomb, and real receipts are tiny.
     if pdf_bytes.len() > MAX_PDF_BYTES {
         return Err(ImportError::Parse(format!(
             "pdf attachment is {} bytes, over the {MAX_PDF_BYTES}-byte limit",
@@ -372,31 +340,11 @@ impl ImapHandler for ReceiptHandler {
             )]);
         }
 
-        // HARD CONSTRAINT — read before wiring any auto-commit path.
-        //
-        // `combined_text` is attacker-controlled twice over: the email body and
-        // the text lifted out of its PDF attachments, concatenated and sent to
-        // the extractor verbatim. Prompt injection can therefore make the LLM
-        // return amounts and an `account_hint` of the sender's choosing, which
-        // become drafts.
-        //
-        // That is acceptable ONLY because every draft lands in the `pending`
-        // review inbox and requires an explicit user commit. The review step is
-        // not a UX nicety here — it is the sole control standing between a
-        // crafted email and a fabricated transaction in the ledger. The planned
-        // LLM-primary interface will be tempted to auto-commit high-confidence
-        // drafts; doing so on this path, where any sender is accepted and
-        // `sender_auth` is a label rather than a gate, hands write access to
-        // anyone who knows the watched address.
-        // Nothing cross-checked email-sourced drafts before this: `verify` ran only on
-        // the manual upload route, so the unattended path had the weaker guarantee.
-        //
-        // Through `extract_reconciled` rather than `extract` + `verify` because this is
-        // the unattended path: nobody is watching to re-run a mail that came back
-        // unpriced, and one measured document returned no line items on half its runs
-        // against a total it stated correctly every time.
-        // The day it arrived where the user is: in UTC, evening mail west of
-        // Greenwich lands on tomorrow, which commit then refuses (L-W1).
+        // Never auto-commit drafts from this path. `combined_text` is the sender's, so prompt
+        // injection chooses the amounts and `account_hint`; the review inbox is the only control,
+        // and `sender_auth` is a label, not a gate. Auto-commit here gives any sender write access.
+        // `extract_reconciled`, not `extract`: nobody re-runs an unpriced mail on this path.
+        // Dated in the user's zone: UTC puts evening mail on tomorrow, which commit refuses.
         let zone = match &self.accounts {
             Some(db) => crate::events::load_shared(db)
                 .await
@@ -456,14 +404,8 @@ impl ImapHandler for ReceiptHandler {
             );
             return Ok(vec![]);
         }
-        // Backstop for mail whose kind is unknown — no label at all, or a word
-        // this build does not recognise. With nothing saying this is a charge
-        // and no money in it, there is nothing to review.
-        //
-        // Deliberately does NOT apply when the model called it a charge. A
-        // receipt whose amount failed to extract looks identical to a survey
-        // here, and dropping it would lose a real purchase silently, where
-        // letting it through costs one dismissal in a queue that exists anyway.
+        // Drop mail of unknown kind with no money in it. Never when the model said charge: an
+        // unpriced receipt looks like a survey here, and losing it costs more than one dismissal.
         let kind_is_unknown = result
             .kind()
             .is_none_or(|kind| matches!(kind, DocumentKind::Other));

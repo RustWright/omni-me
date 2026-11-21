@@ -1,14 +1,5 @@
-//! Auto-import observability + manual-trigger routes.
-//!
-//! `GET /auto_import/status` returns the full registry snapshot — used by the
-//! Settings panel to render per-source health badges.
-//!
-//! `POST /auto_import/tick` triggers an out-of-band tick for one source —
-//! used by the Settings "Fetch now" button.
-//!
-//! Both routes are unauthenticated, matching the rest of the server's MVP
-//! posture (per [[project-auth-deferred]] — sync endpoints have the same
-//! shape and the server only runs behind Tailscale).
+//! Auto-import routes: `GET /auto_import/status` (the registry snapshot behind Settings'
+//! health badges), `POST /auto_import/tick` ("Fetch now"), and source CRUD and pause.
 
 use axum::{
     Json, Router,
@@ -121,12 +112,8 @@ async fn tick_handler(
 
 /// Log the real failure, return a generic one.
 ///
-/// `ImportError`'s Display carries whatever the failing layer produced —
-/// including a subprocess helper's raw stderr (python tracebacks and all)
-/// and `io::Error` strings with absolute box paths. Handing that to the caller
-/// is free reconnaissance: the box's directory layout, which helpers exist, and
-/// what they are written in. The operator still gets the full detail, in the
-/// place operators look.
+/// `ImportError`'s text can hold a helper's raw stderr and absolute box paths, which would
+/// hand the caller the box's layout. The operator gets the detail in the log.
 fn upstream_err(
     op: &str,
     source: &str,
@@ -225,16 +212,9 @@ async fn reset_cursor_handler(
     }
 }
 
-// =============================================================================
-// Source-definition CRUD (3.7) — persist + apply live
-// =============================================================================
-//
-// These persist to the server-side `sources.toml` AND mutate the running
-// registry: add/edit builds the source and (re)spawns it, remove aborts its
-// task — the change takes effect immediately, no restart. Single-user-behind-
-// Tailscale posture means the load-modify-save is unguarded against concurrent
-// writers (acceptable per [[project-auth-deferred]]); `config::save` is itself
-// atomic (temp + rename).
+// Source-definition CRUD: each change is saved to `sources.toml` and applied to the running
+// registry at once. The load-modify-save is unguarded against concurrent writers (one user);
+// `config::save` itself is atomic.
 
 /// The live change succeeded and the durable one did not, so the two stores
 /// disagree until the next restart. Said explicitly because `/auto_import/status`
@@ -356,14 +336,9 @@ fn clear_persisted_pause(name: &str) {
     }
 }
 
-/// `POST /auto_import/sources/{name}/pause` — live-abort the source's scheduler
-/// task (keeping its config) and persist the pause. 404 if no source by that
-/// name is running/registered. The persist is a hard requirement, not
-/// best-effort: a pause that silently didn't survive a restart is exactly the
-/// runaway-source failure mode #367 exists to prevent, so a persistence failure
-/// is surfaced as a 500 (the in-memory abort is harmless on its own). That 500
-/// says the two stores diverged, because `/auto_import/status` reads the live
-/// registry and will show the pause regardless.
+/// `POST /auto_import/sources/{name}/pause`: abort the source's task, keep its config, and
+/// persist the pause; 404 for an unknown name. A failed persist is a 500, never best-effort:
+/// a pause lost on restart re-arms a runaway source, and `/status` would still show it paused.
 async fn pause_source_handler(
     State(state): State<AppState>,
     Path(name): Path<String>,

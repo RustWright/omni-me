@@ -114,26 +114,16 @@ pub fn home_tab(features: &types::Features) -> Tab {
 
 /// A page asking the shell to switch tabs.
 ///
-/// Exists because a page owns its own views and nothing above them: the
-/// assistant's reminder row names a queue reviewed on *another* tab, and
-/// `active_tab` lives in [`App`]. Threading an `on_switch` handler down through
-/// every page to serve one caller is the alternative, and it puts a nav prop on
-/// pages that never navigate.
-///
-/// A request, not a command. [`App`] refuses one for a tab this launch is
-/// not rendering, the same way the share intent already does — a page can be
-/// holding a destination that a feature toggle removed.
+/// A context rather than an `on_switch` prop through every page, since `active_tab` lives in
+/// [`App`]. A request, not a command: [`App`] refuses a tab this launch is not rendering,
+/// because a feature toggle may have removed it.
 #[derive(Clone, Copy)]
 pub struct NavRequest(pub Signal<Option<NavTarget>>);
 
 /// Where inside a tab a caller wants to land.
 ///
-/// A tab alone is not a destination. Switching to Finances mounts its
-/// Overview and switching to Archive mounts an unfiltered list, so a reminder
-/// row saying "12 items waiting" used to leave the user on a screen that shows
-/// neither the 12 items nor a way to find them. Typed rather than a string key:
-/// a mistyped key would route to the tab root and look exactly like the bug it
-/// replaced.
+/// A tab alone is not a destination: "12 items waiting" must land on the 12 items, not the
+/// tab's root. Typed, because a mistyped string key would silently route to the root.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum NavIntent {
     /// Finances: draw attention to the review inbox card.
@@ -188,15 +178,9 @@ pub fn request_nav(target: NavTarget) {
     }
 }
 
-/// Bridges each page's in-app nav into the app-wide hardware/gesture-back
-/// handling (#372). The Android `MainActivity` dispatches an `omni:back` DOM
-/// event on a back press; the root ([`App`]) decides what "back" pops in this
-/// order — open drawer → the active page's own drill-down → non-home tab → (at
-/// home root) let the OS background the app. Pages don't know about any of that:
-/// they just call [`use_page_back`] to report how deep they are and to receive a
-/// "pop one level" pulse.
-///
-/// Provided once at the root; the active page reads it via [`use_page_back`].
+/// Hardware back (`omni:back` from MainActivity), resolved by [`App`] in order: drawer, the
+/// page's drill-down, the home tab, then the OS. Pages only report their depth and take a pop
+/// pulse, through [`use_page_back`].
 #[derive(Clone, Copy)]
 pub struct BackNav {
     /// In-page levels the active page can still pop (0 = at its own root). The
@@ -219,14 +203,9 @@ pub fn use_overlay_back() -> Signal<bool> {
 
 /// Wire a page's in-app nav into hardware/gesture-back handling (#372).
 ///
-/// `depth` returns the page's current poppable depth (0 = at its root) — it
-/// reads the page's own `view` signal, so this stays reactive and the published
-/// `can-go-back` flag tracks every drill-down. `on_pop` pops exactly one level
-/// and runs in the page's scope (safe to mutate the page's view signals), fired
-/// once per hardware-back while `depth() > 0`.
-///
-/// Pages with no drill-down simply don't call this (their depth stays 0, so a
-/// back press falls through to the tab/app-background behavior at the root).
+/// `depth` reads the page's view signal (0 at its root), so `can-go-back` stays reactive.
+/// `on_pop` pops one level in the page's scope, once per back press while `depth() > 0`.
+/// A page with no drill-down does not call this.
 pub fn use_page_back(depth: impl Fn() -> u32 + Copy + 'static, on_pop: impl FnMut() + 'static) {
     let nav = use_context::<BackNav>();
     let mut page_depth = nav.page_depth;
@@ -251,19 +230,9 @@ pub fn use_page_back(depth: impl Fn() -> u32 + Copy + 'static, on_pop: impl FnMu
 
 /// Boot-time readiness gate sitting behind the splash (`components::splash`).
 ///
-/// The app used to mount at `Tab::Journal` and paint it immediately, then switch
-/// to the restored tab once the continuity store's disk snapshot arrived. So
-/// every cold open showed the *wrong* page building — a half-built CodeMirror
-/// editor — before correcting, and the wait was paid twice: watch one page
-/// initialize, then watch the right one. Now no page mounts until the restored
-/// tab is known, and the splash covers the gap.
-///
-/// Pages extend that cover with [`use_boot_hold`]: a page that is mounted but
-/// still showing its own loader holds the splash down until it has real content.
-///
-/// Holds are one-shot. Once the splash lifts, `armed` goes false, every
-/// outstanding hold releases and no new one is taken — so a later tab switch can
-/// never bring the splash back mid-session.
+/// No page mounts until the restored tab is known, so a cold open never paints the wrong page
+/// first. Pages extend the cover with [`use_boot_hold`]. Holds are one-shot: once the splash
+/// lifts, all release and none are taken, so a tab switch never brings it back.
 #[derive(Clone, Copy)]
 pub struct BootGate {
     /// Outstanding holds. The splash waits for this to reach 0.
@@ -274,14 +243,8 @@ pub struct BootGate {
 
 /// Hold the boot splash down until `ready()` returns true.
 ///
-/// Call near the top of a page whose first paint would otherwise be a loader or
-/// a half-built control. `ready` is read reactively, so it re-evaluates as the
-/// page's signals change.
-///
-/// No-op once the splash has lifted, so it costs nothing after boot. A holder
-/// that unmounts without ever becoming ready cannot strand the splash either:
-/// the wall-clock deadline in [`App`] lifts it regardless, and disarming
-/// releases every hold.
+/// For a page whose first paint would be a loader; `ready` is reactive. A no-op after boot,
+/// and a holder that never becomes ready cannot strand the splash: [`App`]'s deadline lifts it.
 pub fn use_boot_hold(ready: impl Fn() -> bool + Copy + 'static) {
     let gate = use_context::<BootGate>();
     let mut pending = gate.pending;
@@ -306,20 +269,9 @@ pub fn use_boot_hold(ready: impl Fn() -> bool + Copy + 'static) {
         }
     });
 
-    // Release the hold if this caller is unmounted while still holding.
-    //
-    // The effect above only runs while mounted, so without this a page that
-    // mounts holding and is then swapped out leaves `pending` stuck above zero
-    // — and the lift loop in [`App`] waits out the whole wall-clock deadline
-    // instead of the real readiness signal.
-    //
-    // That is not hypothetical, and it is not rare: the render gate opens on
-    // `is_loaded()`, but `active_tab` is restored by a *separate* future one
-    // 20ms poll later, so every boot onto a non-default tab mounts the default
-    // page (Journal) for a frame first. Journal is the one page that takes a
-    // hold, so restoring to Notes/Routines/Finances/Settings leaked one every
-    // time — measured on-device as a 6.3s splash on those four tabs versus
-    // 0.3s on Journal, until this drop was added.
+    // Release the hold on unmount, or `pending` sticks and the splash waits out its deadline.
+    // Every boot onto a non-default tab mounts Journal for a frame first, so this is the
+    // common case, not an edge.
     use_drop(move || {
         if *holding.peek() {
             *pending.write() -= 1;
@@ -330,15 +282,9 @@ pub fn use_boot_hold(ready: impl Fn() -> bool + Copy + 'static) {
 /// How many inbound events the background puller is currently projecting, for
 /// the sync chip to report. `0` = nothing in flight.
 ///
-/// The push-side `StatusReporter` (`core::sync::status`) cannot cover this: it
-/// watches pushes and retries, so it sits at `Idle` — chip reading "Synced" —
-/// while a large inbound backfill projects. On a fresh or just-wiped device that
-/// backfill *is* the app appearing, and showing nothing while it runs makes a
-/// working app look broken. That's the path the user's personal phone takes at
-/// handover, which is the one first impression that isn't disposable.
-///
-/// Fed by `sync:restoring`, which the backend emits *before* projecting a batch
-/// (`core::sync::puller::PullEvent::Applying`) and again with 0 once it's done.
+/// `StatusReporter` watches pushes only, so it reads "Synced" during an inbound backfill,
+/// which on a fresh device is the app appearing. Fed by `sync:restoring`, emitted before a
+/// batch projects and with 0 after.
 #[derive(Clone, Copy)]
 pub struct RestoreProgress(pub Signal<u64>);
 
@@ -368,12 +314,8 @@ const EDGE_SWIPE_CLOSE_PX: f64 = 48.0;
 /// Quiet period after a header toggle during which scrolling cannot toggle it
 /// again. Must exceed the header's 300ms CSS transition.
 ///
-/// Toggling animates the header's height, and every frame of that animation
-/// reflows the scroll column and fires `onscroll`. The direction logic reads
-/// those synthetic events as real scrolling and toggles again — the header
-/// drives its own next toggle. The existing `< 150` scroll-range guard only
-/// covers barely-scrollable pages; on a long note the loop still ran, and the
-/// soft keyboard (which resizes the column via `.pb-mobile-nav`) kicked it off.
+/// The toggle's animation reflows the column and fires `onscroll`, which the direction logic
+/// reads as scrolling, so without this the header drives its own next toggle.
 const HEADER_TOGGLE_COOLDOWN_MS: i64 = 400;
 
 /// Scroll distance required to toggle the header. Raised from 6px: the reflow
@@ -406,14 +348,9 @@ fn main() {
 
 #[component]
 fn App() -> Element {
-    // Which features this launch is running. Provided here, before anything that
-    // decides what to draw; the value arrives later, from the one `get_config`
-    // this component makes. Seeded to `Tab::Journal` and corrected once the set
-    // resolves — the render gate below holds the nav until then, so a hidden tab
-    // is never briefly drawn.
-    // The only provider. A second call further down once shadowed this one: the
-    // config read filled the second, the tab restore and share intake waited on
-    // this one forever, and every launch opened on Journal for 3½ weeks.
+    // Which features this launch runs, provided before anything decides what to draw; the
+    // render gate holds the nav until it resolves. The only provider: a second one further
+    // down once shadowed it, and every launch opened on Journal.
     let mut feature_set = features::use_features_provider();
     // Not a hook, so it is safe to call inside an effect or an event closure.
     // Reading the signal is what makes those callers reactive.
@@ -511,21 +448,9 @@ fn App() -> Element {
     let mut splash_fading = use_signal(|| false);
     let mut splash_mounted = use_signal(|| true);
 
-    // Start the ~1 MB CodeMirror bundle downloading at app mount, before any
-    // page exists.
-    //
-    // This is load-bearing for the render gate above, not an optimization. The
-    // bundle used to be injected by the `Editor` component on mount, which under
-    // the old always-paint-Journal-first behavior meant it parsed *in parallel*
-    // with the continuity store's boot read. Gating the mount would have made
-    // those two costs serial — the boot read, and only then a cold bundle parse
-    // that `ensure_editor_bundle` documents as capable of exceeding 5s — so the
-    // splash would have covered a *longer* wait than the half-built editor it
-    // replaced. Warming here restores the overlap.
-    //
-    // Fire-and-forget: `ensure_editor_bundle` dedupes by script `src`, so the
-    // Editor's own call later finds the script present and usually finds
-    // `createEditor` already defined.
+    // Warm the ~1 MB CodeMirror bundle at mount. Load-bearing for the render gate: without it
+    // the boot read and a cold bundle parse run in series behind the splash.
+    // `ensure_editor_bundle` dedupes by `src`, so the Editor's own call finds it loaded.
     use_future(|| async move {
         components::editor::ensure_editor_bundle().await;
     });
@@ -653,15 +578,9 @@ fn App() -> Element {
 
     use_hook(keyboard::install);
 
-    // Hardware/gesture-back handler (#372). The Android `MainActivity`
-    // dispatches an `omni:back` DOM event on a back press; we drain it here (same
-    // channel→spawn pattern as `sync:applied` above — the JS callback fires
-    // outside any Dioxus scope, so it only nudges a channel and the in-scope
-    // drain does the signal writes). Precedence: close the drawer → pop the
-    // active page's drill-down → return to the home tab → (nothing left) let the
-    // OS background the app. That last case never reaches here: `MainActivity`
-    // only dispatches `omni:back` when `window.__omniCanGoBack` is true, which
-    // the effect below keeps false at the home root.
+    // Hardware back, drained through a channel because the JS callback runs outside any Dioxus
+    // scope. Precedence as on [`BackNav`]. The OS case never arrives: MainActivity dispatches
+    // only while `window.__omniCanGoBack` is true, which the effect below keeps false at home.
     use_hook(move || {
         let (tx, mut rx) = futures::channel::mpsc::unbounded::<()>();
         bridge::listen_window_event("omni:back", move || {
@@ -866,23 +785,9 @@ fn App() -> Element {
         bridge::on_os_theme_change(move || bridge::apply_theme(&theme_signal.peek()));
     });
 
-    // Timezone: default to UTC, load from backend on mount.
-    //
-    // RETRIED, and the retry is load-bearing — not defensive padding. This fires
-    // in the cold-open window where Android silently DROPS invokes issued before
-    // the native IPC handler is ready (see `bridge::invoke_timed`). A dropped
-    // invoke's promise never settles, so the old plain-`invoke` version parked
-    // this future forever and left `tz_signal` at `Tz::UTC` for the entire
-    // session. Every `UserDate::today` then resolved to the UTC date: at 23:42
-    // CDT the phone showed "Today 2026-08-31" while desktop correctly showed
-    // 2026-08-30, so evening entries were filed under *tomorrow* — wrong `date:`
-    // in frontmatter, wrong calendar cell, and divergence from the same day's
-    // entry on desktop (found on-device 2026-08-31).
-    //
-    // Same shape as the continuity boot loop: bound each attempt, retry, and cap
-    // the whole thing so a genuinely broken backend degrades to UTC rather than
-    // spinning. Journal's re-anchor effect (`journal.rs`) picks the correct date
-    // up as soon as this lands.
+    // Timezone, UTC until loaded. The retry is load-bearing: a dropped boot invoke
+    // (`bridge::invoke_timed`) left the session on UTC and filed evening entries under
+    // tomorrow. Bounded and capped, so a broken backend degrades to UTC; `journal.rs` re-anchors.
     let mut tz_signal = use_signal(|| Tz::UTC);
     use_context_provider(|| tz_signal);
     use_future(move || async move {
@@ -1126,18 +1031,9 @@ fn App() -> Element {
                         }
                         last_scroll_top.set(cur);
                     },
-                    // Render gate (see `BootGate`): nothing mounts until the
-                    // restored tab is known, so first paint is already the tab
-                    // the user closed on rather than Journal-then-correct. The
-                    // `!armed` arm is the fail-open — if the boot read never
-                    // finishes, the deadline disarms the gate and the app
-                    // appears anyway (on its default tab) instead of staying
-                    // blank behind a lifted splash.
-                    // The feature set joins the same gate: a page drawn before it
-                    // resolves could be one whose feature is off, and correcting
-                    // it afterwards means a tab that appears and then vanishes.
-                    // `!armed` still fails open, so an unresolvable read shows the
-                    // app (everything on) rather than nothing.
+                    // Render gate (`BootGate`): wait for the restored tab and the feature set, so
+                    // no wrong tab paints and no off feature's tab flashes. `!armed` fails open:
+                    // past the deadline the app appears on defaults rather than staying blank.
                     if (continuity_store.is_loaded() && features::features_ready())
                         || !*boot_armed.read()
                     {
@@ -1327,5 +1223,20 @@ mod tab_visibility_tests {
         let stored = Tab::from_key("finances").expect("known key");
         assert!(!stored.visible(&features));
         assert_eq!(home_tab(&features).as_key(), "journal");
+    }
+
+    /// Core's twin is `every_tab_a_notification_names_is_listed`; both read one fixture.
+    #[test]
+    fn every_tab_a_notification_names_opens_a_tab() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/notification_tabs.json");
+        let raw = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+        let fixture: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        for tab in fixture["tabs"].as_array().unwrap() {
+            let key = tab.as_str().unwrap();
+            let parsed = Tab::from_key(key).unwrap_or_else(|| panic!("no tab named {key}"));
+            assert_eq!(parsed.as_key(), key);
+        }
     }
 }

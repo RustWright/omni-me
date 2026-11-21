@@ -1,25 +1,8 @@
 //! SurrealDB projection over auto-import batch events.
 //!
-//! One read-optimized table: `pending_auto_import_batches`. The UI lists
-//! `status = "pending"` rows; `committed` and `dismissed` are kept for audit
-//! / debugging.
-//!
-//! Idempotency: record id is derived from `format!("{source}-{dedup_key}")`
-//! so duplicate `Proposed` events (e.g., the IMAP poller re-fetches the same
-//! message UID) UPSERT into the same row instead of producing a second
-//! pending entry. This is what makes the "user dismissed a batch — don't
-//! re-propose on the next IMAP tick" behavior work for free: the second
-//! Proposed event's UPSERT runs, but the existing row has status="dismissed",
-//! which we preserve (UPSERT does NOT downgrade `dismissed` back to
-//! `pending` — see `on_proposed` below).
-//!
-//! `Committed` and `Dismissed` events update by `batch_id` field (not record
-//! id, since the record id is source+dedup_key). An index on `batch_id`
-//! keeps that lookup fast.
-//!
-//! Grouping: a vendor's several emails about one order share a dedup key and so
-//! land on one row, the newest winning. Rationale, and what a revision does to a
-//! resolved batch, in `docs/src/auto-import.md`.
+//! `pending_auto_import_batches`, keyed `{source}-{dedup_key}`, so a re-fetched message UPSERTs
+//! its own row and a dismissed batch stays dismissed (`on_proposed`). Resolves find rows by the
+//! indexed `batch_id`. One order's emails share a key, newest winning: `docs/src/auto-import.md`.
 
 use async_trait::async_trait;
 
@@ -257,15 +240,9 @@ impl AutoImportProjection {
             match read_row(db, &base_rid).await? {
                 None => (base_rid.clone(), None, Vec::new(), Vec::new()),
                 Some(base) if base.is_resolved() => {
-                    // A re-emit of data the row already covers — the same message
-                    // fetched again, or a source that does not group at all. This
-                    // is the original dedup, and it stays a no-op: the dismissed
-                    // batch stays dismissed, the committed one stays committed.
-                    //
-                    // A row with no members at all was written before grouping
-                    // existed, so it cannot say whether this message is new. It
-                    // keeps the old behaviour, which is also what lets this ship
-                    // without forcing a projection rebuild on every device.
+                    // A re-emit of data the row covers is a no-op, so resolved stays
+                    // resolved. A row with no members predates grouping and keeps the old
+                    // behaviour, sparing every device a rebuild.
                     if member.is_none()
                         || base.group_members.is_empty()
                         || base.holds_member(member.as_ref())
@@ -368,22 +345,9 @@ impl AutoImportProjection {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        // Two writes, because the pending row is keyed on `source-dedup_key`
-        // while a resolve event carries only `batch_id` — there is no record id
-        // to UPSERT against, which is why this was a field-scan `UPDATE`.
-        //
-        // The scan silently matched nothing on any device that never
-        // materialized the `Proposed` row (skipped by `apply_events_resilient`,
-        // or simply not pulled yet). The batch then sat at `pending` there
-        // forever, and `commit_batch`'s only gate is `row.status != "pending"`
-        // (`commands/auto_import.rs:356`) — so it could be committed a second
-        // time, minting fresh ULID-keyed `TransactionRecorded` events with no
-        // content dedup behind them.
-        //
-        // So also write a resolution stub keyed on `batch_id`, which
-        // `on_proposed` consults: a late-arriving proposal for an
-        // already-resolved batch is then dropped instead of resurrecting it as
-        // pending.
+        // Two writes. A resolve carries only `batch_id`, so the field-scan `UPDATE` matches nothing
+        // where the proposal has not arrived, and the batch could be committed twice. The stub
+        // keyed on `batch_id` lets `on_proposed` drop a late proposal for a resolved batch.
         db.query(
             "UPDATE pending_auto_import_batches SET
                 status = $status,
@@ -449,13 +413,8 @@ mod tests {
     /// A resolve that arrives before its proposal must not leave the batch
     /// re-openable.
     ///
-    /// Absence test for a double-spend. The pending row is keyed on
-    /// `source-dedup_key` while a resolve event carries only `batch_id`, so
-    /// `on_resolved` was a field-scan `UPDATE` — which silently matched nothing
-    /// on a device that had not materialized the proposal yet. The batch stayed
-    /// `pending` there, and `commit_batch`'s only gate is
-    /// `row.status != "pending"`, so committing again minted a second set of
-    /// ULID-keyed `TransactionRecorded` events with no content dedup behind them.
+    /// Pins the double-spend: without the stub, a batch resolved before its proposal arrived stayed
+    /// `pending`, and committing again minted a second set of transactions.
     #[tokio::test]
     async fn resolve_before_propose_blocks_the_late_proposal() {
         let (db, store, runner) = test_db_and_runner().await;

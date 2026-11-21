@@ -88,12 +88,8 @@ pub fn printed_in(key: &str, text: &str) -> bool {
 
 /// The group key the document states about itself, if it states one.
 ///
-/// Prefer this over the model's `order_ref`. Extraction is not deterministic:
-/// the same message came back with a different reference on two polls, and a
-/// key that moves mints a second review item for one email.
-///
-/// First match wins, and matches that normalise to nothing are skipped rather
-/// than ending the search, so a false label cannot shadow the real reference.
+/// Prefer this over the model's `order_ref`, which can differ between polls of one message.
+/// First match wins; matches normalising to nothing are skipped, so a false label cannot shadow.
 pub fn from_document(text: &str) -> Option<String> {
     LABELLED_REF
         .captures_iter(text)

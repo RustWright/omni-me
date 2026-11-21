@@ -1,11 +1,8 @@
 //! `--bench-review`: seat B on its own job, the scheduled belief review.
 //!
-//! Seat B was chosen on seat A's retrieval cases, and its real work is one
-//! question a day: re-examine the beliefs now due, retire what no longer holds,
-//! keep what does, and conclude nothing new. This runs that question, with the
-//! configured check-in prompt, against beliefs seeded by
-//! `scripts/seed-bench-hub.py --with-beliefs`, and scores what it proposes.
-//! Why each key is ranked where it is: `MODEL_BENCH.md` Part 10.
+//! Runs the daily review question (retire what no longer holds, keep the rest, conclude nothing
+//! new) against beliefs from `scripts/seed-bench-hub.py --with-beliefs`, and scores the
+//! proposals. Ranking rationale: `MODEL_BENCH.md` Part 10.
 
 use std::collections::BTreeSet;
 

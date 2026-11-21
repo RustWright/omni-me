@@ -1078,6 +1078,66 @@ force and § Notifications, `docs/src/{assistant,agents,invariants,archive}.md`,
 cited in §5; the seven `.omni/tasks.toml` indexes (measured 2026-11-16); session renders under
 `productive_learning/logs/omni-me/`.
 
+
+---
+
+## Appendix B — checked after [0102] for the planning build (2026-11-19)
+
+[P] = read in the official docs this date; [I] = my inference; "not stated" means the page is
+silent, not that the answer is no.
+
+**Calendar refresh (ruling 113)**, Google's sync and push guides:
+- [P] Incremental sync: store `nextSyncToken` (present on the last page of a full sync), then
+  `events.list` with `syncToken`; page through `pageToken` until a new `nextSyncToken` arrives.
+  Every request in the chain uses the same query parameters.
+- [P] A `410` means the token is invalid ("token expiration or changes in related ACLs"): wipe the
+  synced copy and do a full sync. Plans are omni-me records, so a full calendar resync never
+  touches them [I].
+- [P] Results "always contain deleted entries"; how they are marked (likely `status: cancelled`)
+  is not stated on the guide: check the Event reference at build.
+- [P] Most filters are disallowed with `syncToken` (a 400); the guide's sample limits only the
+  full sync with `timeMin`. The exact list is on the `events.list` reference, unread.
+- [P] An empty change set is implied (sample: empty `items` plus a new token), not stated.
+- [P] Push needs an HTTPS address with a valid certificate, carries no change details, must be
+  renewed by hand before expiry, and is "not 100% reliable", so polling stays as the fallback
+  anyway. This confirms 113's choice of polling alone [I].
+
+**Reminder actions (the timer's Start, ruling 93)**, `tauri-plugin-notification` 2.8.1 docs:
+- [P] Action buttons are "only available on mobile platforms": `registerActionTypes`, then
+  `action_type_id` on the notification, taps reported to `onAction` / `Notification::on_action`.
+  Without a registered listener "the actions of the notification are not shown".
+- [P] Android extras that fit a running timer: `ongoing` (cannot be dismissed) and
+  `uses_chronometer` (a live counter in the notification), both Android only.
+- Not stated: whether a scheduled (`Schedule::At`) notification can carry an action type, and
+  whether a tap reaches the app when it was killed. Both are [0104]'s to test on his phone.
+- The stack is held below tauri 2.12, so [0104] may run an older plugin than these docs [P,
+  `tasks.md` [0104]]; recheck its API before relying on any of the above.
+
+**[0104] results (2026-11-20)**: plugin 2.4.0, the last on tauri ^2.10, on the S9 (Android 10),
+driven over DevTools from branch `spike/0104-notifications`. [T] = tested on the phone, [S] =
+read in the 2.4.0 or tauri 2.10.3 source.
+- [T] A `Schedule::At` reminder with `allowWhileIdle` fires with the app killed (swiped, not
+  force-stopped): Android starts the process for the broadcast and posts it 4 ms after the time.
+- [T] A force-stop (Settings, or a battery "sleeping apps" list) cancels every scheduled reminder;
+  none fires. [S] The plugin reschedules only on boot, so the app must reschedule upcoming block
+  reminders on every start, which also covers reboots.
+- [S] On Android 12+ without the exact-alarm permission the plugin falls back to an inexact alarm,
+  and it declares no such permission: the app must declare `USE_EXACT_ALARM` or
+  `SCHEDULE_EXACT_ALARM`. His daily phone is Android 15 (his answer), and from Android 14
+  `SCHEDULE_EXACT_ALARM` is denied by default for apps targeting 13+ (Android 14 behaviour
+  changes, "Schedule exact alarms"). So declare `USE_EXACT_ALARM`, granted at install for
+  reminder apps; its Play restriction does not apply to an APK-installed app. Untested on a
+  phone: the S9 cannot show it.
+- [T] An action button shows on a scheduled reminder. With the app alive, a tap reaches the
+  `onAction` listener. [T][S] With the app killed, the tap cold-starts it, but the plugin fires
+  the event in `load()`, before any listener exists, and tauri's `Plugin.trigger` drops it.
+- [T][S] The action payload is only `{actionId}`: 2.4.0 never sets `sourceJson`, so it never says
+  which notification was tapped. Encode the block in the action id (`start:<block>`, one action
+  type per block).
+- Consequence for ruling 93's Start on the block reminder: the plugin delivers it only while the
+  app is alive. His call (2026-11-20): MainActivity reads the launch intent's extras itself and
+  hands the Start over the way `commands::deep_link` hands over a tab, so it works either way.
+
 ---
 
 ## Appendix A — his answers, as recorded (2026-11-16, idea 7b added 2026-11-18)

@@ -1,33 +1,10 @@
-//! Client-side split/serialize of a journal note's frontmatter into typed
-//! properties + body — the data model behind the journal properties panel.
-//!
-//! The frontend crate has no `core` dependency and no YAML library, so this
-//! is a small, forgiving, hand-rolled parser/serializer. It types two universal
-//! keys (`date`, `tags`) plus whichever keys the record type declares — passed
-//! in, never compiled in; everything else in the frontmatter is preserved
-//! verbatim as `legacy_raw` (the panel's raw escape hatch) so imported Obsidian
-//! notes round-trip.
-//!
-//! Serialization is safe by construction: its output is a strict subset of
-//! what `core::import::parse_markdown` and
-//! `core::events::notes_projection::is_complete` accept —
-//!   * `tags` are always inline (`[a, b]`), never a YAML block list, so
-//!     `is_complete`'s single-pass scan never terminates early;
-//!   * an empty declared property serializes to a bare `key:` (empty value → not
-//!     complete), a non-empty one to `key: "…"` double-quoted on a single
-//!     physical line (non-empty value → complete, and valid YAML);
-//!   * declared properties are emitted *before* any legacy block, so a legacy
-//!     block-list property can never stop the `is_complete` scan before the
-//!     declared keys are seen.
-//!
-//! Those three now have to hold for user-declared keys, not just for three
-//! known ones. What keeps them holding is that `core::record_type::RecordType::validate`
-//! rejects a key that could break the scan (spaces, colons, newlines, a leading
-//! `-` or `#`, or one of the reserved names) before the declaration is ever
-//! stored — so a key reaching this file is already scan-safe.
-//!
-//! Keep those invariants in step with `core/src/events/notes_projection.rs`
-//! (`is_complete`) and `core/src/import.rs` (`parse_markdown`).
+//! Split a journal note into typed properties and body, and back, for the properties panel.
+//! Hand-rolled (no `core`, no YAML crate). Types `date`, `tags` and the declared keys; the rest
+//! is kept verbatim as `legacy_raw`, so imported notes round-trip. Output must stay a subset of
+//! what `parse_markdown` and `is_complete` accept:
+//! - `tags` always inline, never a block list, or `is_complete`'s scan stops early;
+//! - an empty property is a bare `key:`, a filled one `key: "…"` on one line;
+//! - declared keys come before any legacy block (`RecordType::validate` keeps them scan-safe).
 
 /// Typed view of a journal entry's frontmatter. `legacy_raw` holds every
 /// frontmatter line that isn't one of the known keys, verbatim (no fences).
@@ -53,15 +30,9 @@ pub struct JournalProps {
 
 /// Split a full journal note (`content`) into typed properties + body.
 ///
-/// Forgiving, mirroring the intent of `core::import::split_frontmatter_and_body`:
-/// requires a leading `---` fence line and a matching closing `---` line to have
-/// any frontmatter; otherwise the whole input is the body and props are default.
-/// The body is returned byte-exactly (everything after the closing fence line).
-///
-/// `declared` is the record type's property keys in declaration order. They are
-/// seeded into `props.entries` before parsing, so the returned entries are
-/// always the declaration — every declared key present exactly once, in order —
-/// regardless of what order (or whether) the file listed them.
+/// Forgiving, like `core::import::split_frontmatter_and_body`: without both `---` fences it is
+/// all body. The body is byte-exact. `declared` keys are seeded first, so every one appears
+/// exactly once, in declaration order, whatever the file listed.
 pub fn split_journal(raw: &str, declared: &[&str]) -> (JournalProps, String) {
     let mut props = JournalProps {
         entries: declared

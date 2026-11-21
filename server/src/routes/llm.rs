@@ -1,18 +1,6 @@
-//! LLM endpoint config route — read-only.
-//!
-//! `GET /llm/config` reports the current `[llm]` selection WITHOUT the secret
-//! key (a `has_key` bool stands in for it), so a client can answer "is a model
-//! wired, and which one".
-//!
-//! There is deliberately no write route. A `PUT` existed and wrote the
-//! `[llm]` section — including an API key — into `credentials.toml` over an
-//! endpoint with the same unauthenticated posture as the rest of the server
-//! (behind Tailscale, per [[project-auth-deferred]]). It was removed with the
-//! settings form that called it: which endpoint the engine talks to is
-//! deployment configuration, it is restart-to-apply rather than live, and model
-//! selection is becoming per-role and benchmark-driven, so a single
-//! user-editable `model` field would soon have no well-defined meaning. Edit
-//! `credentials.toml` on the host instead.
+//! `GET /llm/config`: the current `[llm]` selection, with `has_key` in place of the key.
+//! No write route on purpose: the endpoint is deployment config, restart-to-apply, and set
+//! per role; edit `credentials.toml` on the host.
 
 use axum::{Json, Router, http::StatusCode, routing::get};
 use serde::Serialize;

@@ -3,16 +3,9 @@
 
 /// Words dropped before a question reaches the full-text index.
 ///
-/// Conservative on purpose, and the asymmetry is the reason. A stopword
-/// missed from this list costs tally precision; a *content* word wrongly added to
-/// it costs recall, silently and forever. So near-misses stay out: `may` and
-/// `march` are months, `can` and `will` are nouns, `mind` and `back` are verbs.
-///
-/// This list is not a search-quality knob. BM25's IDF already scores a
-/// match on `the` near zero, so leaving one in barely moves the ranking. What it
-/// moves is `TypeResults::total_matches` — under OR, one function word matches
-/// nearly every record, and the count the model reads as "that is all of them"
-/// becomes the size of the corpus.
+/// Conservative: a missed stopword costs count precision, a listed content word costs recall
+/// forever (`may`, `march`, `can`, `will` stay out). Not a ranking knob; it keeps
+/// `TypeResults::total_matches` from becoming the corpus size under OR.
 const STOPWORDS: &[&str] = &[
     // Articles and determiners
     "a", "an", "the", "this", "that", "these", "those", "some", "any", "each", // Pronouns
@@ -31,15 +24,8 @@ const STOPWORDS: &[&str] = &[
 
 /// Strip function words from `query`, keeping the rest in order.
 ///
-/// A query of nothing but stopwords is returned unchanged. "who am i"
-/// could legitimately answer to a note titled *Who Am I*, and the alternative is
-/// an empty `$q`, which under OR matches nothing and is indistinguishable from an
-/// honest miss. The rule is what makes this function unable to produce a query
-/// that cannot match — a mis-listed word degrades ranking, never the answer.
-///
-/// Tokens are emitted as written: SurrealDB re-analyzes `$q` at query time with
-/// the same `omni_text` tokenizers that built the index, so splitting and
-/// punctuation are its job, not ours. This function only decides what to send.
+/// All stopwords returns the query unchanged, never an empty `$q` that matches nothing ("who am
+/// i" can be a title). Tokens go as written; SurrealDB re-analyzes with the index's tokenizers.
 pub fn prepare(query: &str) -> String {
     let kept: Vec<&str> = query
         .split_whitespace()

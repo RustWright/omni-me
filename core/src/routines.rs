@@ -39,28 +39,10 @@ pub struct DayRollup {
 
 /// Roll per-item completions up into per-day status for one routine.
 ///
-/// A skipped item counts as done: ruling 86 (RULINGS.md). Skipping is a
-/// deliberate act with a reason attached, not a failure to act, so a morning
-/// where one item was skipped on purpose is a morning that happened. `skipped`
-/// is reported alongside so the distinction survives — the number to look at
-/// when asking whether a routine is really being kept.
-///
-/// This is not the only encoding of the rule. The routines screen derives
-/// the same thing for its card header, in `routine_progress::day_progress` in
-/// the frontend crate — which shares no Rust code with this one, so no compiler
-/// checks the two against each other. Wiring the screen to call this function
-/// was rejected by ruling 87 (RULINGS.md): an async round-trip is not
-/// worth it for a number already on screen. What holds them together instead is
-/// `fixtures/routine_day_agreement.json` at the repo root, read by
-/// `roll_up_agrees_with_the_shared_day_fixture` below and by its twin on the
-/// frontend side.
-///
-/// That guarantee is real but bounded: it covers the cases the fixture lists,
-/// not all inputs, and nothing forces the screen to keep *calling* its own
-/// function rather than inlining a fresh derivation.
-///
-/// `item_ids` are the group's *current* items; removed ones must be filtered out
-/// by the caller, exactly as the screen does.
+/// A skipped item counts as done, ruling 86 (RULINGS.md); `skipped` is reported so the difference
+/// survives. Twin of the frontend's `routine_progress::day_progress` (calling this was rejected by
+/// ruling 87 (RULINGS.md)); `fixtures/routine_day_agreement.json` holds them together, for its
+/// cases only. `item_ids` excludes removed items.
 pub fn roll_up(item_ids: &[&str], completions: &[CompletionRecord<'_>]) -> Vec<DayRollup> {
     let total = item_ids.len() as u32;
     // Per day: which of the current items have a row, and how many were skips.
@@ -619,15 +601,8 @@ mod tests {
 
     /// Cross-boundary agreement alarm for the day-completion rule.
     ///
-    /// The other implementation is `routine_progress::day_progress` in the
-    /// frontend crate, which this one cannot import and the compiler never sees
-    /// alongside it. Change the rule on either side and everything still
-    /// builds; the divergence surfaces as the assistant answering "did I do my
-    /// routine" differently from what the user is looking at. This test and its
-    /// twin read one fixture and must agree.
-    ///
-    /// If it fires, decide which side is right FIRST. The fixture is a product
-    /// decision written down, not a pin to be nudged until the build is green.
+    /// This and its frontend twin read one fixture and must agree. If it fires, decide which side
+    /// is right first: the fixture is a product decision, not a pin to nudge.
     #[test]
     fn roll_up_agrees_with_the_shared_day_fixture() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

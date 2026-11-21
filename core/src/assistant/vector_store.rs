@@ -104,16 +104,9 @@ struct SourceRow {
     text: Option<String>,
     /// The entry's [`CatalogEntry::hidden_when`] column, evaluated in the query.
     ///
-    /// Selected rather than filtered out. Skipping hidden rows in the `WHERE`
-    /// would leave a record that was embedded *before* it was hidden sitting in
-    /// the index forever, reachable by `knn_search` after `search`, `list` and
-    /// `read` have all stopped returning it — a deleted transaction that only the
-    /// semantic path can still find. Fetching it and deleting its chunks is what
-    /// makes hiding a row propagate.
-    ///
-    /// Not optional: the query emits the literal `false` for an entry that hides
-    /// nothing, so the column is always there and a missing one is a real error
-    /// rather than a row to wave through.
+    /// Selected, not filtered: a row hidden after embedding must be fetched so its chunks are
+    /// deleted, or `knn_search` finds it forever. Never optional; entries that hide nothing emit
+    /// `false`.
     hidden: bool,
 }
 
@@ -195,16 +188,9 @@ async fn sweep_one(
     embedder: &Embedder,
     report: &mut SweepReport,
 ) -> Result<(), VectorError> {
-    // Every text field concatenated, in catalogue order: a note's title carries
-    // meaning its body often omits, and embedding the body alone loses it.
-    //
-    // `?? ''` is load-bearing, not defensive. `string::concat` stringifies an
-    // absent column to the literal text `NONE` rather than erroring, so an
-    // untitled scan with no extracted text embeds and indexes the word "NONE" as
-    // though the document said it — and a chunk retrieved on that basis is
-    // handed to the model as the document's content. Documents is the first
-    // catalogued type whose text columns are `option<>`; every earlier one is
-    // `TYPE string`, which is why this never bit before.
+    // Every text field, in catalogue order, since titles carry meaning. `?? ''` is load-bearing:
+    // `string::concat` turns an absent column into the text "NONE", which would be embedded and
+    // served as the document's content.
     let text_expr = entry
         .text_fields
         .iter()
@@ -305,17 +291,8 @@ async fn sweep_one(
         report.embedded += 1;
     }
 
-    // Records that no longer exist at all, which the loop above can never
-    // reach: it iterates what is there, so a deleted record simply produces no
-    // row and its chunks are never visited.
-    //
-    // Left in place they are not merely wasted index — `retrieval::describe`
-    // takes a semantic hit's snippet from the *stored* chunk text rather than
-    // re-reading the record, and fills the handle from a live lookup that comes
-    // back empty. So a deleted record keeps ranking, and its text is handed to
-    // the model as a current result. A scoped wipe of finances is exactly this
-    // case: the events go, the projection empties, and every transaction stays
-    // searchable by its own words.
+    // Records gone entirely, which the loop above never visits. Left in place, they keep ranking
+    // and `retrieval::describe` serves their stored chunk text as current (a scoped wipe, say).
     for stale in embedded_ids(db, entry.name).await? {
         if !live.contains(&stale) {
             report.removed += delete_chunks(db, entry.name, &stale).await?;
@@ -675,12 +652,8 @@ mod tests {
 
     /// A record that is deleted outright must leave the index with it.
     ///
-    /// This is the wipe's case, and it is not the shrinking one below: there
-    /// the record still exists and the sweep visits it. Here it is gone, so the
-    /// scan produces no row for it and nothing in the per-record path can ever
-    /// run. Without the prune its chunks stay, keep ranking, and
-    /// `retrieval::describe` serves their stored text as a current result —
-    /// which is a wiped record answering a search in its own words.
+    /// The wipe's case: unlike the shrinking one below, the per-record path never runs, so only
+    /// the prune stops a wiped record answering searches in its own words.
     #[tokio::test]
     async fn a_deleted_record_does_not_stay_searchable() {
         let embedder = shared_embedder();

@@ -40,15 +40,9 @@ const DEFAULT_SERVER_URL: &str = match option_env!("OMNI_DEFAULT_SERVER_URL") {
     Some(url) => url,
     None => "http://localhost:3000",
 };
-/// Runtime override for the whole app-data root. Every stateful path —
-/// `local.db`, `budget.journal`, `attachments/`, and each scalar config file —
-/// hangs off this one directory, so overriding it is the single interception
-/// point that redirects a build onto throwaway data.
-///
-/// Setting it also puts the app in a non-production posture: the sync server
-/// is forced to `NON_PRODUCTION_SERVER_URL` unless `OMNI_SERVER_URL` says
-/// otherwise, and the UI shows a permanent banner. Without that coupling a dev
-/// build would happily backfill and then push to the live box.
+/// Runtime override for the app-data root, which every stateful path hangs off. Setting it
+/// also forces `NON_PRODUCTION_SERVER_URL` (unless `OMNI_SERVER_URL` says otherwise) and shows a
+/// banner; without that a dev build would backfill and push to the live box.
 const DATA_DIR_ENV: &str = "OMNI_DATA_DIR";
 /// Runtime override for the sync server. Outranks the persisted `server_url`
 /// file (see `resolve_server_url`).
@@ -168,25 +162,15 @@ pub struct AppState {
     pub roster: tokio::sync::RwLock<Vec<String>>,
     /// Both config layers plus the rule between them, resolved at startup.
     ///
-    /// The shared half is a snapshot of what the config projection had
-    /// materialized *before* this launch registered its projections — that read
-    /// has to happen before the projection list is built, so a value set on
-    /// another device lands one launch later. Writes here keep the in-memory copy
-    /// current for the settings screen; what they cannot do is retroactively
-    /// change what got registered at boot, which is why
-    /// `ConfigKey::applies_immediately` exists.
+    /// The shared half is read before projections register, so another device's value lands one
+    /// launch later. Writes update this copy but not what boot registered, hence
+    /// `ConfigKey::applies_immediately`.
     pub config: Arc<tokio::sync::RwLock<ResolvedConfig>>,
     /// The sanctioned append path — guard, append, project, nudge the pusher,
     /// welded into one type in `core` so every binary inherits all four.
     ///
-    /// It also owns the feature snapshot the command guards read, which is
-    /// deliberately a boot snapshot rather than a live read of `config`: a
-    /// feature is inert or it isn't. Its projections, schedulers and tabs were
-    /// all decided at startup, so a command guard reading the live value would
-    /// produce a half-off feature between the toggle and the relaunch — commands
-    /// refusing while the tab is still up and the projection still being
-    /// maintained. `ConfigKey::applies_immediately` is `false` for every feature
-    /// key for the same reason.
+    /// Its feature snapshot is taken at boot on purpose: projections, schedulers and tabs were
+    /// decided then, and a live read would make a half-off feature until relaunch.
     pub writer: Arc<EventWriter>,
     pub app_data_dir: std::path::PathBuf,
     /// True when the app-data root came from [`DATA_DIR_ENV`] rather than the OS
@@ -245,16 +229,9 @@ impl AppState {
     /// Build a request to the box with the base URL resolved and the bearer
     /// token attached.
     ///
-    /// This is the only sanctioned way for a command to talk to the box, and
-    /// `no_command_builds_a_box_request_by_hand` fails the build if anything
-    /// reaches for `state.http` directly. The reason is not tidiness: before
-    /// this existed, fourteen call sites each re-derived the URL and none of
-    /// them carried auth, so the fifteenth would have shipped unauthenticated
-    /// and nothing would have caught it. Auth that depends on remembering is
-    /// auth that eventually is not there.
-    ///
-    /// A blank token yields an unauthenticated request, matching the server's
-    /// fail-open posture while `[server]` is unconfigured.
+    /// The only way a command may reach the box (`no_command_builds_a_box_request_by_hand`), so
+    /// auth never depends on remembering. A blank token sends unauthenticated, matching the
+    /// server's fail-open posture while `[server]` is unconfigured.
     pub async fn box_request(
         &self,
         method: reqwest::Method,
@@ -288,25 +265,10 @@ impl AppState {
         )
     }
 
-    /// Return the journal's balance + price tables, parsing at most once per
-    /// file change. The read path `stat`s `budget.journal` for its
-    /// `(mtime, len)` stamp: on a cache hit (stamp unchanged) it hands back the
-    /// cached `Arc` with no parse; on a miss it reads, parses once via
-    /// [`ledger::parse_artifacts`], and repopulates the cache.
-    ///
-    /// Why a file stamp, not a bumped `journal_version` counter: the journal
-    /// is rewritten by the `JournalFile` projection inside *every*
-    /// `apply_events` path — single-event commands, batch import, journal
-    /// import, sync-pull, auto-import, and full rebuild. A hand-bumped counter
-    /// would have to be poked at all of those (and every future one) or it
-    /// silently serves stale balances. The file's own `(mtime, len)` can't drift
-    /// out of sync with its contents, so any write — from any path, now or
-    /// later — invalidates the cache for free. A `stat` is as cheap as the
-    /// atomic increment it replaces, and far cheaper than the parse it guards.
-    ///
-    /// The stamp is sampled *before* the read, so if a write lands mid-rebuild
-    /// the fresher content is merely cached under the older stamp and the next
-    /// call re-parses — an extra parse, never a stale read.
+    /// The journal's balance and price tables, parsed at most once per file change, keyed on the
+    /// file's `(mtime, len)`: every `apply_events` path rewrites it, and a hand-bumped counter
+    /// would have to be poked at each. The stamp is sampled before the read, so a write landing
+    /// mid-parse costs an extra parse, never a stale read.
     pub async fn journal_artifacts(&self) -> Result<Arc<JournalArtifacts>, String> {
         let path = self.app_data_dir.join(JOURNAL_FILE);
         let stamp = tokio::fs::metadata(&path)
@@ -332,18 +294,8 @@ impl AppState {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
             Err(e) => return Err(format!("read journal file: {e}")),
         };
-        // `spawn_blocking`, because `parse_artifacts` is a fully synchronous
-        // CPU burn — `catch_unwind`-wrapped nom parsing of the whole journal,
-        // then `SimplifiedLedger::try_from`, then `Balance::from` — measured at
-        // ~70 ms on the real 2.4 MB journal. Run inline it occupies the Tokio
-        // worker servicing this Tauri command with no await point, so nothing
-        // else on that worker progresses meanwhile.
-        //
-        // That is not rare. `JournalFile` rewrites the journal on *every*
-        // transaction-affecting event, and the cache is keyed on the file's
-        // `(mtime, len)` — so a bulk import or an applied sync pull invalidates
-        // it repeatedly, and each cold parse lands while the sync tasks and
-        // other commands are competing for the same pool.
+        // `spawn_blocking`: the parse is ~70 ms of synchronous CPU with no await point, and bulk
+        // imports and sync pulls invalidate the cache often, so inline it would stall the worker.
         let parse_start = std::time::Instant::now();
         let bytes = content.len();
         let artifacts = Arc::new(
@@ -387,25 +339,10 @@ fn probe_target_from_url(url: &str) -> String {
     omni_me_core::sync::probe_target(url)
 }
 
-/// Remove stale SurrealKV LOCK file if the owning process is no longer alive.
-/// SurrealKV writes the PID to a LOCK file and doesn't clean it up on unclean
-/// shutdown (SIGKILL, crash, etc.), which blocks subsequent opens.
-/// Remove a SurrealKV `LOCK` left behind by a process that is gone.
-///
-/// The subtlety is the self-restart case, and it is why a single liveness
-/// probe is not enough. `app.restart()` (see `commands::update`) spawns the
-/// replacement process *before* the outgoing one has finished exiting, so at
-/// this point `/proc/<old pid>` normally still exists. The old code concluded
-/// the lock was held and left it; `db::connect` then blocked on a lock whose
-/// owner was milliseconds from disappearing. Because this whole init runs inside
-/// `block_on` on the main thread, the GTK loop never ran again — the window kept
-/// painting its last frame, the splash. That is exactly the reported "stuck on
-/// the splash screen after updating; closing and reopening fixed it", and why
-/// reopening fixed it: by then the old process was gone.
-///
-/// So a live pid is treated as *probably exiting*, not as final: wait a bounded
-/// moment for it to go, and only give up if it outlives the wait — which means a
-/// genuinely concurrent instance, whose database we must not steal.
+/// Remove a SurrealKV `LOCK` left behind by a process that is gone (SurrealKV never cleans it
+/// up after a crash). A live pid is waited on, not trusted: `app.restart()` starts the new
+/// process before the old exits, and blocking on that lock hung the app on its splash.
+/// A pid that outlives the wait is a real concurrent instance, whose database we must not steal.
 fn clear_stale_lock(db_path: &Path) {
     const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
     const LOCK_POLL: std::time::Duration = std::time::Duration::from_millis(100);
@@ -610,24 +547,10 @@ pub fn run() {
                 // thing in every log the user might paste into an issue.
                 tracing::info!(device_id = %device_id, server_url = %server_url, has_server_token = !server_token.trim().is_empty(), timezone = %timezone, roster_len = roster.len(), non_production, "App initialized");
 
-                // Durability guardrail 3: audit the local event log's device_id
-                // distribution. Always logged (so any future sync investigation has
-                // it), and loudly warns on the orphan signature — every local event
-                // authored under a non-bound id with no successful pull, i.e. data
-                // that can never be pushed (the stranding bug). Read-only, non-fatal.
-                //
-                // Spawned, not awaited. This is a `GROUP BY device_id` aggregate
-                // over the whole events table plus a `sync_state` lookup, and this
-                // whole block sits inside a `block_on` that gates the window
-                // appearing. Awaited, it was the largest unconditional scan on the
-                // pre-paint path, growing with the log forever, on a diagnostic
-                // whose only consumer is the log file — nothing downstream reads it,
-                // so no startup step needs its result. `PullScheduler`'s 4 s warm-up
-                // already treats startup contention as the thing to avoid.
-                //
-                // A 5 s delay keeps the scan clear of the first-paint burst of
-                // finances reads rather than merely moving it off the critical path
-                // into competition with it.
+                // Audit the log's device_id spread and warn on the orphan signature (local events
+                // under an unbound id with no successful pull: data that can never be pushed).
+                // Spawned after 5 s, never awaited: it scans the whole log, and this block gates
+                // the window's first paint while nothing reads the result.
                 {
                     let audit_db = db.clone();
                     let audit_device_id = device_id.clone();
@@ -687,22 +610,9 @@ pub fn run() {
                     .with_push_debouncer(push_debouncer.clone()),
                 );
 
-                // Declare the journal's shape if the log has never carried one.
-                // MOVED below the writer deliberately. It used to run before the
-                // push debouncer existed, so the declaration projected locally and
-                // never pushed — every device silently seeded its own copy. It is
-                // still ahead of anything that can author a journal event, which is
-                // the ordering that actually matters.
-                //
-                // Awaited rather than spawned, unlike the device-id audit below:
-                // the first journal event of this session must not be projected
-                // against a shape that is still being decided. The cost after the
-                // first launch is one keyed SELECT that finds a row and returns —
-                // the events scan and the append happen once, ever.
-                //
-                // Non-fatal: a failure here leaves the log undeclared, and
-                // `journal_record_type` falls back to the pre-record-type shape,
-                // which is a working app rather than a refused boot.
+                // Declare the journal's shape if the log never has. Must stay after the writer (or
+                // it never pushes) and before anything authors a journal event. Awaited, unlike
+                // the device-id audit; after the first launch it is one keyed SELECT. Non-fatal.
                 if let Err(e) =
                     omni_me_core::events::seed_journal_record_type(&db, &writer).await
                 {

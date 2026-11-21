@@ -1,48 +1,18 @@
-//! The Tauri IPC boundary: one `invoke_*` wrapper per backend command, plus a
-//! complete `mock` implementation of the same surface for browser-only runs.
-//!
-//! Two deferrals live here; only one of them is what it first looks like.
-//!
-//! The first is size. An earlier review said to collapse these wrappers with a
-//! macro if the pattern count ever grew a lot. It grew a lot — and the remedy
-//! still does not fit, so it is being recorded as declined rather than left
-//! looking undone. The wrappers are not the bulk of this file; the mock
-//! fixtures are, and they are hand-written sample data (80-190 lines apiece)
-//! that a macro cannot generate. Trip-wire, re-scoped: extract the mock half
-//! into its own module when this file next needs restructuring for any other
-//! reason. Do not spend a release gate on it.
-//!
-//! The second is the real risk. Four `thread_local!` stores in the mock half —
-//! `MOCK_ACCOUNT_OVERRIDES`, `MOCK_PAUSED`, `MOCK_SOURCE_CONFIGS`,
-//! `MOCK_LLM_CONFIG` — do not merely return canned values. They re-implement
-//! backend CRUD and merge semantics a second time, in a second language of
-//! sorts, with no shared definition. Type drift between mock and real is caught
-//! by the compiler because both satisfy the same signature; BEHAVIOURAL drift
-//! is not caught by anything. When the mock's idea of "update an override"
-//! diverges from the backend's, the browser loop keeps looking correct and
-//! stops predicting what the device will do — which is the one thing the mock
-//! exists to do. Trip-wire: any change to the backend semantics behind those
-//! four must be mirrored here in the same commit; if that becomes hard to
-//! honour, delete the stateful mocks and let those flows be device-only.
+//! The Tauri IPC boundary: one `invoke_*` wrapper per command, plus a `mock` twin for browsers.
+//! A macro was declined: the bulk is hand-written mock fixtures, not wrappers. Split the mock
+//! half out when the file next needs restructuring anyway.
+//! The mock's `thread_local!` stores re-implement backend semantics, and nothing catches
+//! behavioural drift. Mirror any backend change behind them in the same commit, or delete them
+//! and leave those flows device-only.
 
 use wasm_bindgen::prelude::*;
 
 /// Marker string compiled into the WASM binary whenever the `mock` feature is
 /// on, so packaging can refuse to ship a mock build.
 ///
-/// Why a sentinel and not a `compile_error!`. The obvious guard is
-/// `#[cfg(all(feature = "mock", not(debug_assertions)))] compile_error!(...)`,
-/// and it would not have caught the one time this actually happened
-/// (friction 1.13, an APK that shipped with mock data). `dx serve --features
-/// mock` builds in DEBUG, so `debug_assertions` is true and the guard never
-/// fires; the release bundle then picked up that already-compiled debug
-/// output. The failure was in *which directory got copied*, not in how the
-/// code was compiled, so a compile-time flag is the wrong layer to guard.
-///
-/// `scripts/assert-no-mock.sh` greps the bundled artifact for this string.
-/// Anything the packaging step can see, it can refuse.
-///
-/// `#[used]` and `#[no_mangle]` keep it from being optimised away.
+/// A sentinel, not `compile_error!`: the mock APK that shipped was a debug build copied from
+/// the wrong directory, which no compile-time flag sees. `scripts/assert-no-mock.sh` greps the
+/// bundle for it; `#[used]` and `#[no_mangle]` keep it from being optimised away.
 #[cfg(feature = "mock")]
 #[used]
 #[unsafe(no_mangle)]
@@ -77,15 +47,9 @@ extern "C" {
     fn tauri_listen(event: &str, handler: &js_sys::Function) -> js_sys::Promise;
 }
 
-/// Subscribe to a backend-emitted Tauri event (e.g. `sync:applied`), invoking
-/// `on_event` once per emit. Fire-and-forget: the JS `listen` promise resolves
-/// to an unlisten fn we don't keep, and the Rust closure is leaked with
-/// `forget`, because this listener lives for the whole app session — there's
-/// exactly one, registered at the app root. No-op under `mock` (no Tauri host).
-///
-/// The payload is ignored on purpose: callers use the event only as a "something
-/// changed, re-read" nudge, so a bare `impl FnMut()` keeps the call sites clean.
-/// Use [`listen_backend_event_count`] when the emitted value itself matters.
+/// Subscribe to a backend Tauri event (e.g. `sync:applied`) as a "something changed" nudge,
+/// payload ignored ([`listen_backend_event_count`] reads it). The closure is leaked: one
+/// listener per session, at the app root. No-op under `mock`.
 pub fn listen_backend_event(event: &str, on_event: impl FnMut() + 'static) {
     #[cfg(feature = "mock")]
     {
@@ -101,19 +65,9 @@ pub fn listen_backend_event(event: &str, on_event: impl FnMut() + 'static) {
     }
 }
 
-/// Subscribe to a backend event that carries a numeric payload (e.g.
-/// `sync:restoring`), invoking `on_event` with the value. A payload that isn't a
-/// number arrives as `None` rather than being silently coerced.
-///
-/// Tauri delivers `{ event, id, payload }` to the JS handler, so the emitted
-/// value is the `payload` field of the object handed to the closure — not
-/// the object itself. Reading the wrong field here fails silently (every emit
-/// looks like `None`), which is indistinguishable from a backend that never
-/// sends anything, so this is worth checking against the running app rather than
-/// against memory.
-///
-/// Same fire-and-forget lifetime as [`listen_backend_event`]: one listener per
-/// app session, registered at the root, closure leaked. No-op under `mock`.
+/// Subscribe to a backend event with a numeric payload (e.g. `sync:restoring`); a non-number
+/// arrives as `None`. The value is the handler object's `payload` field: reading the wrong field
+/// makes every emit `None`, silently. Lifetime as [`listen_backend_event`].
 pub fn listen_backend_event_count(event: &str, on_event: impl FnMut(Option<f64>) + 'static) {
     #[cfg(feature = "mock")]
     {
@@ -133,16 +87,9 @@ pub fn listen_backend_event_count(event: &str, on_event: impl FnMut(Option<f64>)
     }
 }
 
-/// Subscribe to a DOM window event, invoking `on_event` once per dispatch.
-/// Unlike [`listen_backend_event`] (which rides the Tauri event bus) this uses
-/// the plain browser event target, so it fires everywhere the WASM frontend
-/// runs — `dx serve`, the desktop webview, the Android webview, and Playwright
-/// (which can `window.dispatchEvent(new Event(...))` to drive it in tests).
-///
-/// Used for `omni:back`: the Android `MainActivity` dispatches it on a
-/// hardware/gesture back press so the frontend can pop one in-app nav level.
-/// Fire-and-forget — the closure is leaked (one listener per app session, like
-/// `listen_backend_event`).
+/// Subscribe to a DOM window event, which fires wherever the frontend runs (Playwright can
+/// dispatch it). Used for `omni:back`, which MainActivity sends on a back press. The closure
+/// is leaked, as in [`listen_backend_event`].
 pub fn listen_window_event(event: &str, on_event: impl FnMut() + 'static) {
     let Some(window) = web_sys::window() else {
         return;
@@ -274,16 +221,9 @@ pub fn on_os_theme_change(on_change: impl FnMut() + 'static) {
 
 /// Drop focus from whatever currently holds it.
 ///
-/// Used when the nav drawer opens over the editor. CodeMirror keeps DOM focus
-/// and keeps painting its caret at the editor's own stacking level, so the
-/// caret blinks straight through the drawer's scrim. Nothing in the app blurs
-/// it — there is no `.blur()` call anywhere else — and the drawer is a
-/// `fixed`-positioned panel rather than a real modal, so the browser will not
-/// move focus on its own either.
-///
-/// Deliberately blurs the *active element* rather than reaching into the editor:
-/// it needs no new JS export, so it works identically in `mock` builds, and it
-/// also covers a focused input on any other page the drawer opens over.
+/// For the nav drawer, which is not a real modal: a focused CodeMirror paints its caret through
+/// the scrim. Blurs the active element rather than the editor, so it needs no JS export and
+/// covers any focused input.
 pub fn blur_active_element() {
     use wasm_bindgen::JsCast;
     if let Some(el) = web_sys::window()
@@ -298,19 +238,9 @@ pub fn blur_active_element() {
 /// Inject a bundled script (once) and resolve when `global_name` is a callable
 /// on `window`. `false` if it never appeared within the polling window.
 ///
-/// POLLING, not `script.onload`. The old release-only onload path could hang
-/// forever in an embedded Tauri webview — the script loads, but the awaited
-/// onload never resolves — stranding the caller on its loading state. Polling is
-/// robust across `dx serve`, embedded release builds, and Android. One path
-/// for all build modes: a previous `cfg(debug_assertions)` split meant the
-/// release path was never exercised until a real desktop webview ran it.
-///
-/// The window must be generous. On a cold first launch — empty webview
-/// cache, a ~1 MB bundle parsed for the first time while the wasm frontend and
-/// DB init compete for the main thread — the embedded webkit webview can take
-/// well over 5s to define its global. A 5s cap stranded the editor on
-/// "Initializing…" on first launch while working on relaunch, once webkit had
-/// cached the bundle.
+/// Polls rather than awaiting `script.onload`, which can never resolve in an embedded webview;
+/// one path for every build mode. Keep the window generous: a cold first launch can take well
+/// over 5 s to define the global, and a 5 s cap stranded the editor on "Initializing…".
 pub async fn ensure_js_bundle(src: &str, global_name: &str, max_attempts: u16) -> bool {
     const POLL_INTERVAL_MS: i32 = 100;
 
@@ -406,36 +336,17 @@ extern "C" {
 
 // --- Internal Invoke Helpers ---
 
-// Every backend call in this file funnels through the three helpers below, so
-// one tap on each `Err` path covers the whole IPC surface for
-// `diagnostics::record_invoke_failure` — no per-wrapper change, and no way for
-// a new wrapper to be added without inheriting it.
-//
-// Two consequences, stated here rather than discovered later. Mock builds
-// record nothing: the `#[cfg(feature = "mock")]` branches return canned data
-// without reaching these helpers at all, which is correct — a failed invoke is
-// device behaviour and the browser loop has no IPC to fail. And
-// `submit_feedback` itself rides `invoke`, so a failed send records its own
-// failure and a retry carries it. That is useful, not a loop: the record is
-// bounded by the ring and a successful send clears nothing.
+// Every backend call funnels through the three helpers below, so their `Err` paths alone
+// feed `diagnostics::record_invoke_failure`. Mock builds record nothing (they never reach
+// these). A failed `submit_feedback` records itself and a retry carries it; the ring bounds it.
 
 /// How long the helpers keep retrying a call the backend was not yet ready for.
 ///
-/// Deadline rather than an attempt count because the thing being waited on —
-/// `setup()` reaching `handle.manage(AppState{…})` — scales with the event log,
-/// not with a fixed number of tries. Observed on-device 2026-09-07: the refusals
-/// land at +0.7s on a phone whose WAL recovery replays ~36k batches, and `manage`
-/// itself is somewhere past that. 10s is far beyond any healthy boot while still
-/// bounded, so a genuinely dead backend still fails open rather than hanging.
+/// A deadline, not an attempt count: `setup()` reaching `manage(AppState)` scales with the event
+/// log. 10 s is far past a healthy boot yet bounded, so a dead backend still fails open.
 #[cfg(not(feature = "mock"))]
 const BOOT_RETRY_DEADLINE_MS: f64 = 10_000.0;
 
-/// Tauri refused the call before dispatch because `AppState` is not managed
-/// yet, so the command provably never ran.
-///
-/// That "never ran" is what makes retrying safe even for a mutating command,
-/// and it is why this is matched separately from a timeout — see
-/// [`invoke_timed`], where the distinction actually bites.
 /// A rejected invoke as the text the backend sent. Tauri rejects with the command's error
 /// string; debug-formatting it wrapped every message the user saw in `JsValue("…")`.
 #[cfg(not(feature = "mock"))]
@@ -443,6 +354,8 @@ fn invoke_error(e: wasm_bindgen::JsValue) -> String {
     e.as_string().unwrap_or_else(|| format!("{e:?}"))
 }
 
+/// Tauri refused before dispatch because `AppState` is not managed yet, so the command provably
+/// never ran: that is what makes a retry safe even for a mutating command (see [`invoke_timed`]).
 #[cfg(not(feature = "mock"))]
 fn backend_not_ready(err: &str) -> bool {
     err.contains("state not managed")
@@ -549,17 +462,9 @@ async fn invoke_unit(cmd: &str, args: &impl serde::Serialize) -> Result<(), Stri
 /// `invoke`, but bounded: resolves to `Err` if the promise has not settled
 /// within `timeout_ms`.
 ///
-/// Use this for anything fired during app boot. On Android's cold
-/// first-open an invoke issued before Tauri's native IPC handler is ready is
-/// silently dropped — its promise never resolves *and* never rejects, so
-/// awaiting it parks the caller forever. That has now bitten this codebase
-/// twice: it hung the fresh-install boot on `get_workspace` (root-caused
-/// on-device 2026-07-05), and it froze `tz_signal` at its `Tz::UTC` default on
-/// `get_timezone`, which made every "today" resolve to the UTC date (found
-/// on-device 2026-08-31). Both were invisible on desktop.
-///
-/// Racing the invoke against a `setTimeout` turns "never settles" into an
-/// ordinary `Err`, which callers can retry or fail open on.
+/// Use it for anything fired during boot: an invoke sent before the native IPC handler is
+/// ready is dropped and never settles, which has hung boot and frozen the timezone at UTC.
+/// Racing a `setTimeout` turns that into an ordinary `Err` to retry or fail open on.
 #[cfg(not(feature = "mock"))]
 async fn invoke_timed<T: serde::de::DeserializeOwned>(
     cmd: &str,
@@ -1561,18 +1466,9 @@ pub async fn invoke_update_timezone(timezone: &str) -> Result<(), String> {
     }
 }
 
-/// Read the persisted continuity-store blob from disk (1.8a). Empty string =
-/// nothing persisted yet; mock has no backend so it returns empty. Resolves to
-/// `Err` if the invoke's promise hasn't settled within `timeout_ms`: on a cold
-/// first-open (Android), an invoke fired before Tauri's native IPC handler is
-/// ready can be dropped — its
-/// promise then never resolves *and* never rejects. Awaiting it directly parks
-/// the caller forever, which was the fresh-install "Loading…" hang: the
-/// continuity boot read (continuity.rs) stalled on the first `get_workspace`
-/// await, so `loaded` never flipped and every `loaded_peek` waiter (journal
-/// fetch, tab-restore) hung indefinitely (root-caused on-device 2026-07-05).
-/// Racing the invoke against a `setTimeout` bounds each attempt so the boot loop
-/// can retry / fail open instead of hanging.
+/// Read the persisted continuity blob; empty means nothing persisted (always, under mock).
+/// Bounded by `timeout_ms` for [`invoke_timed`]'s dropped-invoke reason: unbounded, this was
+/// the fresh-install "Loading…" hang.
 pub async fn invoke_get_workspace_timed(timeout_ms: i32) -> Result<String, String> {
     #[cfg(feature = "mock")]
     {
@@ -1751,17 +1647,8 @@ use crate::types::{ConfigEntry, ConfigValue};
 
 /// `get_config`, bounded — the boot-path variant.
 ///
-/// Fired during boot from `main.rs`, so it is exposed to the dropped-invoke race
-/// on [`invoke_timed`]: an invoke issued before the native IPC handler is ready
-/// never resolves *and* never rejects, and the plain helper parks the feature
-/// future forever. `features_ready` then stays false and the splash never lifts.
-///
-/// That is the desktop post-update splash hang (`surface`, 2026-09-07, and once
-/// before on the 1.1.0 update): the backend was fully initialized and applying
-/// syncs while the UI waited on a promise that could never settle, and closing
-/// and reopening — a launch where IPC is ready in time — cleared it.
-/// `get_workspace` was immune only because `continuity.rs` already used this
-/// timed+retry form; this call site never adopted it.
+/// Fired during boot, so exposed to [`invoke_timed`]'s dropped-invoke race: unbounded,
+/// `features_ready` stays false and the splash never lifts (the desktop post-update hang).
 pub async fn invoke_get_config_timed(timeout_ms: i32) -> Result<Vec<ConfigEntry>, String> {
     #[cfg(feature = "mock")]
     {
@@ -2060,14 +1947,8 @@ pub async fn invoke_export_obsidian(target: &str) -> Result<ExportSummary, Strin
 /// server-side extractor. `hint` mirrors `core::extraction::ExtractionHint`
 /// serialised snake_case (`"receipt"`, `"bank_statement"`, ...).
 ///
-/// `filename` is what the picker or the share intent reported; `None` for the
-/// pasted email body, which never had one.
-///
-/// The mock branch fakes a ~1.2s round trip + returns a canned receipt so
-/// `dx serve --features mock` flows end-to-end without a backend. It answers
-/// `paystub` with a draft that fails verification, because a clean-only mock
-/// leaves the confirm form's warning panel unreachable in the browser — and
-/// paystub is the hint that actually warns most often against a real model.
+/// `filename` is `None` for a pasted email body. The mock fakes a ~1.2 s round trip, and
+/// answers `paystub` with a failing draft so the confirm form's warning panel is reachable.
 pub async fn invoke_extract_document(
     bytes: Vec<u8>,
     mime: &str,
@@ -3333,11 +3214,8 @@ pub struct StatementTarget<'a> {
 /// Upload a statement document (a PDF, possibly encrypted) rather than an
 /// export. Parsing happens on the server, where the credentials are.
 ///
-/// `password_secret` names an entry in the server's credentials `secrets` map;
-/// no password ever reaches the client. `force` overrides the refusal that
-/// fires when a statement fails its own declared checks — see
-/// `commands::budget::import_statement_document` for why that refusal is the
-/// default.
+/// `password_secret` names a server secret, so no password reaches the client. `force`
+/// overrides the failed-checks refusal (`commands::budget::import_statement_document`).
 pub async fn invoke_import_statement_document(
     bytes: Vec<u8>,
     target: StatementTarget<'_>,
@@ -4301,17 +4179,9 @@ pub async fn invoke_set_source_paused(source: &str, paused: bool) -> Result<(), 
     }
 }
 
-// -----------------------------------------------------------------------------
-// Source-definition CRUD (3.7 + live fast-follow) — manage config-driven sources
-// -----------------------------------------------------------------------------
-//
-// Definitions are untyped JSON end-to-end: the form builds the object, the
-// server validates + persists it to `sources.toml` AND applies it live (builds +
-// spawns the source into the running registry; remove aborts its task). So a
-// just-saved source appears in BOTH the configured list and the running `/status`
-// snapshot without a restart. The mock keeps an in-memory list (single-threaded
-// WASM) that the mock `/status` reader folds in, mirroring that live behavior for
-// the Playwright walkthrough.
+// Source-definition CRUD. Untyped JSON end to end; the server saves and applies it live, so a
+// saved source shows in both the configured list and `/status`. The mock's in-memory list is
+// folded into its `/status` to mirror that.
 
 #[cfg(feature = "mock")]
 thread_local! {
@@ -4396,14 +4266,8 @@ pub async fn invoke_remove_source_config(name: &str) -> Result<(), String> {
     }
 }
 
-// -----------------------------------------------------------------------------
-// LLM provider config (3.8 — bring-your-own-LLM)
-// -----------------------------------------------------------------------------
-//
-// Proxies to the server's GET/PUT /llm/config. The provider runs server-side, so
-// the client only relays the selection; the api_key is held server-side and
-// never read back (GET returns `has_key`, not the key). Restart-to-apply — the
-// running client was selected at boot, so a change applies on next server start.
+// LLM provider config: read-only, from the server's `GET /llm/config`, which returns
+// `has_key` rather than the key. It is set in `credentials.toml` on the host.
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct LlmConfigView {
@@ -4907,14 +4771,8 @@ pub async fn invoke_commit_journal_import(
     }
 }
 
-// -----------------------------------------------------------------------------
-// In-app self-update (Settings → Updates)
-// -----------------------------------------------------------------------------
-//
-// One wasm frontend ships to both targets, so it asks `app_platform` once on
-// mount and then drives the matching flow: Android pulls the manifest, downloads
-// + sha256-verifies the APK, and hands it to the native installer; desktop uses
-// the Tauri updater plugin (download + signature-verify + relaunch in one call).
+// In-app self-update. Asks `app_platform` once: Android downloads and sha256-verifies the APK
+// for the native installer; desktop uses the Tauri updater plugin.
 
 /// Mirrors the backend `commands::update::UpdateCheck`.
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -5039,14 +4897,9 @@ pub async fn invoke_install_desktop_update() -> Result<(), String> {
     }
 }
 
-// --- Assistant (Phase D-1) ---
-//
-// The mock half below re-implements *behaviour*, not just canned values — it
-// is a fifth store of the kind this file's header flags. It is kept deliberately
-// crude: one canned answer, no verbs, no retrieval. Its whole job is to let the
-// pending → answered transition be driven in a browser. Never read a latency
-// or a citation off it, and mirror any change to the pending rule in
-// `conversation::read_thread` here in the same commit.
+// Assistant. The mock is a stateful store of the kind the header flags, kept crude (one canned
+// answer) to drive pending to answered in a browser. Never read latency or citations off it;
+// mirror any change to `conversation::read_thread`'s pending rule here.
 
 /// Append one question. `thread_id` continues a conversation; `None` starts one.
 pub async fn invoke_ask_assistant(
@@ -5155,15 +5008,9 @@ pub async fn invoke_read_assistant_thread(
 pub async fn invoke_pending_approvals() -> Result<Vec<crate::types::PendingApprovals>, String> {
     #[cfg(feature = "mock")]
     {
-        // Three surfaces, so a sweep sees a badge on a tab the assistant owns,
-        // one it does not, and the domain-reviewed one.
-        //
-        // The two proposal counts come from the mock's own stores, not from
-        // constants. `pending_proposals` shrinks when a card is decided, which
-        // is what makes the epoch-bump path observable in the browser at all: a
-        // hardcoded number refetches to the same value and proves nothing.
-        // The document count has no such store and stays fixed — so a *cleared*
-        // document queue cannot be demonstrated here and rides the real backend.
+        // Three surfaces: a tab the assistant owns, one it does not, and the domain-reviewed one.
+        // Proposal counts come from the mock stores so deciding a card visibly shrinks them;
+        // the document count is fixed, so a cleared queue only shows on the real backend.
         Ok(vec![
             crate::types::PendingApprovals {
                 reviewed_at: "assistant_inbox".into(),
@@ -5759,14 +5606,8 @@ mod mock_assistant {
         })
     }
 
-    /// Seeded, unlike [`pending_proposals`], which starts empty. The
-    /// assistant inbox fills as the mock conversation runs; the finances review
-    /// section has no such path in the browser, so without a standing fixture a
-    /// sweep would render an empty state and prove nothing about the section.
-    ///
-    /// One reversible and one irreversible (`transaction.clear` — nothing
-    /// un-clears a transaction), so the sweep reaches the warning as well as the
-    /// ordinary card.
+    /// Seeded, unlike [`pending_proposals`]: nothing fills the finances review in a browser.
+    /// One reversible and one irreversible (`transaction.clear`), so a sweep reaches the warning.
     pub fn finance_proposals() -> Vec<AssistantProposal> {
         vec![
             AssistantProposal {
@@ -6537,14 +6378,8 @@ fn mock_documents_seed() -> Vec<DocumentItem> {
             fields: None,
             parent_document_id: None,
         },
-        // An email and the attachment that arrived inside it — the pair, not
-        // just the email. A lone email fixture would render its body fine and
-        // leave the children list permanently empty, which is the half of the
-        // view that cannot be checked any other way.
-        //
-        // No `kind`, deliberately: `kind` comes from field extraction, which
-        // has not run for mail. A fixture that gave mail a kind would hide the
-        // reason `is_email` keys on the MIME type instead.
+        // An email and its attachment, so the children list is checkable. No `kind` on purpose:
+        // extraction never runs on mail, which is why `is_email` keys on the MIME type.
         DocumentItem {
             document_id: "doc-email".into(),
             sha256: Some("d".repeat(64)),

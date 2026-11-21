@@ -1,16 +1,8 @@
 //! Aggregated sync status reporter.
 //!
-//! Watches [`PushEvent`](super::pusher::PushEvent) and
-//! [`RetryEvent`](super::retry::RetryEvent) broadcasts and exposes a single
-//! 4-state status value consumers can poll:
-//!
-//! - `Idle` — no push in flight, retry engine dormant
-//! - `Syncing` — push in flight
-//! - `Retrying` — push has failed and the retry engine is backing off
-//! - `Error` — retry has failed so many times backoff has reached the 60s cap
-//!
-//! The status is exposed via the `get_sync_status` Tauri command, which
-//! serializes the enum as kebab-case strings for easy JS consumption.
+//! Folds [`PushEvent`](super::pusher::PushEvent) and [`RetryEvent`](super::retry::RetryEvent)
+//! into one pollable status, served as kebab-case by `get_sync_status`: `Idle`, `Syncing`,
+//! `Retrying`, or `Error` once backoff reaches its 60 s cap.
 
 use std::sync::Arc;
 

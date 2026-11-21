@@ -150,13 +150,9 @@ static PROBES: &[Probe] = &[
 
 /// Values a compliant reader could never have copied from the document.
 ///
-/// The prompt is explicit: copy values exactly as printed, never compute or
-/// normalise, never include a value the document does not state. So containment
-/// is the prompt's own rule turned into a measurement, not a stricter one.
-///
-/// Normalisation is deliberately minimal — lowercase and collapse whitespace.
-/// Stripping punctuation would make `1,284.00` and `128400` both ground, which
-/// is the transcription error most worth catching.
+/// Containment is the prompt's own rule (copy exactly as printed), measured. Normalisation is
+/// only lowercase and whitespace: stripping punctuation would let `1,284.00` match `128400`,
+/// the transcription error most worth catching.
 fn ungrounded<'a>(summary: &'a DocumentSummary, text: &str) -> Vec<&'a str> {
     let haystack = squash(text);
     summary

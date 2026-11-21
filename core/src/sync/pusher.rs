@@ -1,22 +1,8 @@
 //! Debounced sync push.
 //!
-//! A background task that waits to be nudged, debounces further nudges, then
-//! calls `SyncClient::push_only`. On failure, the exponential-backoff retry
-//! loop in `retry.rs` takes over.
-//!
-//! Design:
-//! - Every local event append nudges the debouncer via [`PushDebouncer::trigger`].
-//!   Command code never calls that directly — `commands::shared` owns the
-//!   append-and-nudge pairing so it cannot be forgotten.
-//! - After a nudge, it waits `DEFAULT_PUSH_DELAY` (2s) for quiet.
-//! - If another nudge arrives inside that window, the timer resets.
-//! - When the window expires, it invokes `SyncClient::push_only` against the
-//!   database's current `sync_state` timestamp.
-//! - Success and failure are reported out via a broadcast channel so the
-//!   status reporter (Task 2.6) and retry loop (Task 2.3) can react.
-//!
-//! The pusher does not implement retry itself — that's `retry.rs`'s job. It
-//! just signals success/failure once and lets the caller decide.
+//! Waits for a nudge, then `DEFAULT_PUSH_DELAY` of quiet (each nudge resets it), then calls
+//! `SyncClient::push_only` and broadcasts the outcome. Every append nudges via
+//! [`PushDebouncer::trigger`], paired by `EventWriter`. Retry is `retry.rs`'s job.
 
 use std::sync::Arc;
 use std::time::Duration;

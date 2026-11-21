@@ -1,12 +1,6 @@
-//! The command layer's half of the feature gate, plus thin delegation to the
-//! append boundary.
-//!
-//! The append tails themselves live in `omni_me_core::events::EventWriter` —
-//! the guard, the projection fold and the pusher nudge belong together, and a
-//! second binary that authors events must inherit all three rather than
-//! re-implement them. What stays here is the *command*-level guard, which has no
-//! core equivalent because it is about refusing a command outright, not about
-//! refusing an append.
+//! The command-level feature guard (refusing a command outright), plus thin delegation to
+//! `omni_me_core::events::EventWriter`, which keeps the append guard, projection fold and push
+//! nudge together for every binary that authors events.
 
 use omni_me_core::config::Feature;
 use omni_me_core::events::{Event, EventType, NewEvent, feature_off_message};
@@ -130,23 +124,10 @@ mod tests {
     /// Every command that reaches the box on a feature's behalf must refuse when
     /// that feature is off.
     ///
-    /// The write side needs no scan: `authoring_features` is an exhaustive
-    /// match, and the guard sits inside `EventWriter`, which
-    /// `no_command_appends_events_directly` already forces every write through.
-    /// Outbound HTTP has no such chokepoint — `box_request` is generic — so a
-    /// command can spend an LLM call or hit a bank source with its feature off
-    /// and nothing downstream would notice.
-    ///
-    /// Blind spot, deliberately open. This checks that a module reaching the
-    /// box mentions a guard *somewhere*, not that every function in it does. A
-    /// finer check would need to parse Rust. Two modules are exempt because they
-    /// belong to no feature: `sync.rs` (sync must work with everything off, or a
-    /// disabled feature's events would never reach another device) and
-    /// `update.rs` (the updater is how a broken build gets replaced).
-    /// `attachments.rs` is exempt on purpose too: it is content-addressed blob
-    /// housekeeping, and gating cache-size/clear would strand disk usage behind a
-    /// hidden settings section. `jobs.rs` lists jobs of every feature and only
-    /// reads their run records, so no one feature's switch can gate it.
+    /// Writes are guarded inside `EventWriter`; outbound HTTP has no chokepoint, so this scan
+    /// checks each box-reaching module mentions a guard (somewhere, not per function).
+    /// Exempt, belonging to no one feature: `sync.rs` (must work with everything off),
+    /// `update.rs` (replaces a broken build), `attachments.rs` (blob housekeeping), `jobs.rs`.
     #[test]
     fn every_box_reaching_feature_module_guards_itself() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/commands");
@@ -193,29 +174,10 @@ mod tests {
 
     /// Nothing in this crate may append an event outside the writer.
     ///
-    /// Appending an event and nudging the push debouncer have to happen
-    /// together: `pusher::run_loop` blocks on `trigger.notified()` with no
-    /// interval fallback, so an append that skips the nudge doesn't sync
-    /// slowly, it doesn't sync at all — until an unrelated edit, a manual Sync,
-    /// or the retry engine happens to fire.
-    ///
-    /// This started as a rule people remembered, and six sites had already
-    /// forgotten it. `EventWriter` pairs the operations; this test is what stops
-    /// a seventh.
-    ///
-    /// The needle is `store.append`, not `state.event_store.append`. The
-    /// narrower form missed every function that received the store as a
-    /// parameter instead of reading it off `AppState`, and the old note here
-    /// claimed there was exactly one. There were four: both schedulers,
-    /// `import::commit_import_inner`, and `core`'s own
-    /// `seed_journal_record_type` — which this scan could never have seen, since
-    /// it only walks this crate. All four take an `&EventWriter` now, so the
-    /// broad needle has nothing legitimate left to flag and any new match is a
-    /// real bypass rather than an accepted exception.
-    ///
-    /// The one that got away is the reason `EventWriter` lives in `core` rather
-    /// than here: a scan bounded by one crate cannot police an append performed
-    /// in another.
+    /// An append that skips the push nudge does not sync at all (`pusher::run_loop` has no
+    /// interval fallback), so every append goes through `EventWriter`.
+    /// The needle is the broad `store.append`, so a store passed as a parameter is caught too;
+    /// any match is a real bypass. A scan bounded by one crate is why `EventWriter` lives in core.
     #[test]
     fn no_command_appends_events_directly() {
         let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -283,15 +245,9 @@ mod tests {
 
     /// Nothing in `src-tauri` may build an HTTP client without a timeout.
     ///
-    /// The `src-tauri` half of `omni_me_core::http`'s own scan. `AppState.http`
-    /// is the client every `box_request` rides on, so a client built here
-    /// straight from `reqwest` means the phone can hang forever on an
-    /// unresponsive box with no error surfaced — the failure mode that reads as
-    /// "the app is frozen" rather than "the box is down".
-    ///
-    /// Note the prose above deliberately avoids spelling the constructors out:
-    /// this file is itself in scope, so a literal in a comment makes the scan
-    /// match itself. It did, on the first run.
+    /// The `src-tauri` half of `omni_me_core::http`'s scan: without a timeout the phone hangs on
+    /// an unresponsive box and reads as frozen. Never spell the constructors out in a comment
+    /// here: this file is in scope, and the scan would match itself.
     #[test]
     fn no_bare_reqwest_client_in_src_tauri() {
         let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -338,12 +294,8 @@ mod tests {
 
     /// Nothing may talk to the box except through [`AppState::box_request`].
     ///
-    /// Companion to `no_command_appends_events_directly`, and the same reasoning:
-    /// the box's bearer token rides on `box_request`, so a command that reaches
-    /// for the raw client on `AppState` is a command that sends an unauthenticated
-    /// request. Before the helper existed there were fourteen such call sites,
-    /// each re-deriving the base URL by hand — a convention would not have
-    /// survived the fifteenth.
+    /// The bearer token rides on `box_request`, so a command using the raw client sends an
+    /// unauthenticated request.
     #[test]
     fn no_command_builds_a_box_request_by_hand() {
         let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");

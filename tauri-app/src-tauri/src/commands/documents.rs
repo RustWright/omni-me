@@ -1,14 +1,8 @@
 //! Reading and correcting the document archive.
 //!
-//! Read-only apart from [`correct_document_field`], because everything else
-//! that writes to a document is a *producer* — ingest, a parser, a model — and
-//! those live on the server and in `core::archive`. The one write here is a
-//! person fixing a value they can see is wrong.
-//!
-//! Gated on [`Feature::Documents`], every command including the reads. An
-//! archive the user has switched off must not answer questions about what it
-//! holds; a list endpoint that still returns filenames leaks exactly what the
-//! switch was flipped to stop.
+//! Writes here are only a person's own corrections and labels; producers live on the server and
+//! in `core::archive`. Every command, reads included, is gated on [`Feature::Documents`]:
+//! a switched-off archive must not leak even its filenames.
 
 use tauri::State;
 
@@ -23,27 +17,15 @@ use crate::AppState;
 
 /// The most documents one list call will return, whatever the caller asks for.
 ///
-/// The corpus is over a thousand files, so this is a real page rather than a
-/// generous ceiling — the caller must offer a way past it. A list that stops
-/// here silently reads as the whole archive: the rows are ordered newest-first,
-/// so the cut-off looks like nothing older exists.
-///
-/// A ceiling, not the page size. The caller passes its own `limit` and so
-/// knows whether a short page means the end — the alternative is a second copy
-/// of this number in the frontend, drifting silently. Same split as
-/// `list_transactions` and its `TXN_PAGE_SIZE`.
+/// A real page, so the caller must offer a way past it: newest-first, a silent cut-off looks
+/// like nothing older exists. A ceiling, not the page size: the caller passes its own `limit`
+/// (as with `list_transactions` and `TXN_PAGE_SIZE`).
 const PAGE: u32 = 100;
 
 /// How the archive list is narrowed, as it crosses the IPC boundary.
 ///
-/// Every field is optional and an absent one means "no filter" — the query layer
-/// takes `''` for that, so `None` and `Some("")` behave identically and a cleared
-/// search box does not need a different call.
-///
-/// One struct rather than five parameters, matching `list_transactions` and
-/// its `TxnFilter`. Adding the fifth tripped `clippy::too_many_arguments` on both
-/// sides of the boundary at once, which is the lint doing its job: four `&str` in
-/// a row is a call site nobody can read.
+/// An absent field means no filter, and `None` and `Some("")` behave alike, so a cleared
+/// search box needs no different call. One struct, as with `list_transactions`' `TxnFilter`.
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct DocumentListFilter {
@@ -148,19 +130,9 @@ pub async fn document_tags(state: State<'_, AppState>) -> Result<Vec<String>, St
 
 /// Replace a document's tag set.
 ///
-/// Replace, not add or remove — the whole set is one folded field, so the
-/// caller sends what the set should become. That is the same contract
-/// `tag_transaction` already has, and for the same reason; to add one tag, send
-/// the current tags plus the new one.
-///
-/// Lands as `source: human`, `verified: true`. Unlike a field correction this
-/// does not need the document visible: a tag is the person's own label rather
-/// than a reading of the document, so there is nothing for them to be checking it
-/// against. That argument does not extend to any other field.
-///
-/// Normalizing here rather than in the UI is deliberate. The frontend is a
-/// separate crate with its own `sanitize_tag`, and a tag stored in a form the
-/// query does not expect is invisible rather than wrong.
+/// The whole set, as `tag_transaction` takes it; to add one, send the current tags plus it.
+/// `source: human`, `verified: true` without the document on screen, because a tag is a label,
+/// not a reading; no other field earns that. Normalised here, since a mis-stored tag is invisible.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn set_document_tags(
     state: State<'_, AppState>,
@@ -187,14 +159,9 @@ pub async fn set_document_tags(
 
 /// Record a person's correction of one field.
 ///
-/// Lands as `source: human`, `verified: true` — see
-/// [`document_fields::human_correction`] for why that flag is honest here and
-/// the UI constraint it depends on: the document must be visible beside the
-/// field being edited.
-///
-/// Refuses an empty key. A field keyed `""` folds onto every future
-/// empty-keyed write and can never be corrected again through this path, since
-/// the UI has nothing to render as its label.
+/// `source: human`, `verified: true`, honest only while the document is visible beside the
+/// field ([`document_fields::human_correction`]). Refuses an empty key: a `""` field could
+/// never be corrected again, having no label to render.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn correct_document_field(
     state: State<'_, AppState>,
@@ -234,12 +201,8 @@ pub async fn correct_document_field(
 
 /// Set, change or clear how long a tag's documents are kept.
 ///
-/// The rule this feeds, and why `keep_days: None` means kept rather than kept for
-/// zero days: `omni_me_core::retention`.
-///
-/// Normalized here rather than in the UI, for [`set_document_tags`]' reason: the
-/// rule is keyed by the stored spelling of the tag, and a rule keyed differently
-/// from the tag is invisible rather than wrong.
+/// `keep_days: None` means kept, not kept for zero days (`omni_me_core::retention`).
+/// Normalised here for [`set_document_tags`]' reason: the rule keys on the stored spelling.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn set_document_retention(
     state: State<'_, AppState>,
@@ -273,7 +236,7 @@ pub async fn set_document_retention(
     append_new_and_apply(&state, event).await.map(|_| ())
 }
 
-/// The retention categories (R4-6), as (tag, label), so the retention screen can
+/// The retention categories, ruling 39 (RULINGS.md), as (tag, label), so the retention screen can
 /// offer them before any document carries one. Served from core rather than
 /// copied into the frontend, where a second list would drift.
 #[tauri::command(rename_all = "snake_case")]

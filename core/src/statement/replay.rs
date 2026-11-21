@@ -1,30 +1,8 @@
 //! Replay a statement against what the books actually recorded.
 //!
-//! This is the acceptance criterion for any bulk import, stated as code:
-//! for one account over one period, the transaction count and the
-//! closing balance must both match the statement.
-//!
-//! ## Why both, and why per-statement
-//!
-//! Neither half is sufficient alone:
-//!
-//! - Counts alone miss a wrong *amount* — the right number of rows, one of them
-//!   incorrect.
-//! - Balances alone miss an *offsetting pair* — one row dropped and another
-//!   duplicated nets to zero.
-//!
-//! And neither is sufficient in aggregate. Summing a year hides a month where a
-//! missing debit and a missing credit cancel; the canonical ledger's own
-//! reconciliation compared monthly totals only, which is how ~2.7 years of
-//! missing payroll deductions went unnoticed in it. Per statement, per account,
-//! both halves.
-//!
-//! ## What a mismatch gives you
-//!
-//! A verdict is not a boolean. It names the rows that appear on one side and
-//! not the other, because "the closing balance is off by 412.30" is not
-//! actionable and "these four transactions are in the statement and not in the
-//! books" is.
+//! The acceptance criterion as code: per account and period, count and closing balance must
+//! both match, and a verdict names the unpaired rows on each side. Why both, and why per
+//! statement: `docs/src/statements.md` § "Both counts and balances, per statement".
 
 use super::{StatementParse, StatementRow};
 use chrono::NaiveDate;
@@ -49,11 +27,8 @@ pub struct RecordedPosting {
 /// How far apart a statement row and a recorded posting may be dated and still
 /// be considered the same transaction.
 ///
-/// Non-zero because posting date and settlement date routinely differ by a few
-/// days (a card charge especially), and treating those as two different
-/// transactions would report a false loss *and* a false extra for every one of
-/// them. Kept tight so genuinely distinct same-amount transactions in the same
-/// week are not silently paired.
+/// Non-zero because posting and settlement dates differ by days; tight so distinct same-amount
+/// transactions in one week are not silently paired.
 pub const DATE_TOLERANCE_DAYS: i64 = 4;
 
 /// The result of replaying one statement against the books.
@@ -83,23 +58,14 @@ pub struct StatementVerdict {
     /// running balance, plus any figure it declares that the parse does not
     /// reproduce (see [`StatementParse::declared_check_failures`]).
     ///
-    /// Both are counted here because they answer the same question: is this
-    /// file trustworthy enough to judge the books against? Neither says
-    /// anything about the ledger, and a non-zero count means the verdict below
-    /// is measuring against a broken ruler.
+    /// Non-zero means the verdict is measured against a broken ruler; neither says anything about
+    /// the ledger.
     pub statement_self_check_failures: usize,
     /// Zero-amount statement rows, excluded from reconciliation.
     ///
-    /// Brokerage statements interleave informational events with cash ones:
-    /// securities-lending notices ("7.0000 Shares on loan", "Loan terminated")
-    /// and sub-cent staking accruals all arrive as rows with an amount of
-    /// exactly `0`. They cannot move a balance and have no cash-account
-    /// counterpart, so counting them as reconcilable rows reports a loss for
-    /// every one of them — which is what the first real run of this did.
-    ///
-    /// They are counted and reported, never quietly discarded: "excluded on
-    /// a stated rule" and "vanished" have to stay distinguishable, which is the
-    /// whole premise of this module.
+    /// Informational brokerage rows (lending notices, sub-cent accruals) arrive at exactly `0`
+    /// and have no cash counterpart. Counted and reported, never discarded: "excluded by rule"
+    /// must stay distinguishable from "vanished".
     pub informational_rows: usize,
 }
 
@@ -240,17 +206,9 @@ pub fn replay_statement(
 
 /// Greedy multiset pairing on (amount, date-within-tolerance).
 ///
-/// Amount is matched exactly and is the primary key; description is not
-/// used at all. Descriptions in this ledger were normalised by hand over years,
-/// so they do not survive a round trip, and matching on them would pair rows
-/// that merely read alike. Amounts repeat heavily (hundreds of identical small
-/// debits), which is exactly why the date window is kept narrow — with amount
-/// alone, any two same-value rows would pair.
-///
-/// Greedy rather than optimal: an exact assignment would be nicer in principle,
-/// but the output here is a *finding for a human*, and a few extra unpaired
-/// rows in a pathological case are cheap next to the complexity. Preferring the
-/// nearest date makes the greedy choice the right one in every realistic input.
+/// Exact amount, never description (hand-normalised, so it does not round-trip); amounts repeat,
+/// hence the narrow date window. Greedy, nearest date first: the output is a finding for a
+/// person, and an optimal assignment is not worth its complexity.
 fn pair_up(
     statement: &[StatementRow],
     recorded: &[RecordedPosting],

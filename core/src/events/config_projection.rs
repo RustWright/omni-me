@@ -85,14 +85,8 @@ impl ConfigProjection {
 
         let key = parsed.key.to_string();
 
-        // Order by *authoring* time, not arrival time.
-        //
-        // Sync is last-write-wins and events apply in `received_at` order, which
-        // differs per device. For a note that self-corrects — the next edit
-        // overwrites either way. For a setting nobody touches again it does not:
-        // two devices would sit on different values with nothing left to
-        // reconcile them. Comparing `timestamp` makes the outcome the same
-        // everywhere regardless of the order events happened to land.
+        // Order by authoring time, not arrival, which differs per device: otherwise an untouched
+        // setting could rest on different values on two devices, forever.
         let mut existing = db
             .query("SELECT <string> updated_at AS updated_at FROM type::record('app_config', $key) LIMIT 1")
             .bind(("key", key.clone()))

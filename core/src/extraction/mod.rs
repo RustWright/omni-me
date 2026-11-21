@@ -1,21 +1,9 @@
 //! Document extraction trait + routing scaffold.
 //!
-//! Takes raw document bytes (PDF / image / text), an `ExtractionHint` for
-//! per-type prompt selection, and returns a draft transaction the user
-//! reviews in the confirm-draft screen.
-//!
-//! Trait split deliberately keeps multimodal byte handling out of `LlmClient`
-//! (which stays tool-call / text-only). There is exactly one implementation
-//! today: an OpenAI-compatible vision endpoint. A second one — a
-//! receipt/statement specialist such as Veryfi, currently unimplemented —
-//! registers behind the routing table below without touching a single caller.
-//! That is the whole reason for the split.
-//!
-//! PDF is handled by converting to text first (`statement::pdf`), because no
-//! model reads PDF directly and the API that used to convert for us is gone.
-//! `route_from_mime` still returns `None` for PDFs — not for lack of support,
-//! but because a PDF could be a receipt, paystub or either statement kind, and
-//! guessing burns budget on the wrong prompt.
+//! Bytes plus an `ExtractionHint` in, a draft for the confirm screen out. Its own trait, off
+//! `LlmClient`, so a receipt specialist could register behind the routing table without
+//! touching callers. PDFs become text first (`statement::pdf`); `route_from_mime` returns
+//! `None` for them because the MIME cannot tell a receipt from a statement.
 
 use async_trait::async_trait;
 use chrono::NaiveDate;
@@ -285,20 +273,9 @@ pub const RECONCILE_ATTEMPTS: usize = 3;
 
 /// Extract, and re-extract while the document's own total says the result is wrong.
 ///
-/// The retry fires on one signal only: `VerificationReport::total_mismatch`, a
-/// line-item sum that disagrees with a total the document states about itself.
-/// That is objective — the document supplies both figures — so a gap is evidence
-/// the extraction failed rather than a hunch about it.
-///
-/// Deliberately does not retry on low confidence or on zero postings alone.
-/// A marketing email legitimately has no line items, and nothing in it will ever
-/// reconcile, so retrying on absence would spend three calls on every newsletter
-/// to learn what the first one already said.
-///
-/// Returns the attempt that reconciled, or the closest one if none did. Keeping
-/// the closest matters: the alternative is the *first*, and the measured failure
-/// returns nothing at all half the time, so first-wins ships an empty draft while
-/// a correct reading sits in a discarded attempt.
+/// Retries only on `total_mismatch`, objective because the document states both figures; never
+/// on low confidence or no postings, which every newsletter has. Returns the reconciled attempt,
+/// else the closest: first-wins shipped empty drafts while a good reading was discarded.
 pub async fn extract_reconciled(
     extractor: &dyn DocumentExtractor,
     parts: &[DocumentPart<'_>],
@@ -368,15 +345,9 @@ pub trait DocumentExtractor: Send + Sync {
     /// to filter candidates before picking by hint priority.
     fn supports(&self, mime: &str) -> bool;
 
-    /// Pull a structured draft from one document, which may arrive as several
-    /// files. `parts` is in page order and is read as a single document; each
-    /// part's `mime` should match the `infer`-detected type from the blob store.
-    /// `hint` drives prompt selection (receipt vs paystub vs statement, etc.).
-    ///
-    /// A single-file document is `&[DocumentPart::new(bytes, mime)]`. There is
-    /// deliberately no one-file convenience method: two entry points would drift,
-    /// and it was the one-file-only signature that made a two-page photographed
-    /// document unreadable in the first place.
+    /// One document, possibly several files: `parts` in page order, each `mime` as `infer`
+    /// detected it; `hint` picks the prompt. One file is `&[DocumentPart::new(bytes, mime)]`; no
+    /// one-file shortcut, since two entry points drift.
     async fn extract(
         &self,
         parts: &[DocumentPart<'_>],
@@ -749,24 +720,9 @@ fn salvage_confidence(value: &mut serde_json::Value) {
     obj.insert("confidence".into(), serde_json::json!(0.0));
 }
 
-/// Make the `postings` array deserializable, returning how many were discarded.
-///
-/// `ExtractedPosting::amount` is a required `Decimal`, so one unusable amount used
-/// to fail the whole document and lose every good posting with it. A model that
-/// returns `""` for an amount it could not find did exactly that in production.
-///
-/// A numeric amount is recovered rather than dropped: the schema asks for a string,
-/// but a bare JSON number is the likeliest way to miss it and loses no information.
-/// Drop a `total` the deserializer would choke on, reporting whether it did.
-///
-/// `salvage_postings` has always done this for line items, and leaving its twin
-/// unguarded meant one unusable total could fail the whole document.
-/// A discarded total is not the same as a total that was never printed, so the
-/// caller records the difference rather than letting it read as absent.
-///
-/// This guard is sound, but the failure it was written for was misdiagnosed: the
-/// `input contains invalid characters` it originally cited is chrono's, from the
-/// unguarded `date`. See `salvage_date`.
+/// Drop a `total` the deserializer would choke on, reporting whether it did, as
+/// `salvage_postings` does for lines; the caller records a discarded total apart from an absent
+/// one. (The "invalid characters" failure once blamed on totals was the date: `salvage_date`.)
 fn salvage_total(value: &mut serde_json::Value) -> bool {
     // Read everything needed before writing, so the borrow ends here.
     let printed = match value.get("total") {
@@ -803,6 +759,8 @@ fn salvage_total(value: &mut serde_json::Value) -> bool {
     }
 }
 
+/// Make `postings` deserializable, returning how many were dropped: one unusable amount (a
+/// model's `""`) once failed the whole document. A bare JSON number is recovered, not dropped.
 fn salvage_postings(value: &mut serde_json::Value) -> usize {
     let Some(postings) = value.get_mut("postings").and_then(|p| p.as_array_mut()) else {
         return 0;

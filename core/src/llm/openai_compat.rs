@@ -1,16 +1,6 @@
-//! OpenAI-compatible chat-completions client — the "provider-swap" half of the
-//! extensibility mechanism (3.8 bring-your-own-LLM).
-//!
-//! One generic HTTP client + config (base URL / model / key) covers Ollama,
-//! llama.cpp's server, vLLM, LM Studio, and the OpenAI API itself, because they
-//! all expose the same `/chat/completions` surface. Selecting it is a config
-//! choice (`[llm] provider = "openai_compatible"` in `credentials.toml`), and
-//! it is now the only text client.
-//!
-//! Scope: this is the *text* side of `LlmClient` (note processing + structured
-//! text). The multimodal `DocumentExtractor` rides the same `[llm]` config but
-//! is opt-in via `vision = true` — many OpenAI-compatible endpoints have no
-//! vision support, so it is never assumed.
+//! The only text client: one `/chat/completions` client covers Ollama, llama.cpp, vLLM, LM
+//! Studio and OpenAI (`[llm] provider = "openai_compatible"`). The `DocumentExtractor` shares
+//! the config but needs `vision = true`, never assumed.
 
 use std::sync::Arc;
 
@@ -26,18 +16,9 @@ use super::tools::{LlmResponse, ToolCall, ToolDef};
 
 /// How many times a 429 is retried before the call is given up on.
 ///
-/// A 429 is not necessarily about *our* request rate, and treating it as one
-/// misreads the most common case. Pinning a gateway to a single upstream — which
-/// any measurement must do, or it cannot name the stack that answered — means a
-/// transient overload in that provider's shared pool comes back to us instead of
-/// being rerouted, arriving as `limit_source: upstream_provider_shared_pool` with
-/// the advice to retry shortly. Failing the call on the first one scores
-/// congestion as a model failure, which is the same class of mistake as having no
-/// request spacing at all: the number ends up describing the harness.
-///
-/// This is therefore the *third* rate-limit control here and they are not
-/// redundant — [`OpenAiCompatClient::min_interval`] stops us causing a 429,
-/// this survives one we did not cause.
+/// A pinned upstream returns its shared pool's overload to us as a 429; failing on the first
+/// scores congestion as model failure. [`OpenAiCompatClient::min_interval`] stops us causing
+/// a 429; this survives one we did not cause.
 const MAX_RATE_LIMIT_RETRIES: u32 = 3;
 
 /// Client for any OpenAI-compatible chat-completions endpoint.
@@ -55,13 +36,8 @@ pub struct OpenAiCompatClient {
     extra_body: Option<Value>,
     /// Minimum gap between requests, when the endpoint caps request rate.
     ///
-    /// `None` by default because "OpenAI-compatible" covers a local Ollama with
-    /// no limit at all as well as a free tier allowing ten requests a minute —
-    /// a fixed interval would either throttle the first or be useless for the
-    /// second. Where a cap exists this is a correctness control, not a
-    /// politeness one: an agent loop makes several calls per question and a
-    /// benchmark makes dozens, so without it the run reports rate-limit errors
-    /// as model failures.
+    /// `None` by default, since endpoints range from unlimited to ten a minute. Where a cap exists
+    /// it is a correctness control: without it rate-limit errors read as model failures.
     min_interval: Option<Duration>,
     /// First wait after a 429, doubling per retry. See [`MAX_RATE_LIMIT_RETRIES`].
     retry_backoff: Duration,

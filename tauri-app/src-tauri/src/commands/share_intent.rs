@@ -1,13 +1,6 @@
-//! Pending share-intent.
-//!
-//! On Android, `MainActivity.kt` writes shared file bytes + a metadata
-//! sidecar to the app's private `filesDir` whenever a SEND intent arrives.
-//! The WASM frontend calls `take_pending_share_intent` on app mount; if a
-//! pair is present we return it (and delete both files so the next mount
-//! starts clean).
-//!
-//! On desktop this command is still callable but always returns `None` —
-//! the override `filesDir` lookup doesn't apply.
+//! On Android, `MainActivity.kt` writes a shared file and a metadata sidecar to the app data
+//! dir; `take_pending_share_intent`, called on mount, returns the pair and deletes both.
+//! On desktop it always returns `None`.
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
@@ -30,15 +23,9 @@ pub async fn take_pending_share_intent(
     app: AppHandle,
     _state: State<'_, AppState>,
 ) -> Result<Option<PendingShareIntent>, String> {
-    // `path().app_local_data_dir()` is the Tauri-managed app data root on
-    // every platform. On Android it resolves via `PathPlugin.getDataDir` to
-    // `activity.dataDir` (`/data/user/0/<pkg>`) — NOT `filesDir`, which is
-    // `dataDir/files`. An earlier version of this comment claimed the two were
-    // the same directory; they are not, and `MainActivity.kt` was writing to
-    // `filesDir` on that assumption, so the bytes landed where this command
-    // never looked. Kotlin now writes via its `bridgeDir()` helper, which
-    // returns `dataDir` to match this call. Change one side and you must change
-    // the other — the failure mode is silent on both channels.
+    // On Android this is `activity.dataDir`, not `filesDir` (`dataDir/files`). Kotlin's
+    // `bridgeDir()` must return the same directory: change one side and you must change the
+    // other, or shares land where this never looks, silently.
     let dir = app
         .path()
         .app_local_data_dir()

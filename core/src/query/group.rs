@@ -1,16 +1,8 @@
 //! Group one account's postings by a metadata tag (institution / product / …).
 //!
-//! Powers the Accounts per-institution/product drill-down. Under the MECE
-//! account grammar a single balance-bearing account (e.g.
-//! `Assets:NonRegistered:CAD`) deliberately pools money across institutions,
-//! which live as posting-level tags rather than account segments. This groups
-//! that one account's postings by a chosen tag key, summing per (tag value,
-//! commodity).
-//!
-//! Pure + DB-free — it runs over the [`QueryTxn`] slice the command layer
-//! already builds from the `transactions` projection (same path R2 uses), so it
-//! unit-tests against inline fixtures. Base-currency conversion is the caller's
-//! job (it needs `Prices`); this stays native-quantity-only for testability.
+//! The Accounts drill-down: an account pools institutions, which live in posting tags, so
+//! this sums one account's postings per (tag value, commodity). Pure, over [`QueryTxn`];
+//! base-currency conversion is the caller's job.
 
 use std::collections::BTreeMap;
 

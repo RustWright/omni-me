@@ -1,14 +1,8 @@
 //! Turning one run's [`Outcome`] into the event that records it.
 //!
-//! This lives in `core` rather than in the agent binary because it is the only
-//! place that decides what a conversation *remembers* — which is a product
-//! question, not a deployment one — and because it is the half worth testing
-//! without a model, a database or a network.
-//!
-//! What it deliberately does not carry into the log: verb arguments, tool
-//! results, and the model's intermediate reasoning. All three are re-derivable
-//! from the agent's own logs, all three can be long, and every one of them would
-//! sync to the phone.
+//! In `core` because what a conversation remembers is a product question, testable without a
+//! model or network. Verb arguments, tool results and reasoning stay out of the log: long,
+//! re-derivable from the agent's logs, and they would sync to the phone.
 
 use crate::config::ResolvedConfig;
 use crate::events::{
@@ -31,15 +25,8 @@ impl From<&Usage> for AnswerUsage {
 
 /// The records a run actually opened, in the order it opened them.
 ///
-/// Read off the `read` calls in the trace rather than out of the model's prose:
-/// these are records it demonstrably held, so a citation built from them cannot
-/// be invented. A repeated `read` appears once — the loop already flags repeats,
-/// and a citation list is a set of sources, not a call log.
-///
-/// `title` is left `None` on purpose. The trace records what was asked for, not
-/// what came back, and the client reading this event has the record tables in
-/// front of it — resolving the title there shows the record's *current* title
-/// rather than a copy frozen at answer time.
+/// From the trace's `read` calls, never the prose, so a citation cannot be invented; deduped.
+/// `title` stays `None`: the client resolves the current title rather than a frozen copy.
 pub fn records_read(outcome: &Outcome) -> Vec<RecordRef> {
     let mut seen = Vec::new();
     for turn in &outcome.trace {
@@ -69,19 +56,8 @@ pub fn records_read(outcome: &Outcome) -> Vec<RecordRef> {
 
 /// The proposals a run actually made, in the order it made them.
 ///
-/// Read off the `propose` calls in the trace, for [`records_read`]'s reason: a
-/// proposal derived from what the model *called* cannot be one it merely claimed
-/// in prose. This is also what keeps the verb layer writer-free — nothing is
-/// recorded until the loop has ended and the agent walks the trace.
-///
-/// Re-validated here, not trusted from the trace. The verb already
-/// rejected bad arguments on the turn they were sent, but the trace holds what
-/// the model asked for, not what the verb returned — a failed `propose` is in
-/// there looking exactly like a successful one. Skipping the re-check would put
-/// proposals the user cannot act on into their inbox.
-///
-/// A repeated proposal appears once. The loop flags repeats, and a model that
-/// proposes the same note twice in one run meant it once.
+/// From the trace's `propose` calls, for [`records_read`]'s reason, which keeps verbs writer-free.
+/// Re-validated, since the trace holds a failed `propose` looking like a good one. Deduped.
 pub fn proposals(config: &ResolvedConfig, outcome: &Outcome) -> Vec<ProposedAction> {
     let mut out: Vec<ProposedAction> = Vec::new();
     for turn in &outcome.trace {
@@ -240,6 +216,7 @@ mod tests {
             text: "what did I write about rent?".into(),
             title: Some("rent".into()),
             scheduled: false,
+            prompt_name: None,
         }
     }
 

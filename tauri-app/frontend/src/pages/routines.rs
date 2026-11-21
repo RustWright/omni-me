@@ -241,25 +241,10 @@ fn DailyChecklistView(groups: Vec<RoutineGroup>, on_manage: EventHandler<()>) ->
                             );
                             rsx! {
                                 div {
-                                    // Keyed on the group id, not position. Dioxus
-                                    // diffs an unkeyed list positionally and *reuses
-                                    // the scope*, updating only the `group` prop —
-                                    // while `ChecklistGroup`'s `use_future` captured
-                                    // its ids on first render and never re-runs. So
-                                    // the card rendered `c`'s name over `a`'s items,
-                                    // and ticking one filed the completion against
-                                    // the wrong group. No drag needed: a peer device
-                                    // removing a group slides every card up one index.
-                                    //
-                                    // The date is in the key too. `today` here is
-                                    // also computed from `tz_signal`, which is still
-                                    // the `Tz::UTC` default on the first render, and
-                                    // `ChecklistGroup` loads its completions in a
-                                    // `use_future` that runs once per scope. Keying on
-                                    // the id alone would keep that scope alive when the
-                                    // real zone lands, leaving the checklist showing
-                                    // the wrong day's completions. Also covers midnight
-                                    // rollover for free.
+                                    // Keyed on id and date, never position: a reused
+                                    // scope keeps its first-render ids and files ticks
+                                    // against the wrong group, and the date re-keys it
+                                    // when the real timezone lands or midnight passes.
                                     key: "{group.id}-{today}",
                                     class: "{wrapper_class}",
                                     draggable: true,
@@ -574,14 +559,9 @@ fn ChecklistGroup(group: RoutineGroup, date: String) -> Element {
 /// wording comes back every time, and a longer list costs both.
 const SKIP_REASONS: [&str; 4] = ["No time", "Unwell", "Away", "Rest day"];
 
-/// Asks why an item is being skipped: one-tap presets, plus free text for anything
-/// else. Reports the chosen reason upward and knows nothing about ids or the bridge,
-/// so the skip has exactly one call site regardless of how many presets exist.
-///
-/// There is deliberately no "skip without a reason" control. A preset is one tap,
-/// which is not friction worth an escape hatch, and an escape hatch is how the field
-/// stays as empty as it was before the picker existed. Cancel abandons the skip
-/// entirely, which is a different thing and is offered.
+/// Asks why an item is skipped (one-tap presets or free text) and reports the reason upward.
+/// No "skip without a reason" on purpose: a preset is one tap, and the escape hatch would keep
+/// the field empty. Cancel abandons the skip.
 #[component]
 fn SkipReasonPicker(on_pick: EventHandler<String>, on_cancel: EventHandler<()>) -> Element {
     let mut custom = use_signal(String::new);
@@ -700,18 +680,9 @@ fn GroupListView(
                                             "{group.frequency}"
                                         }
                                         if is_pending {
-                                            // The arm → "Confirm?" / "Cancel" pair below is written
-                                            // out a second time further down this file, for routine
-                                            // *items* rather than groups. Same markup and same class
-                                            // strings; only the confirm handler differs. Left
-                                            // duplicated on purpose for now — folding it into a
-                                            // shared component is a visual change to a destructive
-                                            // control, so it needs a browser pass to land safely, and
-                                            // it buys nothing at a release gate. Trip-wire: extract it
-                                            // when a THIRD confirm-to-delete appears, or when either
-                                            // copy needs a behaviour change; two copies drifting in
-                                            // appearance is cosmetic, two copies drifting in what
-                                            // "confirm" does is not.
+                                            // This confirm pair repeats for items below.
+                                            // Trip-wire: extract it when a third appears or
+                                            // either copy's behaviour changes.
                                             button {
                                                 class: "px-2 py-1 bg-error text-obsidian-bg border border-error/60 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-error/90 transition-colors",
                                                 onclick: move |_| {

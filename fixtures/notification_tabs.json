@@ -1,0 +1,4 @@
+{
+  "note": "Every tab a notification can link to, read by two tests in two crates that share no Rust code: `every_tab_a_notification_names_is_listed` in core/src/jobs/summary.rs checks that core only emits these, and `every_tab_a_notification_names_opens_a_tab` in tauri-app/frontend/src/main.rs checks that the app parses each one. A renamed tab fails one side instead of a tap silently opening nowhere.",
+  "tabs": ["finances", "assistant", "archive", "settings"]
+}

@@ -1,12 +1,6 @@
-//! Public `omni-me-server` library — the composition seam for the open-core split.
-//!
-//! [`run`] performs all of the engine's *generic* startup (SurrealDB, the
-//! document extractor, the blob store, the HTTP routes, graceful shutdown) and
-//! delegates the one thing it deliberately does NOT know about — *which*
-//! auto-import sources exist — to a caller-supplied [`SourceBuilder`]. The public
-//! binary passes a builder that returns zero sources; the private overlay passes
-//! one that wires in the real bank adapters. Neither the engine nor this module
-//! references any specific bank.
+//! Public `omni-me-server` library, the composition seam for the open-core split.
+//! [`run`] does the engine's generic startup; which auto-import sources exist comes from the
+//! caller's [`SourceBuilder`]: none in the public binary, the bank adapters in the overlay.
 
 pub mod enrichment_scheduler;
 pub mod routes;
@@ -52,16 +46,10 @@ const DEFAULT_BLOB_DIR: &str = "blobs";
 
 /// Where to listen, from `OMNI_LISTEN_ADDR` or the default.
 ///
-/// This is what lets a second instance run beside the real one. `DB_PATH`
-/// is relative, so the working directory already isolates the database, and
-/// `BLOB_DIR` already isolates the blobs — the port was the last thing hardcoded,
-/// and it is why a dev server could not be stood up next to the live one at all.
-/// Same override precedent as `OMNI_AUTO_IMPORT_INTERVAL_SECS` below.
-///
-/// Unparseable values are not silently replaced with the default. A typo in
-/// a unit file would otherwise start a second server on 3000, where it either
-/// fails to bind or — worse, if the real one is down — answers in its place with
-/// an empty database.
+/// The port is what lets a dev server run beside the live one; `DB_PATH` and `BLOB_DIR` are
+/// already relative to the working directory.
+/// A bad value is never replaced with the default: on 3000 it could answer in the live
+/// server's place with an empty database.
 fn listen_addr() -> String {
     match std::env::var("OMNI_LISTEN_ADDR") {
         Ok(addr) if addr.trim().is_empty() => DEFAULT_LISTEN_ADDR.to_string(),
@@ -154,14 +142,9 @@ pub struct AppState {
     pub projections: ProjectionRunner,
     pub device_id: String,
     pub default_interval: Duration,
-    /// The credentials file's name-keyed `secrets` map, resolved by routes that
-    /// take a secret *name* rather than a secret.
-    ///
-    /// Statement upload is the current user: an encrypted statement needs a
-    /// password, but the rule for deriving one is the bank's invention and has
-    /// no place in a general engine. The client names a secret, the value is
-    /// looked up here, and the engine learns nothing about the institution —
-    /// the same indirection `[llm].api_key` and the subprocess helpers use.
+    /// The credentials file's name-keyed `secrets` map, for routes that take a secret's name
+    /// rather than the secret (statement passwords). The engine never learns the institution's
+    /// rule for deriving one, the same indirection `[llm].api_key` uses.
     pub secrets: Arc<HashMap<String, String>>,
     /// Which deployment this server's data belongs to, reported on `/health` so
     /// a destructive tool can ask before it acts. `None` means nothing declared
@@ -245,18 +228,9 @@ pub async fn run(cfg: RunConfig) {
         .await
         .expect("failed to connect to SurrealDB");
 
-    // Load server credentials once (graceful: missing/unreadable → default-empty,
-    // so a zero-config public engine still boots — 3.4). Reused for the text-LLM
-    // client and the document extractor.
-    //
-    // A file that is PRESENT but unparseable is shouted about rather than
-    // silently degraded. `load` already maps a missing file to default-empty, so
-    // anything reaching the error arm is a real file this node could not read.
-    // Why it earns an ERROR: the failure is whole-file, and every section goes
-    // with it. Removing one required key from `[server]` — leaving the table
-    // present but empty — took out `[llm]` and all three `[imap.*]` accounts too;
-    // the box booted `{"status":"ok"}`, auto-import stopped dead, and the only
-    // clues were warnings about the sections that had not been touched.
+    // A missing credentials file is default-empty, so a zero-config engine still boots.
+    // A present but unparseable one is an error, not a warning: the failure is whole-file, so
+    // one bad key in `[server]` silently takes `[llm]` and every `[imap.*]` account with it.
     let creds = match credentials::default_path() {
         Ok(path) => match credentials::load(&path) {
             Ok(creds) => creds,
@@ -314,16 +288,9 @@ pub async fn run(cfg: RunConfig) {
 
     let db_arc = Arc::new(db);
 
-    // Document extractor (NullExtractor fallback when no vision endpoint) — lifted
-    // out of any auto-import conditional so AppState always carries one; the
-    // /documents/extract route needs it regardless of auto-import config. Built
-    // from the already-loaded `creds`; a missing key degrades to NullExtractor
-    // rather than panicking — part of the zero-config boot guarantee (3.4). Its
-    // provider-swap (OpenAI-compatible vision) is a deferred fast-follow that
-    // will read the same `[llm]` section.
-    // `ClientOptions::default()` on purpose: production goes direct to the
-    // committed provider, so there is no gateway to pin and nothing per-request to
-    // add. The sampling role C runs at comes from the config, not from here.
+    // Built outside any auto-import conditional: `/documents/extract` needs it either way, and
+    // a missing key degrades to `NullExtractor` rather than failing the zero-config boot.
+    // `ClientOptions::default()` on purpose: production calls the provider directly.
     let extractor: Arc<dyn DocumentExtractor> = build_extractor(&creds, ClientOptions::default());
 
     // Shared registry — populated below by spawn_sources, read by the
@@ -390,15 +357,9 @@ pub async fn run(cfg: RunConfig) {
         device_id,
         extractor,
     };
-    // Persisted off-switch set (#367). A source the user switched off stays off
-    // across restarts — critical for a runaway bank source, where re-arming on
-    // reboot would resume the exact hammering the pause was meant to stop.
-    // Threaded into `spawn_sources` so a paused source is registered but never
-    // spawned (not even one boot tick). Applies uniformly to compiled overlay
-    // sources too: everything the builder returns flows through here. A load
-    // failure degrades to "nothing paused" rather than failing startup.
-    // Said at boot because the alternative is learning it from a pause that
-    // reports an error, long after the deployment that broke it.
+    // Paused sources stay paused across restarts: re-arming a runaway bank source on reboot
+    // would resume the hammering the pause stopped. A paused source is registered, never spawned.
+    // An unwritable state dir is said at boot, not discovered later from a failing pause.
     if let Some(why) = omni_me_core::paths::state_dir_write_error() {
         tracing::error!(
             reason = %why,
@@ -466,6 +427,88 @@ pub async fn run(cfg: RunConfig) {
             }
         });
     }
+    // Repeating obligations: the next occurrence once the latest is closed or due. Ruling 131.
+    {
+        let (db, writer) = ((*state.db).clone(), enrich_writer.clone());
+        tokio::spawn(async move {
+            use omni_me_core::tasks::repeats;
+            let mut tick = tokio::time::interval(repeats::TICK);
+            loop {
+                tick.tick().await;
+                let today = match repeats::today(&db).await {
+                    Ok(d) => d,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "repeating tasks: no zone; skipped");
+                        continue;
+                    }
+                };
+                match repeats::run(&db, &writer, today).await {
+                    Ok(0) => {}
+                    Ok(n) => tracing::info!(created = n, "repeating tasks: next occurrences made"),
+                    Err(e) => tracing::warn!(error = %e, "repeating tasks: run failed"),
+                }
+            }
+        });
+    }
+    // Routine items ticked from journal lines, on the structurer seat. Ruling 127.
+    if state.llm_client.model_name() != "none" {
+        let (db, writer, llm) = (
+            (*state.db).clone(),
+            enrich_writer.clone(),
+            state.llm_client.clone(),
+        );
+        tokio::spawn(async move {
+            use omni_me_core::routine_ticks;
+            if let Err(e) = routine_ticks::init_schema(&db).await {
+                tracing::error!(error = %e, "journal ticks: no state table; job off");
+                return;
+            }
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(15 * 60));
+            loop {
+                tick.tick().await;
+                let tz = match omni_me_core::events::load_shared(&db).await {
+                    Ok(c) => omni_me_core::assistant::scheduled::user_timezone(&c),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "journal ticks: no config; skipped");
+                        continue;
+                    }
+                };
+                let today = chrono::Utc::now().with_timezone(&tz).date_naive();
+                let dates = [today - chrono::Duration::days(1), today];
+                match routine_ticks::run(&db, &writer, llm.as_ref(), &dates, tz).await {
+                    Ok(r) if r.lines_read == 0 => {}
+                    Ok(r) => tracing::info!(
+                        lines = r.lines_read,
+                        ticked = r.ticked,
+                        "journal ticks: lines read"
+                    ),
+                    Err(e) => tracing::warn!(error = %e, "journal ticks: run failed"),
+                }
+            }
+        });
+    }
+    // Coursework deadlines from the LEARN feed, when its address is configured. Ruling 122.
+    if let Some(url) = state.secrets.get("learn_feed_url").cloned() {
+        let (db, writer) = ((*state.db).clone(), enrich_writer.clone());
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(6 * 3600));
+            loop {
+                tick.tick().await;
+                match omni_me_core::tasks::queries::poll_learn(&db, &writer, &url).await {
+                    Ok((feed, recorded, moved)) => tracing::info!(
+                        deadlines = feed.deadlines.len(),
+                        unclassified = feed.problems.len(),
+                        recorded,
+                        tasks_moved = moved,
+                        "learn feed read"
+                    ),
+                    Err(e) => tracing::warn!(error = %e, "learn feed: read failed"),
+                }
+            }
+        });
+    } else {
+        tracing::info!("learn_feed_url not in secrets; the LEARN deadline feed is off");
+    }
     enrichment_scheduler::spawn(
         (*state.db).clone(),
         enrich_writer,
@@ -529,6 +572,7 @@ pub fn build_app(
         .merge(routes::jobs_routes())
         .merge(routes::feedback_routes())
         .merge(routes::llm_routes())
+        .merge(routes::task_routes())
         // Behind the bearer gate like the rest, and with two gates of its own on
         // top: a preview ticket and a named instance. See `routes::wipe`.
         .merge(routes::wipe_routes());
@@ -553,14 +597,9 @@ pub fn build_app(
         app = app.nest_service("/updates", ServeDir::new(dir));
     }
 
-    // No CORS layer. It used to be `CorsLayer::permissive()`, which was both
-    // unused and actively harmful: the WASM frontend makes zero direct HTTP
-    // calls (everything goes through the Rust client in `commands/*`), while
-    // the permissive preflight let any page the user happened to open drive
-    // these endpoints cross-origin. With no CORS headers a browser refuses the
-    // preflight. The body routes that take text/plain or multipart are still
-    // "simple requests" a page can send blind, so the bearer token is what guards
-    // them; dev, which runs without one, is reachable only from the tailnet.
+    // No CORS layer on purpose: the frontend never calls HTTP directly, and a permissive one let
+    // any open page drive these endpoints. Text/plain and multipart routes are still "simple
+    // requests", so the bearer token guards them; dev, without one, is tailnet-only.
     app.layer(TraceLayer::new_for_http()).with_state(state)
 }
 

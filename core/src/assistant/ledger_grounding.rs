@@ -1,4 +1,4 @@
-//! Grounding a proposed ledger write in the ledger it is written to (R4-2).
+//! Grounding a proposed ledger write in the ledger it is written to: ruling 21 (RULINGS.md).
 //!
 //! Two checks run when `transaction.record` is proposed, and a failure goes back
 //! to the model as an error on the same turn, so it can fix the entry: every

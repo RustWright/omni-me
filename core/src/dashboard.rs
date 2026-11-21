@@ -1,26 +1,8 @@
 //! Financial-health glance dashboard aggregation.
 //!
-//! Produces the four widget payloads that `DashboardView` renders:
-//! - Net worth — sum of listable accounts' base-currency values, with
-//!   liabilities subtracted automatically (negative balances on
-//!   `Liabilities:*` come back as negative `value_in_base`, so the sum is
-//!   already correct).
-//! - `Unmatched` balance — single number; the reconciliation-pending
-//!   signal per `project_unmatched_account_pattern.md`. Click-through on
-//!   the screen filters the transaction list to `account: Unmatched`.
-//! - Monthly income / spending trend — last N months of (income,
-//!   spending) per the user's base currency, bucketed by year-month.
-//!   Foreign-commodity legs are excluded (documented limitation; revisit
-//!   when more than 5% of activity isn't in `base_currency`).
-//! - Recurring obligations — confirmed `RecurringPattern` rows pulled
-//!   from the projection table. `recurring_scanner` proposes patterns and
-//!   `confirm_recurring` promotes them; this list stays empty until the user
-//!   confirms at least one.
-//!
-//! Plus one decision-shaped helper:
-//! - [`can_i_afford`] — verdict-from-payload for the "can I afford X?" UX.
-//!   3.10 makes it liquidity-aware (spendable pool = user-marked liquid
-//!   accounts, falling back to net worth) — see the fn's inline decision note.
+//! Dashboard payloads: net worth (liabilities are already negative), the `Unmatched` balance,
+//! a monthly income and spending trend in base currency (foreign legs excluded; revisit past 5%
+//! of activity), and confirmed recurring obligations. Plus [`can_i_afford`].
 
 use std::collections::BTreeMap;
 
@@ -182,12 +164,8 @@ fn sum_listable_net_worth(summaries: &[AccountSummary]) -> Option<Decimal> {
 
 /// Sum of the accounts the user marked *liquid* (3.10), for the afford verdict.
 ///
-/// The `None` vs `Some` distinction is load-bearing: `None` means no account
-/// is marked liquid (opt-in unused) → [`can_i_afford`] falls back to net
-/// worth. Once ≥1 account is marked liquid we return `Some(total)` even if that
-/// total is `0` (e.g. the marked accounts are empty or unconvertible), so a
-/// deliberate "no spendable cash" reads as "can't afford it", not as a fallback
-/// to full net worth. `Unmatched` is never liquid (it's a clearing account).
+/// `None` means none marked, so [`can_i_afford`] falls back to net worth; `Some(0)` means none
+/// spendable, never that fallback. `Unmatched` is never liquid.
 fn sum_liquid_assets(summaries: &[AccountSummary]) -> Option<Decimal> {
     let liquid: Vec<&AccountSummary> = summaries
         .iter()
@@ -420,13 +398,9 @@ pub fn net_worth_series(
 
 /// Build the net-worth history from an already-parsed [`Ledger`] + price table.
 ///
-/// Walks the transactions in date order, accumulating a running [`Balance`]
-/// of the roster's balance-bearing accounts (excluding `Unmatched`, matching
-/// [`sum_listable_net_worth`]), and samples net worth at each boundary date for
-/// the requested `range`. One pass over the postings; FX conversion at each
-/// boundary uses that boundary's own date, so historical points reflect the rate
-/// in effect then. The last point is `as_of`, so it equals the live net-worth
-/// hero number (same journal source, same roster/Unmatched policy).
+/// One date-ordered pass, sampling net worth (without `Unmatched`, as
+/// [`sum_listable_net_worth`]) at each boundary with that day's rates. The last point is `as_of`,
+/// equal to the live hero number.
 pub fn net_worth_series_from(
     ledger: &Ledger,
     prices: &Prices,
@@ -633,32 +607,10 @@ fn distill_parsed_recurring(
 /// Compute the verdict for "can I afford `amount`?" against a dashboard
 /// summary.
 ///
-/// 3.10 makes this liquidity-aware: the spendable pool is the accounts the
-/// user has marked liquid (opt-in), not full net worth. Two pools are in play:
-///
-/// - [`DashboardSummary::liquid_assets_in_base`] — `Some(x)` once ≥1 account is
-///   marked liquid; the spendable total (possibly `0`). The primary pool.
-/// - [`DashboardSummary::net_worth_in_base`] — the fallback pool when
-///   nothing is marked liquid (`liquid_assets_in_base == None`), preserving
-///   pre-3.10 behavior so the feature degrades gracefully.
-///
-/// Both pools subtract the next month's recurring obligations before the
-/// purchase (the conservative "is there room after my bills?" rule):
-/// `remaining = pool − next_month_recurring − amount`, `can_afford =
-/// remaining > 0`. `Unmatched` is excluded from both pools (clearing account),
-/// so it never inflates a verdict.
-///
-/// Deliberately caller-less — do not remove as dead code. This is the
-/// affordability policy itself, kept while the UI that asked the question is
-/// gone: the Can-I-Afford widget was retired on purpose, because questions of
-/// that shape are to be answered by the LLM chat rather than a bespoke screen.
-/// Its `#[tauri::command]` wrapper was deleted with the widget (2026-08-28) and
-/// is not the template to restore from — it stringified `Decimal`s to cross the
-/// IPC boundary and then parsed them straight back, and it dropped
-/// `monthly_buckets` entirely. An LLM tool holds a real `DashboardSummary` and
-/// needs none of that: tools live in `llm/tools.rs` and call these core
-/// functions directly, never through a Tauri command. The tests below are what
-/// keep the policy honest until that binding exists.
+/// The pool is the liquid accounts, else net worth; `remaining = pool − next month's recurring −
+/// amount`, affordable when positive, `Unmatched` excluded. Caller-less on purpose, never dead
+/// code: the widget retired for the LLM, which should call this directly, not through a Tauri
+/// command. The tests keep the policy honest until then.
 pub fn can_i_afford(amount: Decimal, summary: &DashboardSummary) -> AffordVerdict {
     let (pool, policy_label) = match (summary.liquid_assets_in_base, summary.net_worth_in_base) {
         (Some(liquidity), _) => (liquidity, "Liquid assets − next month's recurring".into()),

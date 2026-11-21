@@ -537,17 +537,9 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
                         apply_raw_note(props, body, initial_content, &raw);
                         hydrated.set(true);
                     }
-                    // On error, leave `hydrated` false — the same choice
-                    // `journal.rs:425` makes deliberately, and notes was the
-                    // asymmetric half of an already-solved problem.
-                    //
-                    // It used to set `hydrated` unconditionally, so a transient
-                    // fetch failure left a blank but editable editor holding
-                    // a live `local_note_id`: `content`, `body` and
-                    // `last_saved_content` all `""`. The first keystroke then
-                    // satisfied the autosave effect (`"x" != ""`, id present) and
-                    // called `invoke_update_generic_note(&nid, "x")`, overwriting
-                    // the real note with near-empty content.
+                    // On error, leave `hydrated` false, as `journal.rs` does: a blank editor
+                    // holding a live note id would autosave its first keystroke over the
+                    // real note.
                     Err(e) => {
                         fetch_error.set(Some(e));
                         loading.set(false);
@@ -591,16 +583,9 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
     // creation still requires a manual Save click; after that, local_note_id
     // is populated and this effect takes over for body updates.
     use_effect(move || {
-        // Compared through the guards, not cloned. `current` was only ever
-        // used for the equality check below — a full heap copy of the whole
-        // document, per keystroke, to answer a question that needs none. The
-        // snapshot the save actually sends is taken separately, later, inside
-        // the spawned future.
-        //
-        // `read()` on content (subscribes — this effect must re-run on input);
-        // `peek()` on last_saved_content (must NOT subscribe, or our own
-        // write-back when a save resolves re-triggers a redundant pass that
-        // gen-cancels itself one tick later).
+        // Compared through the guards, never cloned per keystroke. `read()` on content so
+        // input re-runs this; `peek()` on last_saved_content, or our own write-back after a
+        // save would trigger a redundant pass.
         if *content.read() == *last_saved_content.peek() {
             return;
         }

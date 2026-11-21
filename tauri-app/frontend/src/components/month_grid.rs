@@ -14,16 +14,9 @@ pub struct MonthCell {
 
 /// Build the list of calendar cells for a month view.
 ///
-/// The grid is always 6 rows × 7 cols (42 cells) so its height stays constant
-/// as the user navigates months. Six rows are needed to cover every layout —
-/// a 5-row grid truncates the last 1-2 days of long months that start late in
-/// the week (e.g., a 31-day month starting Sunday). Week starts on Monday
-/// (matches Obsidian's daily-note plugin default).
-///
-/// Cells outside the anchor's month carry `in_current_month: false` so the
-/// renderer can grey them out (spillover style) instead of showing blanks.
-///
-/// `anchor` is expected to be the first day of the target month.
+/// Always 6×7 cells, so the height is constant and a 31-day month starting Sunday fits. Weeks
+/// start Monday; cells outside the month carry `in_current_month: false` for greying.
+/// `anchor` is the first day of the month.
 pub fn build_month_cells(anchor: NaiveDate) -> Vec<MonthCell> {
     let anchor_month = anchor.month();
     let start_date = anchor - chrono::Days::new(anchor.weekday().num_days_from_monday() as u64);

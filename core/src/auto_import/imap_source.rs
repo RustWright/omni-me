@@ -1,17 +1,9 @@
 //! `ImapSource` — bridges the IMAP-side trait stack (`ImapFetcher` + handlers)
 //! into the scheduler-side trait (`AutoImportSource`).
 //!
-//! Holds a fetcher + a list of handlers + a persistent cursor. Each `pull()`
-//! tick:
-//!   1. Loads cursor from store (else in-memory fallback for tests)
-//!   2. Calls `poll_once_skipping(fetcher, handlers, cursor, archive, skip)`
-//!   3. Appends emitted events via `EventStore::append_batch`
-//!   4. Runs projections on the batch
-//!   5. Persists the advanced cursor
-//!
-//! Cursor persistence avoids re-processing the entire inbox on every server
-//! restart. The `CursorStore` trait is async + object-safe so the production
-//! `SurrealCursorStore` and test-side mocks share the same surface.
+//! Each `pull()` loads the cursor, runs `poll_once_skipping`, appends and projects the batch,
+//! then persists the cursor so a restart never re-reads the inbox. `CursorStore` is object-safe
+//! for `SurrealCursorStore` and test mocks alike.
 
 use async_trait::async_trait;
 use chrono::NaiveDate;

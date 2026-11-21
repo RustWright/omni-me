@@ -75,13 +75,9 @@ fn segments(path: &str) -> Vec<String> {
 
 /// Whether a tag query matches a tag set.
 ///
-/// The `Tag`-side half of [`tag_matches`], lifted out so a caller holding a plain
-/// set — the archive's hoisted `tags` column — gets these semantics rather than a
-/// second comparison that agrees with this one until it doesn't.
-///
-/// `Bare` matches a bare tag *or* the key of a `key:value` tag, so `tag:institution`
-/// finds `institution:rbc`. `KeyValue` requires both halves. Case-insensitive
-/// throughout, which is what makes it agree with `Tag::normalize`'s lowercasing.
+/// Lifted out of [`tag_matches`] so a plain tag set (the archive's column) shares these
+/// semantics. `Bare` also matches a `key:value` tag's key; `KeyValue` needs both halves.
+/// Case-insensitive, agreeing with `Tag::normalize`.
 pub fn tag_query_matches(tag_query: &TagQuery, tags: &[Tag]) -> bool {
     tags.iter().any(|t| match (tag_query, t) {
         (TagQuery::Bare(name), Tag::Bare(s)) => s.eq_ignore_ascii_case(name),

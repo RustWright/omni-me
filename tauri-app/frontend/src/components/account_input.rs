@@ -1,14 +1,5 @@
-//! Shared account-name typeahead (friction-log [M]).
-//!
-//! Every place the user types a ledger account name (`Assets:Globepay:CAD`,
-//! `Expenses:Food`) used to be a raw `<input>` with no autocomplete. This is the
-//! single component those sites swap to: a controlled text input + a suggestion
-//! dropdown fed by the 3.9 `known_accounts` union (every account seen in the
-//! ledger ∪ declared ∪ each name's ancestor segments — so segment-aware
-//! completion falls out for free).
-//!
-//! The component exposes the same `value` + `on_input` shape as a plain input, so
-//! each call site keeps its existing read-modify-write save logic unchanged.
+//! Shared account-name typeahead over `known_accounts` (seen, declared, and every ancestor
+//! segment, so completion is segment-aware). Same `value` and `on_input` shape as a plain input.
 
 use dioxus::prelude::*;
 
@@ -51,15 +42,9 @@ pub fn use_account_suggestions_provider() {
     let mut list = use_signal(Vec::<String>::new);
     use_context_provider(|| AccountSuggestions { list });
 
-    // Load on mount, and re-load whenever a background pull applies new events
-    // (`sync_epoch`). Critical on a fresh device: this initial fetch runs before
-    // the event backfill has populated the ledger, so a one-shot fetch would
-    // leave the list empty — flagging every real account "No such account in the
-    // ledger" until an app restart — even though the live txn queries (which
-    // re-read per navigation) work. Subscribing to `sync_epoch` re-fetches as the
-    // backfill lands (and on later inbound edits). Must be registered *after* the
-    // `SyncRefresh` provider in `main.rs`, or `use_sync_epoch` falls back to an
-    // inert signal that never bumps. (on-device batch 2, 2026-08-14)
+    // Reload on every `sync_epoch`: on a fresh device the first fetch precedes the backfill and
+    // flags every real account unknown. Must sit after `main.rs`'s `SyncRefresh` provider, or the
+    // epoch is inert.
     let sync_epoch = crate::sync_refresh::use_sync_epoch();
     use_effect(move || {
         let _ = sync_epoch.read(); // subscribe: re-run on inbound sync
@@ -178,14 +163,8 @@ pub fn AccountInput(
                 },
                 onfocus: move |_| {
                     open.set(true);
-                    // Self-heal the shared union: the root-level fetch (mount +
-                    // `sync_epoch`) can miss the post-backfill window on a fresh
-                    // device, leaving the list empty so every real account reads
-                    // "unknown" / "new account". Focus is the exact moment the
-                    // list is needed and always lands *after* the backfill, so a
-                    // refresh-if-empty here reliably populates it (one field at a
-                    // time → no thundering herd). `peek` so this handler doesn't
-                    // subscribe. (on-device batch 2, 2026-08-23)
+                    // Refresh-if-empty on focus: the root fetch can still miss the backfill,
+                    // and focus always comes after it. `peek`, so the handler never subscribes.
                     if suggestions_ctx.list.peek().is_empty() {
                         suggestions_ctx.refresh();
                     }

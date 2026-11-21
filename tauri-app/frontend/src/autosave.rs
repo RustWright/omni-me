@@ -29,11 +29,7 @@ impl SaveState {
     /// Collapse the editors' three independent signals into one indicator
     /// state, in strict priority order: in-flight beats failed beats dirty.
     ///
-    /// Lives here rather than at each call site because the journal and notes
-    /// editors had drifted-by-copy versions of exactly this ladder. Nothing
-    /// about the duplication was compiler-visible — both branches type-check
-    /// independently — so reordering the rungs in one editor would have shown
-    /// up only as two screens disagreeing about whether your work was saved.
+    /// Shared because copies in the two editors had drifted, invisibly to the compiler.
     pub fn derive(saving: bool, failed: bool, dirty: bool) -> Self {
         if saving {
             Self::Saving
@@ -47,15 +43,9 @@ impl SaveState {
     }
 }
 
-/// Given a zero-based retry `attempt` (0 = the wait before the *first* retry,
-/// i.e. after the initial save already failed once), return:
-///   - `Some(ms)` to wait `ms` milliseconds and retry, or
-///   - `None` to stop retrying and surface `SaveState::Failed`.
-///
-/// This is auto-save's patience policy for a flaky save (a network blip or a
-/// server restart mid-edit): it trades off "recover silently from a brief
-/// outage" against "don't leave the user thinking they're saved when they're
-/// not." Delays are i32 ms to match `sleep_ms`.
+/// For zero-based retry `attempt` (0 is the wait before the first retry): `Some(ms)` to wait
+/// and retry, `None` to stop and surface `SaveState::Failed`. Recovers from a brief outage
+/// without letting the user believe they are saved when they are not.
 pub fn backoff_delay(attempt: u32) -> Option<i32> {
     (attempt < 4).then(|| 500i32 * 2i32.pow(attempt))
 }

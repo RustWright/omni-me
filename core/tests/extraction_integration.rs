@@ -1,30 +1,8 @@
-//! End-to-end integration tests for the document extractor against real
-//! document samples — the quarantined-extractor role, exercised for real.
-//!
-//! All tests here are `#[ignore]`d by default: they spend money against a live
-//! vision endpoint and require:
-//!
-//! 1. `OMNI_EXTRACT_BASE_URL`, `OMNI_EXTRACT_MODEL` and `OMNI_EXTRACT_KEY` set.
-//! 2. Sample fixture files placed in `core/tests/fixtures/extraction/`:
-//!    - `receipt.jpg` — paper receipt photo
-//!    - `brokerage.pdf` — investment statement
-//!    - `paystub.pdf` — payroll paystub
-//!    - `email.txt` — email body with a transaction
-//!
-//! Run with:
-//! ```bash
-//! OMNI_EXTRACT_BASE_URL=https://api.deepinfra.com/v1/openai \
-//! OMNI_EXTRACT_MODEL=z-ai/glm-5.3-flash \
-//! OMNI_EXTRACT_KEY=$(…) \
-//!   cargo test -p omni-me-core --test extraction_integration -- --ignored
-//! ```
-//!
-//! The two PDF fixtures need `pdftotext` (poppler-utils) on the machine —
-//! PDFs are converted to text before the call, because no model reads PDF.
-//!
-//! These tests are not gated by CI — they exist for the developer to validate
-//! a specific build against real samples. Failures here are diagnostic, not
-//! green-bar-required.
+//! The document extractor against real samples. Ignored by default and outside CI: they spend
+//! money on a live endpoint, and failures are diagnostic. Need `OMNI_EXTRACT_BASE_URL`,
+//! `OMNI_EXTRACT_MODEL`, `OMNI_EXTRACT_KEY`, samples (`receipt.jpg`, `brokerage.pdf`,
+//! `paystub.pdf`, `email.txt`) in `core/tests/fixtures/extraction/`, and `pdftotext`.
+//! Run with `cargo test -p omni-me-core --test extraction_integration -- --ignored`.
 
 use std::path::PathBuf;
 
@@ -203,18 +181,9 @@ async fn rejects_unsupported_mime_without_calling_api() {
     eprintln!("unsupported MIME error: {err}");
 }
 
-// ---------------------------------------------------------------------------
-// Size-path tests — synthetic inputs, so these need no private samples
-//
-// Unlike the tests above, these use the committed fixtures in
-// `fixtures/pdf-routing/` and assert on *known* values, because the receipt is
-// fabricated. They exist to prove the two 2026-09-11 size fixes hold against a
-// live endpoint rather than only against a mock: a scan reaches the model as
-// pictures, and an oversized photo survives downscaling still legible.
-//
-// Requires a vision-capable model. The Role A winner (`gpt-oss-120b`) is
-// text-only, so `OMNI_EXTRACT_MODEL` here is a different choice than `[llm]`.
-// ---------------------------------------------------------------------------
+// Size paths, on the committed fabricated fixtures in `fixtures/pdf-routing/`, so values are
+// exact: a scan reaches the model as pictures, and a downscaled photo stays legible. Needs a
+// vision model in `OMNI_EXTRACT_MODEL`, which may differ from `[llm]`'s.
 
 /// Render a fixture PDF to a single oversized JPEG, standing in for a phone
 /// photo. Generated rather than committed: `pdftoppm` is already required, and
@@ -236,14 +205,8 @@ fn oversized_photo_of(fixture: &str) -> Vec<u8> {
     std::fs::read(prefix.with_extension("jpg")).expect("read rendered photo")
 }
 
-/// The receipt both synthetic fixtures encode. Fabricated, so these are exact.
-/// Its three line items. Asserting on these rather than on `total` is
-/// deliberate: they are what legibility actually means here — the model has to
-/// have read individual digits off the page, not recognised a receipt shape.
-///
-/// Compared as numbers, not strings. `Decimal` renders 5.50 as "5.5" once
-/// normalized and as "5.50" otherwise, so a string compare fails on formatting
-/// while the digits are perfectly correct.
+/// The fabricated receipt's line items, asserted rather than `total` because legibility means
+/// reading individual digits. Compared as numbers: `Decimal` may render 5.50 as "5.5".
 const SYNTHETIC_ITEMS: [f64; 3] = [4.29, 5.50, 14.75];
 const SYNTHETIC_TOTAL_F: f64 = 25.77;
 
@@ -328,16 +291,9 @@ async fn an_oversized_photo_survives_downscaling_legibly() {
 
 /// Extract whatever `OMNI_EXTRACT_SAMPLE` points at, and print what came back.
 ///
-/// The path is an input, never a committed fixture: real receipts stay
-/// outside the repo per `core/tests/README.md`. Skips loudly when unset, so it
-/// can never pass by silently doing nothing. Asserts only structural
-/// properties, because the right answer depends on whose receipt it is.
-///
-/// ```bash
-/// OMNI_EXTRACT_SAMPLE=~/some/receipt.jpg \
-///   cargo test -p omni-me-core --test extraction_integration -- \
-///   --ignored --nocapture extracts_an_arbitrary_local_sample
-/// ```
+/// Real receipts stay outside the repo (`core/tests/README.md`); skips loudly when unset, and
+/// asserts only structure. Run with `OMNI_EXTRACT_SAMPLE=<path>` and
+/// `-- --ignored --nocapture extracts_an_arbitrary_local_sample`.
 #[tokio::test]
 #[ignore = "diagnostic; needs OMNI_EXTRACT_* and a local OMNI_EXTRACT_SAMPLE file"]
 async fn extracts_an_arbitrary_local_sample() {

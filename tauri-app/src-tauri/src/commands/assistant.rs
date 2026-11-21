@@ -1,20 +1,8 @@
 //! Asking the assistant a question, and reading what it said back.
 //!
-//! The client never calls a model. It appends an `AssistantQuestionAsked`
-//! event and stops; the resident agent picks the question up through sync,
-//! answers it, and appends the answer, which arrives here the same way. That is
-//! why there is no timeout, no retry and no API key on this path — the question
-//! is durable the moment it is appended, and an answer written while the phone
-//! was in a tunnel is waiting when it comes back.
-//!
-//! It also sidesteps a constraint that has no workaround: `surrealkv` holds an
-//! OS-level exclusive lock on its directory, so nothing outside the agent's own
-//! process can open the database a running agent is holding. An event is the one
-//! channel that already crosses that boundary.
-//!
-//! The read commands are thin by design — the policy (what counts as pending,
-//! how a thread is ordered) lives in `omni_me_core::assistant::conversation`, so
-//! the agent's sweep and this screen cannot drift apart on the same question.
+//! The client never calls a model: it appends `AssistantQuestionAsked` and the agent's answer
+//! arrives through sync, so there is no timeout, retry or API key here. Read policy lives in
+//! `omni_me_core::assistant::conversation`, shared with the agent's sweep.
 
 use tauri::State;
 
@@ -84,6 +72,7 @@ pub async fn ask_assistant(
         // This command exists because a person typed something. A scheduled
         // question comes from the agent's own loop and never from here.
         scheduled: false,
+        prompt_name: None,
     };
 
     tracing::info!(
@@ -154,11 +143,8 @@ pub async fn read_thread_proposals(
 /// The proposals the finances screen reviews, which the assistant inbox does not
 /// show.
 ///
-/// Gated on `Finances`, not on `Llm`. The guard belongs to the screen doing
-/// the reviewing: turning the assistant off must not strand a ledger proposal the
-/// user has already been offered — the same reasoning as
-/// [`decide_assistant_proposal`] — while turning *finances* off should take the
-/// whole screen with it, queue included.
+/// Gated on `Finances`, not `Llm`: turning the assistant off must not strand a proposal already
+/// offered (as in [`decide_assistant_proposal`]); turning finances off takes the queue with it.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn list_finance_proposals(state: State<'_, AppState>) -> Result<Vec<Proposal>, String> {
     require_feature(&state, Feature::Finances)?;

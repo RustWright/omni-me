@@ -29,17 +29,9 @@ pub enum EventError {
 
 /// A persisted event with a generated ID.
 ///
-/// Two clocks live on this struct and they are not interchangeable.
-/// `timestamp` is when the authoring device wrote the event — it is the
-/// display and ordering value, and it travels unchanged between nodes.
-/// `received_at` is when this node stored it, stamped locally at insert and
-/// never accepted from the wire.
-///
-/// Sync cursors must key on `received_at`. Filtering a cursor issued by one node
-/// against the other node's clock is what let a device that was offline Monday
-/// to Thursday push its backlog on Friday and have every peer — whose cursor was
-/// already Friday — never receive it, permanently and silently. Ordinary clock
-/// skew did the same.
+/// Two clocks: `timestamp`, the author's, for display and ordering, travelling unchanged;
+/// `received_at`, stamped locally at insert and never taken from the wire. Sync cursors key on
+/// `received_at`, or an offline device's backlog is silently never delivered.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Event {
     pub id: String,
@@ -486,13 +478,9 @@ pub trait EventStore: Send + Sync {
 
     /// Delete only the events the given features own, and report how many went.
     ///
-    /// The count is the point. A wipe that reports success without saying
-    /// what it removed cannot be checked against what was there, which is the same
-    /// reason the server backup is verified by size rather than by exit code.
-    ///
-    /// Local to this node. Peers clear their own copies when they pull the
-    /// `DataWiped` record, through [`EventStore::purge_features_before`].
-    /// `docs/src/features.md` § Wiping one feature's data.
+    /// The count is the point: a wipe must be checkable against what was there. Local only; peers
+    /// clear theirs on pulling `DataWiped` ([`EventStore::purge_features_before`]).
+    /// `docs/src/features.md` § "Wiping one feature's data".
     async fn purge_features(&self, features: &[Feature]) -> Result<usize, EventError> {
         self.purge_features_before(features, None).await
     }
@@ -1193,16 +1181,8 @@ mod tests {
 
     #[tokio::test]
     async fn get_since_keys_on_receipt_not_authorship() {
-        // The cursor a node hands out is that node's own clock, so the filter
-        // has to compare against the same clock. Two events authored months
-        // apart but *stored here* just now are both above a cursor taken before
-        // they arrived — even though one was authored long before it.
-        //
-        // Under the old author-clock filter this was the silent-data-loss bug: a
-        // device offline Monday to Thursday pushed its backlog on Friday, every
-        // peer's cursor already read Friday, and those events — stamped Mon–Thu
-        // by their author — never came down. Permanently. Ordinary clock skew
-        // between two devices did the same thing.
+        // The cursor is this node's clock, so events stored here just now are above it however long
+        // ago they were authored. Filtering on the author's clock silently lost offline backlogs.
         let db = test_db().await;
         let store = SurrealEventStore::new(db);
 

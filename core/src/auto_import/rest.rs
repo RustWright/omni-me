@@ -1,19 +1,8 @@
 //! Native REST auto-import source (3.6b) — config-driven, no helper needed.
 //!
-//! A [`RestSource`] GETs a JSON endpoint, locates an array of records at a
-//! configured dotted `records_path`, maps four dotted-path fields
-//! (date / amount / description / id) onto a [`DraftTransaction`], and balances
-//! each record against the `Unmatched` clearing account — the HTTP sibling of
-//! [`crate::auto_import::csv::CsvSource`]. So a non-coding user can point the
-//! public engine at a bank/fintech JSON API and get imports with config alone.
-//!
-//! Auth rides the "secrets referenced by name" design. The source holds a
-//! `secret_ref` (a key into `[secrets]` in `credentials.toml`) and resolves the
-//! value at *fetch* time — reading its own credentials, so no API key ever
-//! lives in `sources.toml` and the builder needs no credential handle.
-//!
-//! Dedup is batch-level (same as CSV): the batch `dedup_key` is a content
-//! hash of the response body, so an unchanged response is a projection no-op.
+//! [`crate::auto_import::csv::CsvSource`]'s HTTP sibling: GET JSON, take records at
+//! `records_path`, map dotted fields to drafts against `Unmatched`. Its `secret_ref` is resolved
+//! at fetch time, so no key lives in `sources.toml`. Dedup hashes the response body.
 
 use async_trait::async_trait;
 use chrono::NaiveDate;

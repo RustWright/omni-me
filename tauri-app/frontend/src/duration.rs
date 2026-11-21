@@ -1,11 +1,5 @@
-//! Duration display helpers shared by the Add/Edit routine item forms.
-//!
-//! Durations are stored as a whole number of minutes (`estimated_duration_min`
-//! in the event payload). The UI lets the user pick a value + unit (min/hour),
-//! so we need two conversions:
-//!   - entry-side: combine (value, unit) → minutes, deterministic
-//!   - display-side: split a stored minute count back into (value, unit) for
-//!     re-editing or friendly display, which has a real UX choice baked in
+//! Routine durations are stored as whole minutes; the forms convert a value and unit into
+//! minutes, and split stored minutes back into a value and unit for editing and display.
 
 pub const UNIT_MIN: &str = "min";
 pub const UNIT_HOUR: &str = "hour";

@@ -1,13 +1,6 @@
-//! Background scheduler that periodically runs the recurring-pattern
-//! detector. Same shape as `auto_close_scheduler` —
-//! spawned on app boot, sleeps between ticks, emits new
-//! `RecurringTransactionDetected` events for patterns not already in
-//! the `recurring_patterns` table.
-//!
-//! Cadence: one warm-up tick 60s after boot (lets the UI settle + the
-//! event store finish replay), then once every 24h. The scan is
-//! idempotent — already-tracked patterns are skipped, so a re-run
-//! never clobbers user confirmations or dismissals.
+//! Runs the recurring-pattern detector 60 s after boot, then every 24 h, emitting
+//! `RecurringTransactionDetected` for untracked patterns only, so a re-run never clobbers a
+//! confirmation or dismissal.
 
 use std::collections::HashSet;
 use std::sync::Arc;

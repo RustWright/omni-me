@@ -1,14 +1,8 @@
 //! Which features own which projections — the projection half of the feature map.
 //!
-//! A projection registers when any feature that owns it is enabled, because
-//! ownership is many-to-many in both directions: `notes` serves three features,
-//! and `finances` owns two projections. The full map, including the tab,
-//! scheduler, command and settings columns that live in the client, is published
-//! in `docs/src/features.md`.
-//!
-//! A projection that no feature claims and that is not in [`NEVER_GATED`] will
-//! never register at all. `every_projection_has_an_owner` is what stops that
-//! being a silent mistake — keep it passing rather than deleting the entry.
+//! A projection registers when any owning feature is on; ownership is many-to-many (full map:
+//! `docs/src/features.md`). One no feature owns and not in [`NEVER_GATED`] never registers;
+//! keep `every_projection_has_an_owner` passing rather than deleting the entry.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -19,19 +13,13 @@ use crate::journal_file::JournalFile;
 use super::{
     AssistantProjection, AutoImportProjection, BeliefsProjection, BudgetProjection,
     ConfigProjection, DocumentsProjection, NotesProjection, Projection, RecordTypeProjection,
-    RetentionProjection, RoutinesProjection,
+    RetentionProjection, RoutinesProjection, TasksProjection,
 };
 
 /// Projections that are never feature-gated.
 ///
-/// `config` materializes the `app_config` table that the gating itself reads, so
-/// gating it would be circular: the first launch after a toggle would have no
-/// config to decide with.
-///
-/// `record_types` is ungated for the neighbouring reason: it decides how a journal
-/// entry is *read*, so gating it behind the journal feature would mean turning
-/// journal off and back on again reinterpreted the whole back catalogue against
-/// whatever fallback shape happened to apply.
+/// `config` feeds the gating itself, so gating it is circular. `record_types` decides how
+/// entries are read, so gating it would reinterpret the back catalogue after a toggle.
 pub const NEVER_GATED: &[&str] = &[ConfigProjection::NAME, RecordTypeProjection::NAME];
 
 /// Every projection registered in production, for [`every_projection_has_an_owner`].
@@ -47,28 +35,15 @@ pub const ALL_PROJECTIONS: &[&str] = &[
     BeliefsProjection::NAME,
     DocumentsProjection::NAME,
     RetentionProjection::NAME,
+    TasksProjection::NAME,
 ];
 
-/// The projections a feature owns.
-///
-/// Two entries carry a dependency that is not obvious from the names:
-/// - `notes` appears under `Llm` because `note_llm_processed` is projected there,
-///   into whichever of the two tables the aggregate belongs to.
-/// - `budget` appears under `AutoImport` because a committed batch emits
-///   `transaction_recorded`, so without it imported money has nowhere to land.
-///   `journal_file` is deliberately *not* under `AutoImport`: it reads `budget`'s
-///   `transactions` table, so it is only ever useful alongside the finances tab
-///   that reads its output.
-/// - `Llm` owns three: `notes`, because `note_llm_processed` lands in its tables;
-///   `assistant`, the conversation itself; and `beliefs`, which exists only
-///   because the assistant concluded something — turning the assistant off
-///   therefore stops beliefs being maintained, which is the intended reading of
-///   "the feature is inert".
-/// - `Documents` owns `documents` alone, and deliberately does not sit under
-///   `Finances`. The archive holds tax notices, paystubs and leases as readily as
-///   statements — 16% of the first corpus is documents no statement parser can
-///   touch — so filing it under finances would mean switching finances off took
-///   the user's tax records with it.
+/// The projections a feature owns. Non-obvious entries:
+/// - `budget` under `AutoImport`: committed batches emit `transaction_recorded`; `journal_file`
+///   is not, being useful only beside the finances tab.
+/// - `Llm` owns `notes` (`note_llm_processed`), `assistant`, and `beliefs`, so assistant-off
+///   stops beliefs too.
+/// - `documents` is not under `Finances`: finances-off must not take tax records and leases.
 pub fn owned_projections(feature: Feature) -> &'static [&'static str] {
     match feature {
         Feature::Journal | Feature::Notes => &[NotesProjection::NAME],
@@ -81,6 +56,7 @@ pub fn owned_projections(feature: Feature) -> &'static [&'static str] {
         Feature::Finances => &[BudgetProjection::NAME, JournalFile::NAME],
         Feature::AutoImport => &[BudgetProjection::NAME, AutoImportProjection::NAME],
         Feature::Documents => &[DocumentsProjection::NAME, RetentionProjection::NAME],
+        Feature::Tasks => &[TasksProjection::NAME],
     }
 }
 
@@ -101,13 +77,8 @@ pub fn enabled_projection_names(config: &ResolvedConfig) -> BTreeSet<&'static st
 
 /// Every production projection, in registration order.
 ///
-/// `BudgetProjection` must precede `JournalFile`: the latter re-reads the
-/// former's `transactions` table when re-rendering an updated transaction.
-///
-/// Constructed here rather than at the call site so there is exactly one list.
-/// A second copy in the client's startup could disagree with [`ALL_PROJECTIONS`]
-/// and the disagreement would be silent — a projection missing from the client's
-/// copy simply never runs.
+/// `BudgetProjection` must precede `JournalFile`, which re-reads its `transactions`. The only
+/// list, since a second copy could silently omit a projection.
 fn all_projections(journal_path: PathBuf) -> Vec<Box<dyn Projection>> {
     vec![
         Box::new(ConfigProjection),
@@ -130,6 +101,7 @@ fn all_projections(journal_path: PathBuf) -> Vec<Box<dyn Projection>> {
         Box::new(BeliefsProjection),
         Box::new(DocumentsProjection),
         Box::new(RetentionProjection),
+        Box::new(TasksProjection),
     ]
 }
 
@@ -168,13 +140,8 @@ pub async fn clear_every_projection(
 
 /// Projections a host with no filesystem of its own must never register.
 ///
-/// `JournalFile` writes an hledger file through `tokio::fs`. It is owned only by
-/// `Finances`, so a finances-off config already omits it — but that is an
-/// accident of configuration, not a guarantee. A cold-start host has no
-/// config at all (the shared layer is itself a projection, so it is empty until
-/// events have been folded) and every feature falls back to its default, which
-/// is `true`. The config filter would let `JournalFile` through on exactly the
-/// boot where nobody asked for it.
+/// `JournalFile` writes a file. Config alone does not exclude it: a cold-start host has no
+/// config yet, every feature defaults on, and it would register on exactly that boot.
 pub const FILESYSTEM_PROJECTIONS: &[&str] = &[JournalFile::NAME];
 
 /// The projections to register for a headless host — the agent.
@@ -196,15 +163,11 @@ pub fn build_projections_headless(config: &ResolvedConfig) -> Vec<Box<dyn Projec
 /// Devices project everything else themselves. Not feature-gated: the server folds
 /// config but serves every feature. Why `documents` is here: `docs/src/archive.md`.
 pub fn build_projections_server() -> Vec<Box<dyn Projection>> {
-    // Retention because the older-mail backfill leaves out mail whose category
-    // timer has run out. Purge groups are still formed on a device.
-    //
-    // Notes and budget because receipt import runs here and holds its accounts to
-    // the conventions note and the ledger. Without these tables the account list
-    // was empty and every emailed receipt landed in `Expenses:Unknown` (R4-9).
-    // Config because mail intake reads the skip-senders list and the user's zone.
-    // Auto-import because the triage scorecard scores the review queue's outcomes.
-    // Assistant because the daily review summary counts its pending suggestions.
+    // Retention: the backfill skips mail whose timer ran out (purge groups form on a device).
+    // Notes and budget: receipt import checks accounts against them, or all land in Unknown.
+    // Config: skip-senders and the zone. Auto-import: the triage scorecard. Assistant: the
+    // daily summary's pending count. Tasks: hub intake and the handover receipt. Routines: the
+    // journal-tick job (ruling 127).
     vec![
         Box::new(ConfigProjection),
         Box::new(AssistantProjection),
@@ -213,6 +176,8 @@ pub fn build_projections_server() -> Vec<Box<dyn Projection>> {
         Box::new(NotesProjection),
         Box::new(BudgetProjection),
         Box::new(RetentionProjection),
+        Box::new(TasksProjection),
+        Box::new(RoutinesProjection),
     ]
 }
 
@@ -260,6 +225,10 @@ mod tests {
         assert!(
             names.contains(&RetentionProjection::NAME),
             "the older-mail backfill reads the timers: {names:?}"
+        );
+        assert!(
+            names.contains(&RoutinesProjection::NAME),
+            "the journal-tick job reads routine items: {names:?}"
         );
     }
 
@@ -311,6 +280,7 @@ mod tests {
             BeliefsProjection.name(),
             DocumentsProjection.name(),
             RetentionProjection.name(),
+            TasksProjection.name(),
         ];
         let listed: BTreeSet<&str> = ALL_PROJECTIONS.iter().copied().collect();
         let actual: BTreeSet<&str> = live.iter().copied().collect();
@@ -416,14 +386,8 @@ mod tests {
         );
     }
 
-    /// The whole seam, end to end: a real `ConfigSet` event lands in the store,
-    /// the projection folds it into `app_config`, the next launch reads that table
-    /// back with `load_persisted`, and the registration list narrows accordingly.
-    ///
-    /// The pure-function tests above never touch a database, and the client's
-    /// startup path was only ever exercised by hand — so an event-payload or
-    /// column-name change between the writer and `load_persisted` would have gone
-    /// unnoticed by every other test here. This is the one that would catch it.
+    /// End to end: a `ConfigSet` folds into `app_config`, `load_persisted` reads it next launch,
+    /// and registration narrows. The only test catching a payload or column drift between them.
     #[tokio::test]
     async fn a_stored_config_event_narrows_the_next_launch_s_registration() {
         use crate::events::{EventStore, NewEvent, ProjectionRunner, SurrealEventStore};

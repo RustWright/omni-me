@@ -174,6 +174,7 @@ pub async fn pending_questions(db: &Database) -> Result<Vec<PendingQuestion>, Ev
                     // the message row carry — the answer does not restate it.
                     title: None,
                     scheduled: false,
+                    prompt_name: None,
                 },
                 asked_at: row.created_at,
                 history: turns(&rows[..i]),
@@ -216,14 +217,9 @@ struct ThreadState {
 
 /// One message, with everything the client needs to render it.
 ///
-/// `usage` and `records_read` stay [`DbValue`] rather than typed structs: they
-/// are stored shapes owned by the event payload, and re-declaring them here
-/// would be a second definition to keep in step with the first. They serialize
-/// through [`db_value_as_json`]; `DbValue`'s own serde form is enum-tagged.
-///
-/// `records_read` carries no title — see
-/// [`crate::assistant::answer::records_read`] for why, and resolve the display
-/// name against the record tables at render time.
+/// `usage` and `records_read` stay [`DbValue`], owned by the payload, serialized through
+/// [`db_value_as_json`]. No title in `records_read`: resolve it at render
+/// ([`crate::assistant::answer::records_read`]).
 #[derive(Debug, Clone, Serialize, SurrealValue)]
 pub struct ConversationMessage {
     pub message_id: String,
@@ -396,6 +392,7 @@ mod tests {
             text: text.into(),
             title: Some(text.into()),
             scheduled: false,
+            prompt_name: None,
         };
         let ev = envelope(
             NewEvent::assistant_question_asked("phone", &payload).unwrap(),
@@ -763,6 +760,7 @@ mod tests {
             text: "Review what is due.".into(),
             title: Some("Daily check-in".into()),
             scheduled: true,
+            prompt_name: Some(crate::assistant::scheduled::CHECK_IN.into()),
         };
         let ev = envelope(
             NewEvent::assistant_question_asked("agent", &payload).unwrap(),
@@ -775,9 +773,10 @@ mod tests {
         assert_eq!(view.messages[0].scheduled, Some(true));
 
         // And the scheduler reads its own last run from exactly this row.
-        let last = crate::assistant::check_in::last_check_in(&db)
-            .await
-            .unwrap();
+        let last =
+            crate::assistant::scheduled::last_run(&db, crate::assistant::scheduled::CHECK_IN)
+                .await
+                .unwrap();
         assert!(
             last.is_some(),
             "the check-in must be findable as its own record"
@@ -795,7 +794,7 @@ mod tests {
         let view = read_thread(&db, "t1").await.unwrap();
         assert_ne!(view.messages[0].scheduled, Some(true));
         assert!(
-            crate::assistant::check_in::last_check_in(&db)
+            crate::assistant::scheduled::last_run(&db, crate::assistant::scheduled::CHECK_IN)
                 .await
                 .unwrap()
                 .is_none(),

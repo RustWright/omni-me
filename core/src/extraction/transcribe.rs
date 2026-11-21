@@ -1,14 +1,8 @@
 //! Reading the words off a document nothing could parse — role C3.
 //!
-//! Why a transcription is its own event rather than a field, and how it folds
-//! against a real text layer: `docs/src/archive.md`.
-//!
-//! Its own trait rather than a method on [`super::DocumentExtractor`] or
-//! [`super::document::DocumentReader`], for the reason those two are already
-//! separate: each asks a different question, and a specialist that can answer
-//! one may be unable to answer the others. This one asks only what the page
-//! says, and is the one whose answer can be checked — a born-digital PDF
-//! rendered to an image has a text layer to compare against.
+//! Why its own event, and how it folds against a text layer: `docs/src/archive.md`. Its own
+//! trait, as each asks a different question; this one only what the page says, the one answer a
+//! born-digital PDF lets us check.
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -59,16 +53,9 @@ pub fn transcription_prompt() -> String {
 
 /// The JSON Schema the transcriber targets.
 ///
-/// One field, because the answer is one string. It goes through the schema path
-/// rather than a plain completion so it inherits `json_schema` enforcement and
-/// the fence-stripping that `ask` already does — see the `json_schema` note in
-/// `openai_compat::OpenAiCompatExtractor::ask`.
-///
-/// The envelope admits absence, and that was checked before anything was
-/// built. `text` is `required`, but the schema sets no `minLength`, so `""`
-/// satisfies it. A required field with a minimum length would make "this page
-/// has no text" unsayable and force a fabrication — Stage 1's lesson, which cost
-/// a whole bench run on role A.
+/// One string, through the schema path for its enforcement and fence-stripping (`ask`).
+/// `text` is required with no `minLength`, so `""` can say "no text"; a minimum would force a
+/// fabrication.
 pub fn transcription_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",

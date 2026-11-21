@@ -1,13 +1,8 @@
 //! Declared record types: the shape of a record, as data rather than as code.
 //!
-//! A record type says what a record is made of — its identity rule, the properties
-//! it carries, which of them signal it is finished, and whether finishing it closes
-//! it. The daily journal is one instance of that, not a special case. See the
-//! "Journal is one record type" section of `docs/src/invariants.md` for the promise
-//! this keeps.
-//!
-//! Declarations arrive as `RecordTypeDeclared` events and are materialized by
-//! `RecordTypeProjection`, so they sync and replay like every other change.
+//! Identity rule, properties, which mark it finished, and whether finishing closes it; the
+//! journal is one instance ("Journal is one record type" section of `docs/src/invariants.md`).
+//! Declared by events, so they sync and replay.
 
 use serde::{Deserialize, Serialize};
 

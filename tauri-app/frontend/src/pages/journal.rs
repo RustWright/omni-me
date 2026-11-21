@@ -46,13 +46,9 @@ fn viewport_width() -> f64 {
 /// a completion token: `YYYY-MM-DD HH:MM`, optionally ` TZ`. The fixed
 /// positions up to index 16 are all ASCII, so byte indexing is safe.
 ///
-/// This shape is encoded twice and the compiler cannot see the second one.
-/// The writer lives in JavaScript — `TS_TOKEN_RE` in `assets/js/editor.js` —
-/// and this is the reader, hand-rolled in Rust across the wasm boundary. Change
-/// the format on either side (seconds, a different bracket, a wider zone field)
-/// and nothing fails to build: this matcher would simply stop recognising real
-/// tokens and start leaving them in the prose it is supposed to strip.
-/// `token_regex_in_editor_js_has_not_drifted` below is the alarm for that.
+/// The writer is `TS_TOKEN_RE` in `assets/js/editor.js`, invisible to the compiler: change the
+/// format on either side and tokens leak into prose. `token_regex_in_editor_js_has_not_drifted`
+/// is the alarm.
 fn is_timestamp_token_inner(inner: &str) -> bool {
     let b = inner.as_bytes();
     if b.len() < 16 {
@@ -177,21 +173,9 @@ pub fn JournalPage() -> Element {
         restored.set(true);
     });
 
-    // Re-anchor once the real timezone arrives.
-    //
-    // `UserDate::today` above runs on the first render, when `tz_signal` still
-    // holds the `Tz::UTC` default (`main.rs:269` — `invoke_get_timezone` is
-    // async and cannot have resolved yet), and `use_signal` captures that seed
-    // once. Fresh install in Toronto at 21:30 EDT: UTC is already tomorrow, so
-    // the app opened on tomorrow behind a "← Back to today" header and
-    // everything written that evening became the *next* day's entry — wrong
-    // `date:` in frontmatter, wrong calendar cell, wrong day-complete. It also
-    // compounded: the bad date was written straight into nav, so the next launch
-    // restored it through the `Some` branch and the error outlived the fix.
-    // Symmetric for UTC-ahead zones in the early morning.
-    //
-    // Every other `UserDate::today` call site reads `tz_signal` at render time
-    // and self-corrects; this was the only frozen one.
+    // Re-anchor once the real timezone arrives: the first render seeds `today` from the UTC
+    // default, which in an evening west of UTC is tomorrow, and the bad date persisted into nav.
+    // The only frozen `UserDate::today` call site; every other reads `tz_signal` at render.
     use_effect(move || {
         let real_today = UserDate::today(&tz_signal.read()).to_date_string();
         let anchor = anchored_today.peek().clone();
@@ -317,17 +301,9 @@ pub fn JournalPage() -> Element {
             }
 
             {
-                // Gated on `calendar_open`: `body_stats` splits the body into
-                // lines to strip #344 timestamp tokens, counts whitespace-
-                // separated words, then walks the whole thing again for a
-                // Unicode scalar count. That ran on every `JournalPage` render —
-                // i.e. every keystroke, via the `viewed_body` mirror — to
-                // produce two numbers only the drawer displays, and the drawer
-                // is closed almost all of the time.
-                //
-                // `read()` (not `peek()`) on `calendar_open`, so opening the
-                // drawer re-renders and the counts appear; `CalendarDrawer` also
-                // takes the signal itself, so it keeps reacting after that.
+                // Gated on `calendar_open`: `body_stats` walks the whole body, and ungated it ran
+                // every keystroke for numbers only the drawer shows. `read()`, so opening the
+                // drawer re-renders with the counts.
                 let (words, chars) = if *calendar_open.read() {
                     body_stats(&viewed_body.read())
                 } else {
@@ -356,16 +332,9 @@ pub fn JournalPage() -> Element {
 // DayView — shows the entry for a specific date. Used for today + past days.
 // ---------------------------------------------------------------------------
 
-/// Split a raw journal note into the properties panel's typed `props` + the
-/// editor `body`. Called wherever raw text is loaded into the day (hydrate,
-/// reopen, close). Never touches `content` — that stays the source of truth.
-///
-/// Takes the declaration as a signal rather than a key slice so the reopen /
-/// close handlers don't have to carry one through their closures. Every call
-/// site runs after hydrate, and hydrate bails before setting `hydrated` if the
-/// declaration didn't load — so `None` here is unreachable rather than a
-/// fallback worth designing. It splits everything into `legacy_raw` if it ever
-/// happens, which preserves the text.
+/// Split a raw note into the panel's `props` and the editor `body`; `content` stays the source
+/// of truth. A `None` declaration is unreachable (hydrate bails first); if it ever happens,
+/// everything goes to `legacy_raw`, which keeps the text.
 fn apply_raw(
     record_type: Signal<Option<RecordType>>,
     mut props: Signal<JournalProps>,
@@ -407,17 +376,9 @@ fn DayView(
     // `Editor`'s `on_ready`). Only the boot splash consumes it — see the
     // `use_boot_hold` below.
     let mut editor_built = use_signal(|| false);
-    // Hold the boot splash until this day is *typeable*, not merely mounted.
-    //
-    // The two conditions are separate on purpose: `loading` covers the entry
-    // fetch, and the `Editor` is not even rendered until that resolves, so a
-    // hold keyed on the editor alone would be registered too late — the splash
-    // would already have lifted onto the "Loading..." state. This is the exact
-    // thing the user reported: the visible half-built editor, not the wait.
-    //
-    // Journal only. Notes and Finances land on lists and skeletons rather than a
-    // half-built control, so they lift with the restored tab; add the same line
-    // there if either turns out to read badly on-device.
+    // Hold the splash until the day is typeable. Both conditions are needed: the `Editor` only
+    // renders after `loading`, so a hold on it alone registers too late. Journal only; other
+    // tabs land on lists and skeletons.
     crate::use_boot_hold(move || !*loading.read() && *editor_built.read());
     let mut saving = use_signal(|| false);
     let mut error_msg = use_signal(|| None::<String>);
@@ -479,17 +440,8 @@ fn DayView(
             while !store.loaded_peek() {
                 sleep_ms(20).await;
             }
-            // Prefer an in-flight session (content the user left mid-edit when
-            // they navigated away) over the persisted copy. Entry metadata
-            // (id / closed / complete) always comes fresh from the backend.
-            //
-            // ...but ONLY when that session is DIRTY (holds unsaved edits). A
-            // clean session (content == last_saved_content) has nothing to
-            // preserve, so it must yield to the fresh backend copy — otherwise a
-            // clean session persisted at first open permanently shadows edits
-            // that synced in from another device (the "nothing syncs to desktop"
-            // bug). The continuity guarantee (never lose typed-but-unsaved text)
-            // is untouched: only clean sessions defer.
+            // Prefer a dirty in-flight session over the persisted copy; a clean one yields, or it
+            // shadows edits synced from another device. Entry metadata always comes fresh.
             let stored = store.get(&key).filter(session_is_recoverable);
             // Both fetches at once: the declaration is needed before any raw
             // text can be split, but it does not depend on the entry.
@@ -587,22 +539,9 @@ fn DayView(
         });
     }
 
-    // Teardown flush (#344, second half). Stamp the in-progress line and fold it
-    // into the stored session *before* this scope goes away.
-    //
-    // `Editor`'s `use_drop` already calls `destroyEditor`, which runs
-    // `timestampFlush(editorView)` and dispatches the stamp — but by then
-    // `DayView` is mid-teardown, so no `use_effect` re-runs: neither the autosave
-    // nor the continuity mirror above fires, and the store still holds the
-    // pre-stamp text. This is the unfixed half of the friction the user already
-    // hit ("Android last line loses its timestamp"), whose fix wired only the
-    // `visibilitychange` / `pagehide` path. Finish a line without pressing Enter,
-    // then tab to Notes or pick another day, and the line came back unstamped —
-    // and by design (freeze-at-first-finish) it could never be stamped again.
-    //
-    // Writing straight to the root-held continuity store rather than going
-    // through `on_change` is deliberate: the store outlives this scope, whereas
-    // an effect scheduled here would never run.
+    // Teardown flush: stamp the in-progress line into the stored session before this scope goes.
+    // `destroyEditor` stamps too late (no effect re-runs mid-teardown), and an unstamped line
+    // can never be stamped later. Written to the store directly, since an effect would never run.
     {
         let key_for_drop = continuity_key.clone();
         use_drop(move || {
@@ -647,30 +586,15 @@ fn DayView(
     {
         let date_for_autosave = date.clone();
         use_effect(move || {
-            // Compared through the guards, not cloned. `current` was only ever
-            // used for the equality check below — a full heap copy of the whole
-            // document, per keystroke, to answer a question that needs none. The
-            // snapshot the save actually sends is taken separately, later, inside
-            // the spawned future.
-            //
-            // `read()` on content (subscribes — this effect must re-run on input);
-            // `peek()` on last_saved_content (must NOT subscribe, or our own
-            // write-back when a save resolves re-triggers a redundant pass that
-            // gen-cancels itself one tick later).
+            // Compared through the guards, never cloned per keystroke. `read()` on content so
+            // input re-runs this; `peek()` on last_saved_content, or our own write-back after a
+            // save would trigger a redundant pass.
             if *content.read() == *last_saved_content.peek() {
                 return;
             }
-            // Closed journals must not auto-save (the manual Save button is
-            // also disabled in this state).
-            //
-            // This `closed` check appears three times in this file and the
-            // repetition is deliberate — do not fold the copies together. They
-            // sit in three different control flows and cannot share an exit:
-            // this one returns before scheduling, the next re-checks AFTER the
-            // debounce wait because a Close Day click can land during it, and
-            // the third `continue`s inside a loop to drain nudges it must not
-            // act on. A single shared helper could return the boolean but not
-            // the control flow, which is the part that differs.
+            // Closed journals never auto-save. This check appears three times on purpose, each
+            // in a different control flow (before scheduling, after the debounce, inside the
+            // drain loop); do not fold them, a helper cannot share the exit.
             if entry.read().as_ref().map(|e| e.closed).unwrap_or(false) {
                 return;
             }
@@ -746,17 +670,9 @@ fn DayView(
         });
     }
 
-    // #344 background/close flush + immediate save. `blur`/`destroyEditor` don't
-    // fire when Android backgrounds the app or the OS kills a swiped-away one, so
-    // a line the user WROTE but never LEFT (no Enter, no click away) would be
-    // persisted by the debounced autosave WITHOUT its completion token — and on
-    // reopen it reads as old, untouched content that (by design) never
-    // back-stamps. On `visibilitychange`→hidden / `pagehide` we stamp that final
-    // line and save it NOW — not through the 1s-debounced autosave a swiped-away
-    // app won't wait for. The callback fires OUTSIDE any Dioxus scope (like the
-    // sync:applied bridge), so it uses `spawn_local`, not `spawn`. The listener
-    // is registered per-mount and removed on unmount so day-navigation (which
-    // remounts DayView) never accumulates stale-signal handlers.
+    // Background flush: on `visibilitychange` hidden or `pagehide`, stamp the last line and save
+    // now, since a killed app never waits for the debounced autosave. Runs outside any Dioxus
+    // scope (`spawn_local`); registered per mount and removed on unmount, so none go stale.
     {
         let date_bg = date.clone();
         // The JS leave-detector callback nudges a channel; the drain loop runs
@@ -775,27 +691,9 @@ fn DayView(
                     if entry.peek().as_ref().map(|e| e.closed).unwrap_or(false) {
                         continue;
                     }
-                    // Stamp the in-progress line, then read the now-stamped
-                    // body and fold it back into the full note before saving.
-                    //
-                    // `js_flush_editor_timestamps` returns
-                    // `editorView.state.doc.toString()`, and since Phase 5 that
-                    // doc holds only the body — frontmatter moved to the
-                    // properties panel (`Editor { initial_content: body.peek() }`
-                    // below). This used to hand that body straight to
-                    // `invoke_update_journal_entry`, the *same parameter* the
-                    // manual Save fills with the full note, so backgrounding the
-                    // app wrote the body over the whole entry: `date`,
-                    // `tags: [daily_note]`, `homework_for_life`, `grateful_for`
-                    // and `learnt_today` all gone, the Complete pill dropped, the
-                    // calendar day-dot cleared. Opening today and switching away
-                    // was enough to do it.
-                    //
-                    // Neither guard caught it: a template body alone is
-                    // non-empty, and `stamped == last_saved_content` compared a
-                    // body against a full note, which can never match — so it
-                    // then recorded the mutilated copy as persisted and nothing
-                    // ever re-saved it.
+                    // The editor holds only the body, so fold the stamped body back into the full
+                    // note before saving. Saving the body alone overwrote the entry's frontmatter,
+                    // and comparing a body with a full note never matched, so nothing re-saved it.
                     let stamped_body = bridge::js_flush_editor_timestamps();
                     if stamped_body.is_empty() {
                         continue;
@@ -869,21 +767,9 @@ fn DayView(
         });
     }
 
-    // Live inbound refresh: when an auto-pull lands new events (`sync_epoch`
-    // bumps) and this day is open and UNTOUCHED this session, adopt the fresh
-    // backend copy and push it into the already-seeded editor. Only ONE DayView
-    // is mounted at a time, so the editor targeted by `js_set_editor_content` is
-    // this day's. The editor seeds once on mount and ignores `initial_content`
-    // changes, so a live update must go through `js_set_editor_content`, not a
-    // prop; a remount instead re-seeds from the (dirty-filtered) load future.
-    //
-    // Freeze guard: `js_editor_ever_dirty()` is a STICKY "the user typed in this
-    // editor at least once this session" flag. We can't use `content ==
-    // last_saved_content` alone — autosave sets them equal within ~1s of every
-    // keystroke, so between autosaves the editor looks clean and an incoming
-    // remote edit would clobber text the user is actively typing (the "clobbered
-    // constantly" bug). Once the user has edited here, live-refresh is frozen
-    // until they navigate away and back (which remounts → clears the flag).
+    // Live inbound refresh: on a `sync_epoch` bump, adopt the backend copy into an untouched day
+    // via `js_set_editor_content` (the editor ignores prop changes after mount). Frozen by the
+    // sticky `js_editor_ever_dirty()`: autosave makes a typed-in editor look clean between saves.
     {
         let sync_epoch = crate::sync_refresh::use_sync_epoch();
         let date_for_sync = date.clone();
@@ -1031,14 +917,9 @@ fn DayView(
                                             let date = date.clone();
                                             spawn(async move {
                                                 let Some(id) = jid else { return };
-                                                // Flush anything typed inside the
-                                                // autosave debounce window first.
-                                                // Once closed, autosave bails on
-                                                // `entry.closed` and Save is
-                                                // disabled, so the refetch below
-                                                // would otherwise overwrite unsaved
-                                                // text with the server's copy and
-                                                // discard it with no feedback.
+                                                // Flush text typed inside the debounce
+                                                // first: once closed nothing saves, and
+                                                // the refetch would silently drop it.
                                                 let pending = content.peek().clone();
                                                 if pending != *last_saved_content.peek()
                                                     && bridge::invoke_update_journal_entry(&id, &pending)
@@ -1143,20 +1024,9 @@ fn DayView(
                         }
                         div { class: "{editor_class}",
                             Editor {
-                                // Remount when the closed-state flips. The editor
-                                // is built once per mount: its `use_effect` reads
-                                // no signal, so it fires exactly once, and
-                                // `read_only` is baked into `editor_options` inside
-                                // the spawned future — `js_create_editor` is what
-                                // installs `EditorView.editable.of(false)`.
-                                //
-                                // Without this, Reopen left a reopened day
-                                // permanently un-typeable (no caret, no keystrokes,
-                                // no error), and Close Day left the body looking
-                                // fully editable while autosave silently bailed.
-                                // `initial_content` and `initial_cursor` are read
-                                // fresh on this render, so the remount keeps the
-                                // text and the caret.
+                                // Remount when the closed state flips: `read_only` is
+                                // baked in at creation, so without this a reopened day
+                                // stays un-typeable. The remount keeps text and caret.
                                 key: "{is_closed}",
                                 initial_content: initial,
                                 on_change: move |new_body: String| {
@@ -1558,15 +1428,8 @@ struct DayStat {
 
 /// Word-count thresholds for the calendar's fill intensity.
 ///
-/// Derived from the user's own journal history — 1,244 entries, 2022-07 →
-/// 2026-05: all-time median 448, trailing-12-month median 317. 250-word steps
-/// spread that across all three fills without saturating either end; 500-word
-/// steps would have put roughly 80% of recent entries in the lightest band and
-/// made the channel say almost nothing.
-///
-/// PROVISIONAL. That sample ended ~110 days before this shipped, and it came
-/// from the Obsidian vault rather than the live store. If most cells land in one
-/// shade, move these numbers — this constant is the single place to do it.
+/// Set from the spread of a real journal's entry lengths so all three fills get used.
+/// Provisional: if most cells land in one shade, move these numbers; this is the only place.
 const WORD_LEVELS: [usize; 2] = [250, 500];
 
 /// `0` = nothing written, `1..=3` = increasing fill.
@@ -1691,15 +1554,8 @@ mod tests {
 
     /// Cross-boundary drift alarm for the `⟦YYYY-MM-DD HH:MM[ TZ]⟧` token.
     ///
-    /// The token's WRITER is `TS_TOKEN_RE` in `assets/js/editor.js`; its READER
-    /// is `is_timestamp_token_inner` in this file. Nothing links them — no
-    /// shared crate, no generated definition, not even a common language — so a
-    /// format change on the JS side compiles clean here and only shows up as
-    /// editor metadata leaking into note bodies, exports and LLM context.
-    ///
-    /// This pins the JS literal. If it fires, that is the point: update
-    /// `is_timestamp_token_inner` to match the new format FIRST, then update
-    /// the pin below. Do not silence it by editing the pin alone.
+    /// Pins `TS_TOKEN_RE` in `assets/js/editor.js`, the writer `is_timestamp_token_inner` reads.
+    /// If it fires, update the reader to the new format first, then the pin; never the pin alone.
     #[test]
     fn token_regex_in_editor_js_has_not_drifted() {
         let js_path =

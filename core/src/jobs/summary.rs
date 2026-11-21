@@ -181,7 +181,7 @@ async fn ids(db: &Database, sql: &str) -> Result<BTreeSet<String>, String> {
 }
 
 /// The day the summary is due and whether `now` has reached its hour. Compared by
-/// local hour, as `check_in::is_due` does: building the local instant instead
+/// local hour, as `scheduled::is_due` does: building the local instant instead
 /// finds nothing on a day DST skips that hour, and the summary would not run.
 pub fn due(now: DateTime<Utc>, tz: Tz, hour: u32) -> Option<NaiveDate> {
     let local = now.with_timezone(&tz);
@@ -266,7 +266,8 @@ impl SummaryJob {
             return;
         };
         let mut state = self.load().await;
-        if state.last_day == Some(day) {
+        // `>=`, not `==`: a zone change can move the local date back to a day already summarised.
+        if state.last_day.is_some_and(|last| last >= day) {
             return;
         }
 
@@ -585,5 +586,280 @@ mod tests {
         .unwrap();
         job.tick(Utc::now()).await;
         assert!(phone.0.lock().unwrap().is_empty(), "nothing arrived since");
+    }
+
+    async fn set_config(db: &Database, key: ConfigKey, v: crate::config::ConfigValue) {
+        use crate::events::{
+            ConfigProjection, EventStore, NewEvent, ProjectionRunner, SurrealEventStore,
+        };
+        let runner = ProjectionRunner::new(db.clone(), vec![Box::new(ConfigProjection)]);
+        let set = NewEvent::config_set("d1", key, Some(v)).unwrap();
+        let stored = SurrealEventStore::new(db.clone())
+            .append(set)
+            .await
+            .unwrap();
+        runner.apply_events(&[stored]).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_zone_change_back_a_day_does_not_summarise_it_again() {
+        let (job, db, phone, _) = job().await;
+        // 02:00Z on 11-20 is 11:00 on 11-20 in Tokyo and 18:00 on 11-19 in Los Angeles.
+        let now = utc("2026-11-20T02:00:00Z");
+        job.save(&State {
+            last_day: Some(NaiveDate::from_ymd_opt(2026, 11, 20).unwrap()),
+            last_sent: Waiting::default(),
+        })
+        .await
+        .unwrap();
+        set_config(
+            &db,
+            ConfigKey::AssistantCheckInTimezone,
+            crate::config::ConfigValue::Text("America/Los_Angeles".into()),
+        )
+        .await;
+        add_batch(&db, "b1").await;
+        job.tick(now).await;
+        assert!(
+            phone.0.lock().unwrap().is_empty(),
+            "11-19 is before the day last summarised"
+        );
+    }
+
+    #[test]
+    fn what_counts_as_new_once_alerts_and_the_budget_are_listed() {
+        let alert = |id: &str| Waiting {
+            alerts: [(id.to_string(), "Mail import needs you: gmail".to_string())].into(),
+            ..Default::default()
+        };
+        assert!(alert("a2").has_new_since(&alert("a1")), "a new alert id");
+        assert!(!alert("a1").has_new_since(&alert("a1")));
+
+        let budget = |line: Option<&str>| Waiting {
+            over_budget: line.map(str::to_string),
+            ..Default::default()
+        };
+        let four = Some("Critical alerts this week: 4, target 3.");
+        let five = Some("Critical alerts this week: 5, target 3.");
+        assert!(budget(four).has_new_since(&budget(None)));
+        assert!(!budget(four).has_new_since(&budget(four)), "unchanged");
+        assert!(
+            budget(five).has_new_since(&budget(four)),
+            "a changed line carries this week's count"
+        );
+        assert!(!budget(None).has_new_since(&budget(four)), "only cleared");
+    }
+
+    #[tokio::test]
+    async fn a_listed_one_shot_closes_only_once_the_summary_is_sent() {
+        let (job, db, phone, _) = job().await;
+        let past = crate::jobs::runs::stamp(Utc::now() - chrono::Duration::minutes(1));
+        db.query(
+            "CREATE type::record('job_alerts', 'c1') CONTENT {
+                alert_id: 'c1', job: 'bank_import', subject: 'bank/bank-r1', kind: 'large_charge',
+                title: 'Large charge: 812.40 CAD', message: '2026-11-14 furniture store (bank)',
+                tier: 'review', one_shot: true,
+                opened_at: $past, due_at: $past, sent_at: NONE, closed_at: NONE
+             }",
+        )
+        .bind(("past", past))
+        .await
+        .unwrap()
+        .check()
+        .unwrap();
+
+        phone.1.store(true, std::sync::atomic::Ordering::SeqCst);
+        job.tick(Utc::now()).await;
+        let open = crate::jobs::alerts::open_review_alerts(&db).await.unwrap();
+        assert_eq!(open.len(), 1, "the send failed, so it is still owed");
+
+        phone.1.store(false, std::sync::atomic::Ordering::SeqCst);
+        job.tick(Utc::now()).await;
+        assert_eq!(phone.0.lock().unwrap().len(), 1);
+        let open = crate::jobs::alerts::open_review_alerts(&db).await.unwrap();
+        assert!(open.is_empty(), "listed and sent, so closed");
+    }
+
+    #[test]
+    fn every_tab_a_notification_names_is_listed() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../fixtures/notification_tabs.json");
+        let raw = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+        let fixture: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let listed: BTreeSet<&str> = fixture["tabs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t.as_str().unwrap())
+            .collect();
+
+        let one = |pick: fn(&mut Waiting)| {
+            let mut w = Waiting::default();
+            pick(&mut w);
+            w.tab()
+        };
+        let emitted = [
+            Waiting::default().tab(),
+            one(|w| w.batches = set(&["b"])),
+            one(|w| w.suggestions = set(&["p"])),
+            one(|w| w.purge = set(&["d"])),
+            crate::jobs::alerts::ReviewAlert {
+                alert_id: "a".into(),
+                title: "t".into(),
+                subject: "s".into(),
+                message: "m".into(),
+                kind: crate::jobs::alerts::LARGE_CHARGE.into(),
+                one_shot: true,
+            }
+            .tab(),
+            crate::jobs::alerts::ReviewAlert {
+                alert_id: "a".into(),
+                title: "t".into(),
+                subject: "s".into(),
+                message: "m".into(),
+                kind: "needs_user".into(),
+                one_shot: false,
+            }
+            .tab(),
+        ];
+        for tab in emitted {
+            assert!(listed.contains(tab), "{tab} is not in {}", path.display());
+        }
+        assert_eq!(
+            emitted.iter().copied().collect::<BTreeSet<_>>(),
+            listed,
+            "the fixture lists a tab nothing emits"
+        );
+    }
+
+    /// The summary's counts, read from tables the server's own projections build.
+    #[tokio::test]
+    async fn gather_counts_from_the_real_projections() {
+        use crate::config::ConfigValue;
+        use crate::events::registry::build_projections_server;
+        use crate::events::{
+            AutoImportBatchProposedPayload, DraftTransaction, EventStore, EventType, NewEvent,
+            Posting, ProjectionRunner, SurrealEventStore,
+        };
+        let db = crate::db::test_db().await;
+        let store = SurrealEventStore::new(db.clone());
+        let runner = ProjectionRunner::new(db.clone(), build_projections_server());
+        runner.init_all().await.unwrap();
+        crate::jobs::alerts::init_schema(&db).await.unwrap();
+        let apply = |e: NewEvent| {
+            let (store, runner) = (&store, &runner);
+            async move {
+                let stored = store.append(e).await.unwrap();
+                runner.apply_events(&[stored]).await.unwrap();
+            }
+        };
+        let event = |event_type: &str, aggregate: &str, payload: serde_json::Value| NewEvent {
+            id: None,
+            event_type: event_type.into(),
+            aggregate_id: aggregate.into(),
+            timestamp: Utc::now(),
+            device_id: "d1".into(),
+            payload,
+        };
+        for (key, v) in [
+            (ConfigKey::FeatureFinances, ConfigValue::Bool(true)),
+            (ConfigKey::FeatureLlm, ConfigValue::Bool(false)),
+            (ConfigKey::FeatureDocuments, ConfigValue::Bool(false)),
+        ] {
+            apply(NewEvent::config_set("d1", key, Some(v)).unwrap()).await;
+        }
+        let unmatched = |id: &str| {
+            serde_json::json!({
+                "txn_id": id,
+                "date": "2026-11-14",
+                "description": "card purchase",
+                "postings": [
+                    { "account": "Assets:Cash", "commodity": "CAD", "amount": "-10.00" },
+                    { "account": "Unmatched", "commodity": "CAD", "amount": "10.00" }
+                ]
+            })
+        };
+        for id in ["live", "removed", "merged"] {
+            apply(event("transaction_recorded", id, unmatched(id))).await;
+        }
+        apply(event(
+            "transaction_deleted",
+            "removed",
+            serde_json::json!({ "txn_id": "removed" }),
+        ))
+        .await;
+        apply(event(
+            "transaction_recorded",
+            "primary",
+            serde_json::json!({
+                "txn_id": "primary",
+                "date": "2026-11-14",
+                "description": "transfer out",
+                "postings": [
+                    { "account": "Assets:Cash", "commodity": "CAD", "amount": "-10.00" },
+                    { "account": "Assets:Savings", "commodity": "CAD", "amount": "10.00" }
+                ]
+            }),
+        ))
+        .await;
+        apply(event(
+            "transactions_merged",
+            "merge-1",
+            serde_json::json!({
+                "primary_id": "primary",
+                "merged_ids": ["merged"],
+                "combined_postings": [
+                    { "account": "Assets:Cash", "commodity": "CAD", "amount": "-10.00" },
+                    { "account": "Assets:Savings", "commodity": "CAD", "amount": "10.00" }
+                ],
+                "combined_description": "transfer"
+            }),
+        ))
+        .await;
+
+        let draft = DraftTransaction {
+            external_id: "x1".into(),
+            date: NaiveDate::from_ymd_opt(2026, 11, 14).unwrap(),
+            description: "furniture store".into(),
+            postings: vec![Posting {
+                account: "Unmatched".into(),
+                commodity: "CAD".into(),
+                amount: "812.40".parse().unwrap(),
+                fx_rate: None,
+                tags: Vec::new(),
+            }],
+        };
+        // As `auto_import::to_proposed_event` builds it; that module is behind `auto-import`.
+        let batch_id = ulid::Ulid::new().to_string();
+        let payload = AutoImportBatchProposedPayload {
+            batch_id: batch_id.clone(),
+            source: "imap_receipts".into(),
+            dedup_key: "imap_receipts-uid-7".into(),
+            fetched_at: Utc::now(),
+            draft_postings: vec![draft],
+            source_metadata: None,
+        };
+        apply(NewEvent {
+            id: Some(batch_id.clone()),
+            event_type: EventType::AutoImportBatchProposed.to_string(),
+            aggregate_id: batch_id,
+            timestamp: Utc::now(),
+            device_id: "d1".into(),
+            payload: serde_json::to_value(&payload).unwrap(),
+        })
+        .await;
+
+        let config = ResolvedConfig::new(
+            crate::events::load_persisted(&db).await.unwrap(),
+            Default::default(),
+        );
+        let w = Waiting::gather(&db, &config, Utc::now()).await.unwrap();
+        assert_eq!(
+            w.unmatched,
+            set(&["live"]),
+            "removed and superseded are gone"
+        );
+        assert_eq!(w.batches, set(&["imap_receipts-imap_receipts-uid-7"]));
     }
 }

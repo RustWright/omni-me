@@ -25,6 +25,7 @@ pub enum ConfigKey {
     FeatureAutoImport,
     FeatureLlm,
     FeatureDocuments,
+    FeatureTasks,
     AppearanceTheme,
     AppearanceAccent,
     AssistantEmbedModel,
@@ -83,6 +84,7 @@ pub const ALL_KEYS: &[ConfigKey] = &[
     ConfigKey::FeatureAutoImport,
     ConfigKey::FeatureLlm,
     ConfigKey::FeatureDocuments,
+    ConfigKey::FeatureTasks,
     ConfigKey::AppearanceTheme,
     ConfigKey::AppearanceAccent,
     ConfigKey::AssistantEmbedModel,
@@ -123,16 +125,9 @@ pub const ACCENT_VALUES: &[&str] = &["blue", "violet", "teal", "green", "amber",
 
 /// The embedding models `assistant.embed_model` accepts, smallest first.
 ///
-/// This list lives here, not beside the code that loads them, because that
-/// code is behind the `embeddings` feature and this file compiles everywhere — the
-/// settings screen has to offer the choices on an Android build that can never run
-/// one. `assistant::embedding` holds a test asserting every name here resolves, so
-/// the two halves cannot drift apart silently.
-///
-/// Changing this key invalidates every stored vector: two models of the same
-/// width still produce unrelated vector spaces. The sweep stores the model name
-/// alongside each row and re-embeds on a mismatch, so a change costs a full re-index
-/// rather than wrong answers — but it does cost that.
+/// Here, not with the loader behind `embeddings`, so every build's settings can list them;
+/// `assistant::embedding` tests each resolves. Changing the key costs a full re-index (rows record
+/// their model and re-embed on mismatch), never wrong answers.
 pub const EMBED_MODEL_VALUES: &[&str] = &[
     "bge-small-en-v1.5-q",
     "bge-small-en-v1.5",
@@ -163,6 +158,7 @@ impl fmt::Display for ConfigKey {
             ConfigKey::FeatureAutoImport => "feature.auto_import",
             ConfigKey::FeatureLlm => "feature.llm",
             ConfigKey::FeatureDocuments => "feature.documents",
+            ConfigKey::FeatureTasks => "feature.tasks",
             ConfigKey::AppearanceTheme => "appearance.theme",
             ConfigKey::AppearanceAccent => "appearance.accent",
             ConfigKey::AssistantEmbedModel => "assistant.embed_model",
@@ -205,6 +201,7 @@ impl FromStr for ConfigKey {
             "feature.auto_import" => Ok(ConfigKey::FeatureAutoImport),
             "feature.llm" => Ok(ConfigKey::FeatureLlm),
             "feature.documents" => Ok(ConfigKey::FeatureDocuments),
+            "feature.tasks" => Ok(ConfigKey::FeatureTasks),
             "appearance.theme" => Ok(ConfigKey::AppearanceTheme),
             "appearance.accent" => Ok(ConfigKey::AppearanceAccent),
             "assistant.embed_model" => Ok(ConfigKey::AssistantEmbedModel),
@@ -349,7 +346,8 @@ impl ConfigKey {
             | ConfigKey::FeatureFinances
             | ConfigKey::FeatureAutoImport
             | ConfigKey::FeatureLlm
-            | ConfigKey::FeatureDocuments => ConfigValue::Bool(true),
+            | ConfigKey::FeatureDocuments
+            | ConfigKey::FeatureTasks => ConfigValue::Bool(true),
             ConfigKey::AppearanceTheme => ConfigValue::Text("dark".to_string()),
             ConfigKey::AppearanceAccent => ConfigValue::Text("blue".to_string()),
             // 384 dimensions and 133 MB: the largest embedder that leaves room for
@@ -397,15 +395,9 @@ impl ConfigKey {
             // zone. The app stamps its own zone here whenever the schedule is
             // edited; UTC only until then.
             ConfigKey::AssistantCheckInTimezone => ConfigValue::Text("UTC".to_string()),
-            // Ten, raised from six 2026-09-14. Confirming a record exists costs
-            // two to four turns; establishing one does NOT exist was measured at
-            // eight, because the model has to narrow, widen, enumerate and check
-            // other types before the negative is honest. Six sat between the two,
-            // so every "not found" answer died on the budget. A ceiling costs
-            // nothing on the runs that never reach it.
-            // Fifteen from 2026-10-11: a request to research the journal and then
-            // write something read 15+ entries and ran out before proposing
-            // Quality over token cost: ruling 15 (RULINGS.md).
+            // Proving a record absent takes about eight turns and research-then-write needs
+            // more; a ceiling costs nothing on runs that never reach it. Quality over token
+            // cost: ruling 15 (RULINGS.md).
             ConfigKey::AssistantMaxTurns => ConfigValue::Int(15),
             // Ruling 19 (RULINGS.md): untouched a month, archived; archived a
             // quarter, deleted. Events remain, so a deleted chat is recoverable.
@@ -447,6 +439,7 @@ impl ConfigKey {
             | ConfigKey::FeatureAutoImport
             | ConfigKey::FeatureLlm
             | ConfigKey::FeatureDocuments
+            | ConfigKey::FeatureTasks
             | ConfigKey::AssistantRerank
             | ConfigKey::AssistantCheckIn
             | ConfigKey::NotifyChargesAtNight => ValueKind::Bool,
@@ -514,6 +507,7 @@ impl ConfigKey {
             | ConfigKey::FeatureAutoImport
             | ConfigKey::FeatureLlm
             | ConfigKey::FeatureDocuments
+            | ConfigKey::FeatureTasks
             // Models are loaded once at startup and held resident. Reloading one
             // mid-run would stall every question for the length of a download.
             | ConfigKey::AssistantEmbedModel
@@ -532,6 +526,7 @@ impl ConfigKey {
             ConfigKey::FeatureAutoImport => "Auto-import",
             ConfigKey::FeatureLlm => "LLM",
             ConfigKey::FeatureDocuments => "Documents",
+            ConfigKey::FeatureTasks => "Tasks",
             ConfigKey::AppearanceTheme => "Theme",
             ConfigKey::AppearanceAccent => "Accent",
             ConfigKey::AssistantEmbedModel => "Embedding model",
@@ -575,6 +570,7 @@ impl ConfigKey {
             ConfigKey::FeatureAutoImport => Some(Feature::AutoImport),
             ConfigKey::FeatureLlm => Some(Feature::Llm),
             ConfigKey::FeatureDocuments => Some(Feature::Documents),
+            ConfigKey::FeatureTasks => Some(Feature::Tasks),
             ConfigKey::AppearanceTheme
             | ConfigKey::AppearanceAccent
             // Not a `Feature`: these own no projection, no tab and no scheduler.
@@ -618,7 +614,8 @@ impl ConfigKey {
             | ConfigKey::FeatureFinances
             | ConfigKey::FeatureAutoImport
             | ConfigKey::FeatureLlm
-            | ConfigKey::FeatureDocuments => ConfigGroup::Features,
+            | ConfigKey::FeatureDocuments
+            | ConfigKey::FeatureTasks => ConfigGroup::Features,
             ConfigKey::AppearanceTheme | ConfigKey::AppearanceAccent => ConfigGroup::Appearance,
             ConfigKey::AssistantEmbedModel
             | ConfigKey::AssistantRerank
@@ -668,16 +665,8 @@ impl ConfigKey {
 
     /// The inclusive range an [`ValueKind::Int`] key accepts.
     ///
-    /// [`ConfigKey::AssistantMaxTurns`] is the reason this exists, and its
-    /// lower bound is a correctness property, not a preference. The agent
-    /// loop has no terminal verb — it ends when the model stops calling tools —
-    /// so the turn budget is its only guarantee of halting. A key that could be
-    /// set to zero, or left unbounded, would hand that guarantee to whoever last
-    /// edited a settings field. Tunable and uncappable are different things.
-    ///
-    /// `AssistantCheckInHour` had no bounds before this and would have accepted
-    /// hour 99 — a sibling of the same gap, fixed here rather than left to look
-    /// deliberate next to a neighbour that is clearly checked.
+    /// For [`ConfigKey::AssistantMaxTurns`] the floor is correctness: the turn budget is the agent
+    /// loop's only halting guarantee, ruling 17 (RULINGS.md). Tunable is not uncappable.
     pub fn int_range(self) -> Option<(i64, i64)> {
         match self {
             ConfigKey::AssistantCheckInHour => Some((0, 23)),
@@ -747,13 +736,9 @@ impl ConfigKey {
 
 /// A user-facing feature that can be switched off whole.
 ///
-/// A type rather than a convention about which `ConfigKey`s happen to start with
-/// `feature.`: every site in the feature map matches exhaustively on this, so a
-/// seventh feature stops the build at each place that has to decide about it
-/// instead of silently defaulting to ungated. What each feature owns — tab,
-/// projections, schedulers, commands, settings sections — is published in
-/// `docs/src/features.md`; the projection half is enforced in
-/// [`crate::events::registry`].
+/// A type, not a `feature.` key convention, so a new feature stops the build wherever the map
+/// must decide, never defaulting to ungated. Ownership: `docs/src/features.md`, enforced for
+/// projections in [`crate::events::registry`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Feature {
     Journal,
@@ -763,6 +748,7 @@ pub enum Feature {
     AutoImport,
     Llm,
     Documents,
+    Tasks,
 }
 
 /// Every feature, in the order [`ALL_KEYS`] lists their switches.
@@ -774,6 +760,7 @@ pub const ALL_FEATURES: &[Feature] = &[
     Feature::AutoImport,
     Feature::Llm,
     Feature::Documents,
+    Feature::Tasks,
 ];
 
 impl Feature {
@@ -787,6 +774,7 @@ impl Feature {
             Feature::AutoImport => ConfigKey::FeatureAutoImport,
             Feature::Llm => ConfigKey::FeatureLlm,
             Feature::Documents => ConfigKey::FeatureDocuments,
+            Feature::Tasks => ConfigKey::FeatureTasks,
         }
     }
 
@@ -871,21 +859,9 @@ impl ResolvedConfig {
         }
     }
 
-    /// The effective value of an integer key, with the same fall-back reasoning
-    /// as [`ResolvedConfig::bool_of`].
-    ///
-    /// Range is not checked here. The bounds belong to whoever reads the
-    /// value — an hour and a retry count have nothing in common — and enforcing a
-    /// guess at this layer would silently rewrite a value the caller could have
-    /// clamped meaningfully.
-    /// An `Int` key's effective value, clamped to its own range.
-    ///
-    /// The clamp is here as well as in `validate`, deliberately. Validation
-    /// guards the write path and the projection fold, but neither runs over a
-    /// value that was already stored — by an older build, or by one whose range
-    /// was wider. For [`ConfigKey::AssistantMaxTurns`] that difference is the
-    /// halting guarantee, so the reader refuses to hand back a value it would not
-    /// have accepted.
+    /// An `Int` key's effective value, clamped to its range here as well as in `validate`: a value
+    /// stored by an older or wider build never passed validation, and for
+    /// [`ConfigKey::AssistantMaxTurns`] that is the halting guarantee.
     pub fn int_of(&self, key: ConfigKey) -> i64 {
         let (value, _) = self.get(key);
         let n = match value {
@@ -918,18 +894,9 @@ mod tests {
         }
     }
 
-    /// `ALL_KEYS` is hand-written, and a key missing from it is invisible to the
-    /// settings screen and to the override file — so the omission is silent.
-    ///
-    /// This test narrows that gap rather than closing it. The match below is
-    /// exhaustive, so a new variant stops the build here and whoever adds it is
-    /// standing in the right file; the length assertion then fails until they add
-    /// it to `ALL_KEYS` too. What it cannot catch is someone updating both the
-    /// match and the count while still not touching `ALL_KEYS`. Closing it
-    /// properly means generating the enum and the list from one table, which is
-    /// not how this codebase writes its other key spaces (see
-    /// `events::types::event_type_display_roundtrip`, which has the same shape and
-    /// the same hole).
+    /// A key missing from hand-written `ALL_KEYS` is silently invisible. This narrows the gap (the
+    /// match stops the build, the count fails until listed) but cannot catch both being updated
+    /// without the list; closing it needs one generating table.
     #[test]
     fn all_keys_lists_every_variant() {
         let mut counted = 0;
@@ -942,6 +909,7 @@ mod tests {
                 | ConfigKey::FeatureAutoImport
                 | ConfigKey::FeatureLlm
                 | ConfigKey::FeatureDocuments
+                | ConfigKey::FeatureTasks
                 | ConfigKey::AppearanceTheme
                 | ConfigKey::AppearanceAccent
                 | ConfigKey::AssistantEmbedModel
@@ -970,7 +938,7 @@ mod tests {
             }
         }
         assert_eq!(
-            counted, 32,
+            counted, 33,
             "ALL_KEYS does not list every ConfigKey variant"
         );
 
@@ -1007,11 +975,12 @@ mod tests {
                 | Feature::Finances
                 | Feature::AutoImport
                 | Feature::Llm
-                | Feature::Documents => counted += 1,
+                | Feature::Documents
+                | Feature::Tasks => counted += 1,
             }
         }
         assert_eq!(
-            counted, 7,
+            counted, 8,
             "ALL_FEATURES does not list every Feature variant"
         );
 
@@ -1066,12 +1035,8 @@ mod tests {
     /// A build that gains a key must behave as the build before it did for
     /// anyone who never opens the control.
     ///
-    /// That is not the same as "every boolean defaults on", which is what
-    /// this test used to assert. It held only while every boolean key was a
-    /// feature switch; `assistant.rerank` is a boolean whose backward-compatible
-    /// default is *off*, because reranking did not exist before it. Asserting
-    /// "on" would have forced the new key to change behaviour on upgrade in order
-    /// to pass a test named for not doing that.
+    /// Not "every boolean defaults on": `assistant.rerank` defaults off, because reranking did not
+    /// exist before it.
     #[test]
     fn defaults_preserve_todays_behaviour() {
         let empty = ResolvedConfig::default();

@@ -1,0 +1,577 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>[0102] Planning and people UI</title>
+<style>
+/* Tokens copied from tauri-app/frontend/input.css (dark theme). Data is synthetic. */
+:root {
+  --bg: 30 30 30; --sidebar: 22 22 22; --surface: 38 38 38;
+  --accent: 68 138 255; --text: 220 221 222; --muted: 163 163 163;
+  --border: 255 255 255; --success: 74 222 128; --warn: 251 191 36; --error: 248 113 113;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: #111; color: rgb(var(--text)); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+.page { padding: 24px; max-width: 1700px; margin: 0 auto; }
+h1 { font-size: 20px; margin: 0 0 4px; }
+.lede { color: rgb(var(--muted)); margin: 0 0 24px; max-width: 900px; }
+section.topic { margin: 0 0 48px; }
+section.topic > h2 { font-size: 16px; margin: 0 0 4px; }
+section.topic > p { color: rgb(var(--muted)); margin: 0 0 16px; max-width: 900px; }
+.row { display: flex; gap: 28px; flex-wrap: wrap; align-items: flex-start; }
+.col { display: flex; flex-direction: column; gap: 8px; }
+.label { font-size: 12px; font-weight: 600; color: rgb(var(--accent)); text-transform: uppercase; letter-spacing: .04em; }
+.note { width: 390px; color: rgb(var(--muted)); font-size: 13px; }
+.note li { margin-bottom: 4px; }
+
+/* Phone frame */
+.phone { width: 390px; background: rgb(var(--bg)); border: 1px solid rgb(var(--border) / .12); border-radius: 18px; overflow: hidden; }
+.bar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid rgb(var(--border) / .1); background: rgb(var(--bg)); }
+.bar .menu { width: 18px; height: 12px; border-top: 2px solid rgb(var(--muted)); border-bottom: 2px solid rgb(var(--muted)); position: relative; }
+.bar .menu::after { content: ""; position: absolute; left: 0; right: 0; top: 3px; border-top: 2px solid rgb(var(--muted)); }
+.bar .title { font-weight: 600; font-size: 15px; }
+.bar .right { margin-left: auto; color: rgb(var(--muted)); font-size: 12px; }
+.screen { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+
+/* Chat */
+.msg-a { color: rgb(var(--text)); font-size: 14px; }
+.msg-u { align-self: flex-end; max-width: 80%; background: rgb(var(--accent) / .18); border: 1px solid rgb(var(--accent) / .3); border-radius: 14px 14px 4px 14px; padding: 8px 12px; }
+.composer { margin: 0 14px 14px; border: 1px solid rgb(var(--border) / .15); border-radius: 20px; padding: 9px 14px; color: rgb(var(--muted)); font-size: 13px; }
+
+/* Cards (ProposalCard's look: sidebar bg, /20 border) */
+.card { border: 1px solid rgb(var(--border) / .2); background: rgb(var(--sidebar)); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.card.surface { background: rgb(var(--surface)); border-color: rgb(var(--border) / .1); }
+.kicker { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; color: rgb(var(--muted)); }
+.kicker b { color: rgb(var(--text)); font-size: 14px; font-weight: 600; }
+.muted { color: rgb(var(--muted)); }
+.xs { font-size: 12px; }
+.it { font-style: italic; }
+.fit { font-size: 13px; padding: 6px 8px; border-radius: 6px; background: rgb(var(--warn) / .1); color: rgb(var(--warn)); }
+.fit.ok { background: rgb(var(--success) / .1); color: rgb(var(--success)); }
+.sec { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: rgb(var(--muted)); margin-top: 2px; }
+.agenda { display: flex; flex-direction: column; gap: 4px; }
+.slot { display: grid; grid-template-columns: 82px 1fr; gap: 8px; align-items: start; font-size: 13px; }
+.slot .t { color: rgb(var(--muted)); font-variant-numeric: tabular-nums; font-size: 12px; padding-top: 5px; }
+.blk { border-radius: 6px; padding: 5px 8px; border-left: 3px solid rgb(var(--accent)); background: rgb(var(--accent) / .12); }
+.blk.cal { border-left-color: rgb(var(--muted) / .6); background: rgb(var(--border) / .05); color: rgb(var(--muted)); }
+.blk.done { opacity: .5; }
+.blk .sub { font-size: 11px; color: rgb(var(--muted)); }
+.chg { font-size: 10px; font-weight: 600; color: rgb(var(--accent)); margin-left: 6px; text-transform: uppercase; }
+.now { display: grid; grid-template-columns: 82px 1fr; gap: 8px; align-items: center; font-size: 11px; color: rgb(var(--error)); }
+.now hr { border: 0; border-top: 1px solid rgb(var(--error) / .8); margin: 0; }
+ul.plain { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+ul.plain li { display: flex; justify-content: space-between; gap: 8px; }
+ul.plain li .est { color: rgb(var(--muted)); font-size: 12px; white-space: nowrap; }
+ul.plain li.done span:first-child { text-decoration: line-through; color: rgb(var(--muted)); }
+.due { color: rgb(var(--warn)); }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.chip { font-size: 11px; color: rgb(var(--muted)); background: rgb(var(--border) / .1); border-radius: 4px; padding: 2px 6px; }
+.chip.warn { color: rgb(var(--warn)); background: rgb(var(--warn) / .1); }
+.btns { display: flex; gap: 8px; align-items: center; }
+.btn { font-size: 13px; padding: 6px 12px; border-radius: 6px; border: 1px solid transparent; white-space: nowrap; }
+.btn.primary { background: rgb(var(--accent)); color: #fff; font-weight: 600; }
+.btn.ghost { color: rgb(var(--text)); border-color: rgb(var(--border) / .15); }
+.collapsed { font-size: 12px; color: rgb(var(--muted)); border: 1px dashed rgb(var(--border) / .15); border-radius: 8px; padding: 8px 12px; display: flex; justify-content: space-between; }
+
+/* Picker */
+.quote { font-size: 13px; border-left: 2px solid rgb(var(--border) / .25); padding: 2px 0 2px 10px; }
+.quote mark { background: rgb(var(--accent) / .25); color: rgb(var(--text)); border-radius: 3px; padding: 0 2px; }
+.src { font-size: 11px; color: rgb(var(--muted)); }
+.src.warn { color: rgb(var(--warn)); }
+.opt { border: 1px solid rgb(var(--border) / .15); border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; }
+.opt b { font-weight: 600; font-size: 13px; }
+.opt .ctx { font-size: 12px; color: rgb(var(--muted)); }
+.opt.alt { flex-direction: row; justify-content: space-between; align-items: baseline; }
+.opt.alt b { font-weight: 500; }
+.opts2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.answered { font-size: 12px; color: rgb(var(--muted)); display: flex; justify-content: space-between; border: 1px solid rgb(var(--border) / .1); border-radius: 8px; padding: 8px 12px; }
+.answered a, .link { color: rgb(var(--accent)); text-decoration: none; font-size: 12px; }
+.grow { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; border-top: 1px solid rgb(var(--border) / .08); }
+.grow:first-of-type { border-top: 0; }
+.mini { display: flex; gap: 6px; flex-wrap: wrap; }
+.mini span { font-size: 12px; border: 1px solid rgb(var(--border) / .15); border-radius: 12px; padding: 3px 10px; }
+.search { font-size: 13px; border: 1px solid rgb(var(--accent) / .6); border-radius: 8px; padding: 7px 10px; display: flex; align-items: center; }
+.search .caret { width: 1px; height: 15px; background: rgb(var(--accent)); margin-left: 1px; }
+
+/* Person */
+.ph { display: flex; flex-direction: column; gap: 2px; }
+.ph .name { font-size: 20px; font-weight: 600; }
+.fact { display: flex; flex-direction: column; gap: 3px; padding: 8px 0; border-top: 1px solid rgb(var(--border) / .08); font-size: 13px; }
+.fact:first-of-type { border-top: 0; padding-top: 0; }
+.disc { display: flex; justify-content: space-between; align-items: center; padding: 11px 12px; border: 1px solid rgb(var(--border) / .1); border-radius: 8px; background: rgb(var(--surface)); font-size: 13px; }
+.disc .chev { color: rgb(var(--muted)); }
+.dec { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-top: 1px solid rgb(var(--border) / .08); font-size: 13px; }
+.dec:first-child { border-top: 0; }
+.guess { font-size: 10px; font-weight: 600; color: rgb(var(--warn)); border: 1px solid rgb(var(--warn) / .4); border-radius: 4px; padding: 0 4px; margin-right: 4px; }
+
+/* Views */
+.seg { display: flex; background: rgb(var(--sidebar)); border-radius: 8px; padding: 3px; gap: 2px; }
+.seg span { flex: 1; text-align: center; font-size: 13px; padding: 5px 0; border-radius: 6px; color: rgb(var(--muted)); }
+.seg span.on { background: rgb(var(--surface)); color: rgb(var(--text)); font-weight: 600; }
+.wk { display: grid; grid-template-columns: 44px 1fr 74px; gap: 8px; align-items: center; font-size: 13px; padding: 6px 0; border-top: 1px solid rgb(var(--border) / .08); }
+.wk:first-child { border-top: 0; }
+.wk .d { color: rgb(var(--muted)); font-size: 12px; }
+.wk.today .d { color: rgb(var(--accent)); font-weight: 600; }
+.load { height: 6px; border-radius: 3px; background: rgb(var(--border) / .1); position: relative; overflow: hidden; }
+.load i { position: absolute; left: 0; top: 0; bottom: 0; background: rgb(var(--accent) / .7); border-radius: 3px; }
+.load i.over { background: rgb(var(--warn)); }
+.wk .h { font-size: 11px; color: rgb(var(--muted)); text-align: right; font-variant-numeric: tabular-nums; }
+.wk .what { font-size: 11px; color: rgb(var(--muted)); grid-column: 2 / 4; margin-top: -4px; }
+.goal { display: flex; flex-direction: column; gap: 3px; padding: 8px 0; border-top: 1px solid rgb(var(--border) / .08); font-size: 13px; }
+.goal:first-child { border-top: 0; padding-top: 0; }
+.goal .st { font-size: 11px; }
+.st.ok { color: rgb(var(--success)); }
+.st.warn { color: rgb(var(--warn)); }
+.st.idle { color: rgb(var(--muted)); }
+.hz { font-size: 13px; font-weight: 600; display: flex; justify-content: space-between; align-items: baseline; margin-top: 6px; }
+.hz span { font-size: 11px; font-weight: 400; color: rgb(var(--muted)); }
+.ask { font-size: 13px; display: flex; justify-content: space-between; padding: 10px 12px; border-radius: 8px; background: rgb(var(--accent) / .1); color: rgb(var(--text)); }
+.ask .link { font-weight: 600; }
+.timer { display: flex; align-items: center; gap: 6px; font-size: 12px; color: rgb(var(--success)); margin-top: 4px; }
+.timer .dot { width: 8px; height: 8px; border-radius: 50%; background: rgb(var(--success)); }
+</style>
+</head>
+<body>
+<div class="page">
+<h1>[0102] Planning and people: rendered for reaction</h1>
+<p class="lede">Phone width, dark theme, the app's own colour tokens. All names and data are made up.
+All four sections are ruled (110, 117–120), several provisional until used; the notes beside each
+render say what was chosen and what it beat.</p>
+
+<!-- ═════════════════════════ 1. PLAN CARD ═════════════════════════ -->
+<section class="topic">
+<h2>1. The morning plan card: ruled (ruling 117)</h2>
+<p>Rulings 97, 98 and 100: one batch proposal with blocks for deep work and an untimed list for small things.
+It is changed by saying so, and a re-plan replaces the old card.</p>
+<div class="row">
+<div class="col">
+<div class="label">First proposal, drafted 09:42 when you ticked Brilliant</div>
+<div class="phone">
+  <div class="bar"><div class="menu"></div><div class="title">Assistant</div><div class="right">Thu 19 Nov</div></div>
+  <div class="screen">
+    <div class="msg-a">Morning. Here's a plan for today. It's tight: the reference email is the thing I'd protect.</div>
+    <div class="card">
+      <div class="kicker"><b>Plan for Thursday</b><span>until 11:00</span></div>
+      <div class="xs muted">From 11:00 (up 09:40, morning routine about 1 h 20) to 22:30 (bed 23:30, less dinner and reflection)</div>
+      <div class="xs muted">All day: Mum's birthday</div>
+      <div class="fit">About 5 h 50 of work in 5 h 15 free. Your blocks usually run 1.3× long, breaks included.</div>
+      <div class="sec">Blocks</div>
+      <div class="agenda">
+        <div class="slot"><div class="t">11:00–12:10</div><div class="blk">Thesis ch. 2: methods draft<div class="sub">est 1 h · home</div></div></div>
+        <div class="slot"><div class="t">12:15–13:00</div><div class="blk cal">Bus to campus<div class="sub">travel, from your estimate</div></div></div>
+        <div class="slot"><div class="t">13:00–14:00</div><div class="blk cal">Lab meeting<div class="sub">calendar · campus</div></div></div>
+        <div class="slot"><div class="t">14:15–15:45</div><div class="blk">omni-me: reminder spike<div class="sub">est 1 h · project task, sized S</div></div></div>
+        <div class="slot"><div class="t">16:00–16:30</div><div class="blk cal">Call with Dr. Lee<div class="sub">calendar</div></div></div>
+        <div class="slot"><div class="t">16:45–17:45</div><div class="blk">Write the masters reference request<div class="sub">est 45 min · due Mon</div></div></div>
+      </div>
+      <div class="sec">Today, any time</div>
+      <ul class="plain">
+        <li><span>Reply to landlord about the lease</span><span class="est">10 min</span></li>
+        <li><span>Pay the hydro bill</span><span class="est">5 min</span></li>
+        <li><span>Book the dentist</span><span class="est">5 min</span></li>
+        <li><span>Return library books</span><span class="est">15 min</span></li>
+      </ul>
+      <div class="sec">Coming due</div>
+      <ul class="plain">
+        <li><span class="due">Hydro bill, $84.20</span><span class="est">due Fri · penalty from 28 Nov</span></li>
+        <li><span>Masters reference request</span><span class="est">due Mon 23</span></li>
+      </ul>
+      <div class="xs muted">Morning and evening routines sit outside the day. No other routine falls in it today.</div>
+      <div class="btns"><span class="btn primary">Accept plan</span><span class="btn ghost">Skip today</span><span class="xs muted">or tell me what to change</span></div>
+    </div>
+  </div>
+  <div class="composer">Message</div>
+</div>
+</div>
+
+<div class="col">
+<div class="label">After "change it": the re-plan, 10:05</div>
+<div class="phone">
+  <div class="bar"><div class="menu"></div><div class="title">Assistant</div><div class="right">Thu 19 Nov</div></div>
+  <div class="screen">
+    <div class="collapsed"><span>Plan for Thursday, 09:42</span><span>replaced by 10:05</span></div>
+    <div class="msg-u">Swap them: omni-me first, I think better on thesis after the lab meeting. And drop the library books.</div>
+    <div class="msg-a">Done. Swapped, and the books roll to tomorrow.</div>
+    <div class="card">
+      <div class="kicker"><b>Plan for Thursday</b><span>10:05 · until 11:00</span></div>
+      <div class="fit">About 5 h 35 of work in 5 h 15 free.</div>
+      <div class="sec">Blocks</div>
+      <div class="agenda">
+        <div class="slot"><div class="t">11:00–12:10</div><div class="blk">omni-me: reminder spike<span class="chg">moved</span><div class="sub">est 1 h · home</div></div></div>
+        <div class="slot"><div class="t">12:15–13:00</div><div class="blk cal">Bus to campus<div class="sub">travel</div></div></div>
+        <div class="slot"><div class="t">13:00–14:00</div><div class="blk cal">Lab meeting<div class="sub">calendar · campus</div></div></div>
+        <div class="slot"><div class="t">14:15–15:45</div><div class="blk">Thesis ch. 2: methods draft<span class="chg">moved</span><div class="sub">est 1 h</div></div></div>
+        <div class="slot"><div class="t">16:00–16:30</div><div class="blk cal">Call with Dr. Lee<div class="sub">calendar</div></div></div>
+        <div class="slot"><div class="t">16:45–17:45</div><div class="blk">Write the masters reference request<div class="sub">est 45 min · due Mon</div></div></div>
+      </div>
+      <div class="sec">Today, any time</div>
+      <ul class="plain">
+        <li><span>Reply to landlord about the lease</span><span class="est">10 min</span></li>
+        <li><span>Pay the hydro bill</span><span class="est">5 min</span></li>
+        <li><span>Book the dentist</span><span class="est">5 min</span></li>
+      </ul>
+      <div class="xs muted">Rolled to Friday: return library books.</div>
+      <div class="btns"><span class="btn primary">Accept plan</span><span class="btn ghost">Skip today</span></div>
+    </div>
+  </div>
+  <div class="composer">Message</div>
+</div>
+</div>
+
+<div class="note">
+<div class="label">To react to</div>
+<ul>
+<li><b>Updated for rulings 93 and 111–115.</b> The day runs from your first activity plus the morning routine to the bedtime target less the evening routine (114). All-day events are one label line (111). Travel to a campus event is a greyed buffer (115). "Until 11:00": unanswered, the plan lapses when its first block would start (98).</li>
+<li><b>Calendar events sit inline</b>, greyed, so the fit check can be read against the day. The alternative was a list of blocks only. That is shorter, but "5 h 45 free" would have nothing to check against.</li>
+<li><b>The fit line is the one coloured line.</b> Amber when over, green when it fits. It is measured, never enforced (ruling 99): it never blocks Accept.</li>
+<li><b>"Skip today" costs nothing.</b> The view then shows calendar and due items, with no "plan not set" line.</li>
+<li><b>The re-plan collapses the old card to one line</b> and marks what moved. An approval on the old one is refused.</li>
+<li><b>No "From:" row on plans:</b> each block already names its source. A line appears only when an input could not be read, as in "Calendar: couldn't refresh, using 09:12".</li>
+</ul>
+</div>
+</div>
+</section>
+
+<!-- ═════════════════════════ 2. PICKER ═════════════════════════ -->
+<section class="topic">
+<h2>2. People questions: the picker and the group card: ruled (ruling 118, provisional)</h2>
+<p>Ruling 104: the source line, one context line per candidate, "new person" and "don't know". Names with no candidate come as one group card per source. Every answer can be undone.</p>
+<div class="row">
+<div class="col">
+<div class="label">Picker: two candidates, from the journal</div>
+<div class="phone">
+  <div class="bar"><div class="menu"></div><div class="title">Assistant</div><div class="right">19:04</div></div>
+  <div class="screen">
+    <div class="msg-a">Three people questions from today.</div>
+    <div class="card">
+      <div class="kicker"><b>Which Sarah?</b><span>1 of 3</span></div>
+      <div class="src">Your journal, today</div>
+      <div class="quote">Lunch with <mark>Sarah</mark>. She's thinking about leaving the lab before spring.</div>
+      <div class="opt"><b>Sarah Okafor</b><span class="ctx">Work. Last: "Sarah reviewed my ch. 1 draft", 12 Nov</span></div>
+      <div class="opt"><b>Sarah, your sister</b><span class="ctx">Family. Last: "Called Sarah about Christmas flights", 2 Nov</span></div>
+      <div class="opts2">
+        <div class="opt alt"><b>Someone new</b></div>
+        <div class="opt alt"><b>Don't know</b></div>
+      </div>
+      <div class="xs muted">Unanswered, this lapses tomorrow night and the line stays unlinked.</div>
+    </div>
+  </div>
+  <div class="composer">Message</div>
+</div>
+</div>
+
+<div class="col">
+<div class="label">Picker: from an email, one candidate</div>
+<div class="phone">
+  <div class="bar"><div class="menu"></div><div class="title">Assistant</div><div class="right">19:05</div></div>
+  <div class="screen">
+    <div class="answered"><span>Sarah → Sarah Okafor</span><a href="#">Undo</a></div>
+    <div class="card">
+      <div class="kicker"><b>Who sent this?</b><span>2 of 3</span></div>
+      <div class="src warn">From an email · sender not yet confirmed</div>
+      <div class="quote">Robert Chen &lt;rchen@northwind.example&gt;<br>"Hi, <mark>Bobby</mark> here, following up on the reference you asked about."</div>
+      <div class="opt"><b>Bobby Chen</b><span class="ctx">Journal. Last: "Coffee with Bobby, he offered to write a reference", 30 Oct</span></div>
+      <div class="opts2">
+        <div class="opt alt"><b>Someone new</b></div>
+        <div class="opt alt"><b>Don't know</b></div>
+      </div>
+      <div class="xs muted">Linking also confirms this address, so later mail from it links by itself.</div>
+    </div>
+  </div>
+  <div class="composer">Message</div>
+</div>
+</div>
+
+<div class="col">
+<div class="label">Group card: names with no candidate</div>
+<div class="phone">
+  <div class="bar"><div class="menu"></div><div class="title">Assistant</div><div class="right">19:06</div></div>
+  <div class="screen">
+    <div class="answered"><span>Bobby → Bobby Chen, address confirmed</span><a href="#">Undo</a></div>
+    <div class="card">
+      <div class="kicker"><b>New names in today's journal</b><span>3 of 3</span></div>
+      <div class="grow">
+        <div class="quote"><mark>Marcus</mark> from the climbing gym lent me his belay device.</div>
+        <div class="mini"><span>New person</span><span>Don't know</span><span>Someone I know…</span></div>
+      </div>
+      <div class="grow">
+        <div class="quote">Talked to <mark>Shara</mark> about the conference budget.</div>
+        <div class="mini"><span>New person</span><span>Don't know</span><span>Someone I know…</span></div>
+      </div>
+      <div class="grow">
+        <div class="quote"><mark>Priya</mark>'s talk on causal inference was the best of the day.</div>
+        <div class="mini"><span>New person</span><span>Don't know</span><span>Someone I know…</span></div>
+      </div>
+      <div class="xs muted">"Someone I know…" searches people. Picking a close spelling (Shara → Sarah) asks once whether it was a typo.</div>
+    </div>
+  </div>
+  <div class="composer">Message</div>
+</div>
+</div>
+
+<div class="col">
+<div class="label">"Someone I know…" tapped on Shara</div>
+<div class="phone">
+  <div class="bar"><div class="menu"></div><div class="title">Assistant</div><div class="right">19:07</div></div>
+  <div class="screen">
+    <div class="card">
+      <div class="kicker"><b>New names in today's journal</b><span>3 of 3</span></div>
+      <div class="answered"><span>Marcus → new person</span><a href="#">Undo</a></div>
+      <div class="grow">
+        <div class="quote">Talked to <mark>Shara</mark> about the conference budget.</div>
+        <div class="search">Shara<span class="caret"></span></div>
+        <div class="xs muted">All your people, closest spelling first</div>
+        <div class="opt"><b>Sarah Okafor</b><span class="ctx">Work. Last: "Sarah reviewed my ch. 1 draft", 12 Nov</span></div>
+        <div class="opt"><b>Sarah, your sister</b><span class="ctx">Family. Last: "Called Sarah about Christmas flights", 2 Nov</span></div>
+        <div class="opt"><b>Shanice Moore</b><span class="ctx">Admin. Last: email "Your housing application", 28 Oct</span></div>
+        <div class="xs muted"><span class="link">Back</span> to New person / Don't know</div>
+      </div>
+      <div class="grow">
+        <div class="quote"><mark>Priya</mark>'s talk on causal inference was the best of the day.</div>
+        <div class="mini"><span>New person</span><span>Don't know</span><span>Someone I know…</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="composer">Message</div>
+</div>
+</div>
+
+<div class="col">
+<div class="label">Then: Sarah Okafor picked, a close spelling</div>
+<div class="phone">
+  <div class="bar"><div class="menu"></div><div class="title">Assistant</div><div class="right">19:07</div></div>
+  <div class="screen">
+    <div class="card">
+      <div class="kicker"><b>New names in today's journal</b><span>3 of 3</span></div>
+      <div class="answered"><span>Marcus → new person</span><a href="#">Undo</a></div>
+      <div class="grow">
+        <div class="quote">Talked to <mark>Shara</mark> about the conference budget.</div>
+        <div class="xs">Linked to <b>Sarah Okafor</b>. Was "Shara" a typo?</div>
+        <div class="opts2">
+          <div class="opt"><b>Yes, a typo</b><span class="ctx">Kept hidden, only to match it again</span></div>
+          <div class="opt"><b>No, she goes by Shara</b><span class="ctx">Shown as "also Shara"</span></div>
+        </div>
+      </div>
+      <div class="grow">
+        <div class="quote"><mark>Priya</mark>'s talk on causal inference was the best of the day.</div>
+        <div class="mini"><span>New person</span><span>Don't know</span><span>Someone I know…</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="composer">Message</div>
+</div>
+</div>
+
+<div class="note">
+<div class="label">To react to</div>
+<ul>
+<li><b>One tap answers.</b> No confirm step, because every answer is reversible: the answered card shrinks to one line with Undo.</li>
+<li><b>Email sources are labelled amber</b> (ruling 103): the display name and body are the sender's words, so the card never shows them unlabelled.</li>
+<li><b>A new person stays provisional</b> until a second mention or your confirmation. This is not shown on the card.</li>
+<li><b>Misspellings live in "Someone I know…"</b>, not as a fifth button. The alternative was offering the closest spelling automatically. It is one tap faster, but it also offers wrong matches.</li>
+<li><b>"Someone I know…" opens a search in that row</b>, prefilled with the name so close spellings come first. It differs from the first picker in reach: that one offers only the candidates the matcher found, this one searches everyone. Picking a different spelling asks the typo question in the row. The other rows stay as they were.</li>
+</ul>
+</div>
+</div>
+</section>
+
+<!-- ═════════════════════════ 3. PERSON VIEW ═════════════════════════ -->
+<section class="topic">
+<h2>3. The person view: ruled (rulings 119, 120)</h2>
+<p>Ruling 101: wide in storage, focused in presentation. It leads with confirmed facts and the last interaction, and mentions sit behind a count.
+Field names are placeholders: ruling 102 leaves the fact shape to the people data prep ([0108]).</p>
+<div class="row">
+<div class="col">
+<div class="label">Default: as it opens</div>
+<div class="phone">
+  <div class="bar"><div class="menu"></div><div class="title">People</div><div class="right">‹ back</div></div>
+  <div class="screen">
+    <div class="ph">
+      <div class="name">Robert Chen</div>
+      <div class="xs muted">also Bobby · rchen@northwind.example</div>
+      <div class="xs muted">Last: email "Re: masters reference", 16 Nov</div>
+    </div>
+    <div class="card surface">
+      <div class="sec">What you've confirmed</div>
+      <div>
+        <div class="fact">Senior engineer at Northwind Labs<div class="chips"><span class="chip">email · 3 Oct</span></div></div>
+        <div class="fact">Offered to write a masters reference<div class="chips"><span class="chip">journal · 30 Oct</span></div></div>
+        <div class="fact">Met through Dr. Lee<div class="chips"><span class="chip">journal · 30 Oct</span></div></div>
+      </div>
+    </div>
+    <div class="card surface">
+      <div class="sec">Your notes</div>
+      <div style="font-size:13px">Prefers a call to email. Ask about his daughter's university plans.</div>
+    </div>
+    <div class="ask"><span>1 fact waiting for you</span><span class="link">In chat ›</span></div>
+    <div class="disc"><span>Appears in 14 emails, 3 journal entries</span><span class="chev">›</span></div>
+    <div class="disc"><span>How this record was built (4 decisions)</span><span class="chev">›</span></div>
+  </div>
+</div>
+</div>
+
+<div class="col">
+<div class="label">Expanded: how this record was built</div>
+<div class="phone">
+  <div class="bar"><div class="menu"></div><div class="title">People</div><div class="right">‹ back</div></div>
+  <div class="screen">
+    <div class="ph"><div class="name">Robert Chen</div></div>
+    <div class="card surface">
+      <div class="sec">How this record was built</div>
+      <div>
+        <div class="dec"><span>"Bobby" in your journal is this person<br><span class="xs muted">you, 30 Oct</span></span><a class="link" href="#">Undo</a></div>
+        <div class="dec"><span>rchen@northwind.example is his address<br><span class="xs muted">you, 19 Nov</span></span><a class="link" href="#">Undo</a></div>
+        <div class="dec"><span>Not the same as Robert Chen, dentist<br><span class="xs muted">you, 2 Nov</span></span><a class="link" href="#">Undo</a></div>
+        <div class="dec"><span><span class="guess">GUESSED</span>Email of 14 Nov linked by his confirmed address<br><span class="xs muted">automatic</span></span><a class="link" href="#">Wrong?</a></div>
+      </div>
+    </div>
+    <div class="disc"><span>Appears in 14 emails, 3 journal entries</span><span class="chev">›</span></div>
+  </div>
+</div>
+</div>
+
+<div class="col">
+<div class="label">People tab: search without the assistant</div>
+<div class="phone">
+  <div class="bar"><div class="menu"></div><div class="title">People</div><div class="right">212</div></div>
+  <div class="screen">
+    <div class="search">Search names, emails, facts</div>
+    <div class="sec">Most recent first</div>
+    <div>
+      <div class="dec"><span><b>Robert Chen</b><br><span class="xs muted">Northwind Labs · email, 16 Nov</span></span><span class="chev muted">›</span></div>
+      <div class="dec"><span><b>Sarah Okafor</b><br><span class="xs muted">Lab · journal, 19 Nov</span></span><span class="chev muted">›</span></div>
+      <div class="dec"><span><b>Marcus</b> <span class="guess">NEW</span><br><span class="xs muted">Climbing gym · journal, 19 Nov</span></span><span class="chev muted">›</span></div>
+      <div class="dec"><span><b>Dr. Lee</b><br><span class="xs muted">Supervisor · calendar, 19 Nov</span></span><span class="chev muted">›</span></div>
+      <div class="dec"><span><b>Sarah</b>, your sister<br><span class="xs muted">Family · journal, 2 Nov</span></span><span class="chev muted">›</span></div>
+      <div class="dec"><span><b>Shanice Moore</b><br><span class="xs muted">Housing office · email, 28 Oct</span></span><span class="chev muted">›</span></div>
+    </div>
+  </div>
+</div>
+</div>
+
+<div class="note">
+<div class="label">To react to</div>
+<ul>
+<li><b>The People tab works with the assistant down</b> (ruling 119): search and the person view read local records, no model call. It searches names, addresses and confirmed facts, most recent interaction first. NEW marks a provisional person (118).</li>
+<li><b>Read-only, like the plan view:</b> facts are added and corrected in chat. "Undo" and "Wrong?" are the exceptions, because a wrong link has to be fixable where you see it.</li>
+<li><b>Every fact carries its source chip.</b> A fact whose email has expired keeps its quote and shows "source expired" (ruling 108).</li>
+<li><b>Not shown yet:</b> roles with dates ("landlord, 2025–"), the keeping-in-touch cadence, links to projects and goals. They wait on [0108]'s data prep.</li>
+<li><b>Three ways in</b> (ruling 119): tapping a name in chat or on a card, asking the assistant, and the People tab.</li>
+</ul>
+</div>
+</div>
+</section>
+
+<!-- ═════════════════════════ 4. THE VIEW ═════════════════════════ -->
+<section class="topic">
+<h2>4. The read-only view beside chat: ruled C (ruling 110, provisional)</h2>
+<p>A and B are kept as the candidates C beat, unchanged from the session. C is updated: it is 15:07 with the 10:05 plan accepted, and the thesis block's timer is running (ruling 93). Pause and Stop are the view's one exception to read-only; anything else, tapped, opens chat about it.</p>
+<div class="row">
+<div class="col">
+<div class="label">A · Today only (not chosen)</div>
+<div class="phone">
+  <div class="bar"><div class="menu"></div><div class="title">Today</div><div class="right">Thu 19 Nov</div></div>
+  <div class="screen">
+    <div class="fit">6 h 05 planned in 5 h 45 free</div>
+    <div class="agenda">
+      <div class="slot"><div class="t">08:30–10:00</div><div class="blk done">omni-me: reminder spike</div></div>
+      <div class="slot"><div class="t">10:00–11:00</div><div class="blk cal done">Lab meeting</div></div>
+      <div class="slot"><div class="t">11:15–12:45</div><div class="blk">Thesis ch. 2: methods draft</div></div>
+      <div class="now"><span style="text-align:right">11:40</span><hr></div>
+      <div class="slot"><div class="t">13:00–13:30</div><div class="blk cal">Call with Dr. Lee</div></div>
+      <div class="slot"><div class="t">14:00–15:00</div><div class="blk">Masters reference request</div></div>
+    </div>
+    <div class="sec">Any time</div>
+    <ul class="plain">
+      <li class="done"><span>Reply to landlord about the lease</span><span class="est">10 min</span></li>
+      <li><span>Pay the hydro bill</span><span class="est">5 min</span></li>
+      <li><span>Book the dentist</span><span class="est">5 min</span></li>
+    </ul>
+    <div class="sec">Coming due</div>
+    <ul class="plain">
+      <li><span class="due">Hydro bill, $84.20</span><span class="est">Fri · penalty 28 Nov</span></li>
+      <li><span>Masters reference request</span><span class="est">Mon</span></li>
+    </ul>
+    <div class="ask"><span>3 people questions tonight</span><span class="link">19:00</span></div>
+  </div>
+</div>
+</div>
+
+<div class="col">
+<div class="label">B · Day / Week / Month tabs (not chosen)</div>
+<div class="phone">
+  <div class="bar"><div class="menu"></div><div class="title">Plan</div><div class="right">week 47</div></div>
+  <div class="screen">
+    <div class="seg"><span>Day</span><span class="on">Week</span><span>Month</span></div>
+    <div class="xs muted">Planned against free time, by day</div>
+    <div>
+      <div class="wk"><span class="d">Mon</span><div class="load"><i style="width:70%"></i></div><span class="h">4 h / 6 h</span><span class="what">2 blocks done · 1 rolled</span></div>
+      <div class="wk"><span class="d">Tue</span><div class="load"><i style="width:85%"></i></div><span class="h">5 h / 6 h</span><span class="what">3 blocks done</span></div>
+      <div class="wk"><span class="d">Wed</span><div class="load"><i style="width:40%"></i></div><span class="h">2 h / 5 h</span><span class="what">no plan</span></div>
+      <div class="wk today"><span class="d">Thu</span><div class="load"><i class="over" style="width:100%"></i></div><span class="h">6 h / 5¾ h</span><span class="what">3 blocks · 3 small things</span></div>
+      <div class="wk"><span class="d">Fri</span><div class="load"><i style="width:55%"></i></div><span class="h">3 h / 6 h</span><span class="what"><span class="due">hydro bill due</span> · thesis block</span></div>
+      <div class="wk"><span class="d">Sat</span><div class="load"><i style="width:10%"></i></div><span class="h">½ h</span><span class="what">long run</span></div>
+      <div class="wk"><span class="d">Sun</span><div class="load"><i style="width:0%"></i></div><span class="h">–</span><span class="what">weekly plan, 18:00</span></div>
+    </div>
+    <div class="card surface">
+      <div class="sec">This week's focus (from Sunday's plan)</div>
+      <ul class="plain">
+        <li><span>Thesis ch. 2 methods, first full draft</span><span class="est">2 of 3 blocks</span></li>
+        <li><span>Both masters reference requests sent</span><span class="est">0 of 2</span></li>
+      </ul>
+    </div>
+  </div>
+</div>
+</div>
+
+<div class="col">
+<div class="label">C · One scroll (chosen, 110)</div>
+<div class="phone">
+  <div class="bar"><div class="menu"></div><div class="title">Plan</div><div class="right">Thu 19 Nov</div></div>
+  <div class="screen">
+    <div class="hz">Today <span>5 h 35 in 5 h 15 free</span></div>
+    <div class="xs muted">All day: Mum's birthday</div>
+    <div class="agenda">
+      <div class="slot"><div class="t">14:15–15:45</div><div class="blk">Thesis ch. 2: methods draft
+        <div class="timer"><span class="dot"></span><span>40 min working · 52 min since start</span></div>
+        <div class="btns" style="margin-top:6px"><span class="btn ghost">Pause</span><span class="btn ghost">Stop</span></div>
+      </div></div>
+      <div class="now"><span style="text-align:right">15:07</span><hr></div>
+      <div class="slot"><div class="t">16:00–16:30</div><div class="blk cal">Call with Dr. Lee</div></div>
+      <div class="slot"><div class="t">16:45–17:45</div><div class="blk">Masters reference request</div></div>
+    </div>
+    <div class="xs muted">2 earlier blocks done · any time: hydro bill, dentist</div>
+    <div class="ask"><span>3 people questions tonight</span><span class="link">19:00</span></div>
+
+    <div class="hz">Rest of the week <span>focus: thesis ch. 2, references</span></div>
+    <div>
+      <div class="wk"><span class="d">Fri</span><div class="load"><i style="width:55%"></i></div><span class="h">3 h / 6 h</span><span class="what"><span class="due">hydro bill due</span> · thesis block</span></div>
+      <div class="wk"><span class="d">Sat</span><div class="load"><i style="width:10%"></i></div><span class="h">½ h</span><span class="what">long run</span></div>
+      <div class="wk"><span class="d">Sun</span><div class="load"><i style="width:0%"></i></div><span class="h">–</span><span class="what">weekly plan, 18:00</span></div>
+    </div>
+
+    <div class="hz">November <span>goals</span></div>
+    <div>
+      <div class="goal">Masters applications in by 15 Dec<span class="st warn">2 of 4 references · reference request due Mon</span></div>
+      <div class="goal">Thesis ch. 2 drafted by 1 Dec<span class="st ok">on track: 5 blocks this month</span></div>
+      <div class="goal">Run a 10k in spring<span class="st idle">no progress this month · monthly review will ask</span></div>
+    </div>
+  </div>
+</div>
+</div>
+
+<div class="note">
+<div class="label">What each one costs</div>
+<ul>
+<li><b>A</b> is the smallest and is exactly what research §4.4 proposed. The week and the goals, which the weekly and monthly rituals produce, are only reachable by asking in chat.</li>
+<li><b>B</b> shows each timescale in full, but it is three screens to design and keep honest, and a tab you have to remember. A 7-day grid does not fit 390 px, so the week becomes a list anyway.</li>
+<li><b>C</b> keeps today on top and squeezes the rest: the part of today already done, then the remaining days, then the month's goals. One screen and no navigation, but today loses its morning half to a summary line.</li>
+<li><b>My recommendation is C.</b> It beat A because the weekly and monthly rituals produce something you should be able to glance at without asking. It beat B because on a phone, scrolling down costs less than switching tabs, and the week fits as rows.</li>
+</ul>
+</div>
+</div>
+</section>
+</div>
+</body>
+</html>

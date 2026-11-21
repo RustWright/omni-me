@@ -1,14 +1,8 @@
 //! `POST /wipe/preview` and `POST /wipe/confirm` end to end.
 //!
-//! The engine's tests prove what a scoped wipe does to a log. What they cannot
-//! prove is the pair of gates, and the gates are where the irreversible part
-//! lives: that a preview's ticket authorises exactly one confirm, that a confirm
-//! may narrow the previewed features and never widen them, and that a wipe
-//! addressed to the wrong deployment is refused before anything is deleted.
-//!
-//! Every assertion goes over a real socket against the production router,
-//! because the ticket and the declared instance live in server state — an
-//! in-process call to `purge_features` reaches neither.
+//! The gates: a ticket authorises exactly one confirm, a confirm may narrow the previewed
+//! features but never widen them, and the wrong deployment is refused before any delete.
+//! Over a real socket, because the ticket and the declared instance live in server state.
 
 mod common;
 

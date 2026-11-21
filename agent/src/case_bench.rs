@@ -1,12 +1,9 @@
 //! `--bench-cases`: the requests that failed on the phone, scored on what the
 //! run proposed rather than on which verbs it reached.
 //!
-//! The corpus is whatever this process pulled, which on the box is the dev log:
-//! a clone of real data. So the checks are properties that hold on any ledger
-//! (an account it names must already exist; "today" must be today) rather than
-//! answers written down in advance. Nothing is applied: a proposal here is a
-//! call in the trace, and this process never turns it into an event.
-//! Background: `ASSISTANT_RESEARCH.md`, step 1 of the build order.
+//! The corpus is whatever was pulled, so checks are properties true on any ledger (a named
+//! account exists, "today" is today), not fixed answers. Nothing is applied: a proposal stays a
+//! call in the trace. Background: `ASSISTANT_RESEARCH.md`, step 1 of the build order.
 
 use std::collections::BTreeSet;
 

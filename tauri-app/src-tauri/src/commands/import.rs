@@ -318,16 +318,9 @@ fn build_event_for_row(
 ) -> Result<(NewEvent, CommittedKind), String> {
     let candidate = PathBuf::from(&row.path);
     let path = validate_committable_path(scanned_root, &candidate)?;
-    // Re-read fresh from disk rather than reusing the preview's parsed data.
-    // Trade-off: the security review's H1 fix (commit 40faf00) made
-    // commit_import backend-authoritative — never trust content that
-    // round-tripped through the UI, so a malicious renderer cannot inject
-    // text into a journal entry. Cost: a file edited between Preview and
-    // Commit lands with its current disk content, not what the user saw in
-    // the preview. Acceptable because (1) the preview→commit window is
-    // seconds, (2) concurrent vault editing during import is near-zero,
-    // (3) recovery is just "re-import", and (4) committing arbitrary
-    // frontend-supplied content would be the worse failure mode.
+    // Re-read from disk, never content that round-tripped through the UI, so a compromised
+    // renderer cannot inject journal text. A file edited between preview and commit lands as
+    // it is now; the window is seconds and the fix is a re-import.
     let raw = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", row.path))?;
 
     let (frontmatter, _body) = parse_markdown(&raw).map_err(|e| format!("{}: {e}", row.path))?;
@@ -437,12 +430,9 @@ const MAX_PREVIEW_PATHS: usize = 50;
 
 /// Dry run for [`export_obsidian`].
 ///
-/// Export takes a free-text path and overwrites every colliding
-/// `journal/YYYY-MM-DD.md` and `notes/<title>.md` under it — and the field it is
-/// typed into sits directly below the *import* field, which is pointed at an
-/// existing vault. Aiming export at that same path silently replaced the vault's
-/// notes with omni-me's copies. The wipe flow demands a typed phrase for an
-/// action no less recoverable than this one; this is the missing counterpart.
+/// Export overwrites every colliding `journal/` and `notes/` file under a free-text path, and
+/// its field sits under the import field, which points at a real vault. This preview is the
+/// guard the wipe flow's typed phrase gives an action no more recoverable.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn preview_obsidian_export(
     state: State<'_, AppState>,

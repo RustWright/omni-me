@@ -1,23 +1,8 @@
 //! Native CSV auto-import source (3.6) — config-driven, no helper needed.
 //!
-//! A [`CsvSource`] reads a delimited file at a configured path, maps three
-//! columns (date / amount / description) onto a [`DraftTransaction`], and
-//! balances each row against the `Unmatched` clearing account (the
-//! unmatched-account pattern — the reconciliation engine collapses the
-//! `Unmatched` leg against its real counterpart later). It is the first
-//! *native* config-driven source: unlike a [`crate::auto_import::subprocess::
-//! SubprocessSource`] it needs no external helper, so a non-coding user can
-//! point the public engine at a bank's CSV export and get imports with config
-//! alone.
-//!
-//! Dedup is batch-level. The batch `dedup_key` is a content hash of the
-//! whole file, so re-reading an *unchanged* file is a no-op (the projection
-//! UPSERTs on `{source}-{dedup_key}`). A *changed* file (e.g. new rows
-//! appended) produces a fresh batch containing every row — already-reviewed
-//! rows re-surface in the review screen. That is the inherent cost of a
-//! "re-read the whole file" source with no upstream watermark; the user
-//! reviews before commit, so it is safe, just slightly repetitive. A per-row
-//! cross-batch watermark is future work.
+//! Reads a CSV at a configured path, mapping date, amount and description to drafts balanced
+//! against `Unmatched`; config alone, no helper. Dedup is per file (a content hash), so a
+//! changed file re-surfaces reviewed rows; a per-row watermark is future work.
 
 use async_trait::async_trait;
 use chrono::NaiveDate;
@@ -177,14 +162,8 @@ fn resolve_col(spec: &str, header: Option<&csv::StringRecord>) -> Result<usize, 
     }
 }
 
-/// Parse `content` into drafts. A malformed CSV *structure* is a hard
-/// `Parse` error; a single row that fails date/amount parsing is skipped
-/// rather than failing the whole batch — one weird row shouldn't block an
-/// otherwise-good import, and the user reviews before commit anyway.
-///
-/// Skipped rows are returned in [`ParseOutcome::failures`], not just
-/// logged: a `warn!` in a container log is not an accounting, and the caller
-/// needs the count to close the row identity.
+/// Bad CSV structure is a hard `Parse` error; a row failing date or amount is skipped and
+/// returned in [`ParseOutcome::failures`], never just logged, so the row identity closes.
 fn parse_csv(content: &str, cfg: &ParseCfg) -> Result<ParseOutcome, ImportError> {
     let mut rdr = csv::ReaderBuilder::new()
         .has_headers(cfg.has_header)

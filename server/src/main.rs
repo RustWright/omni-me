@@ -1,13 +1,6 @@
-//! Public `omni-me-server` binary — bank-free.
-//!
-//! The public engine has no compiled-in bank adapters. Instead [`config_sources`]
-//! reads a server-side `sources.toml` (3.6) and builds whatever *generic*
-//! sources it declares — CSV files, subprocess helpers — via
-//! `core::auto_import::config::build_generic_sources`. With no file (or an empty
-//! one) it returns zero sources, so the server still boots, serves, and syncs
-//! with auto-import simply idle (graceful zero-config, 3.4). The private overlay
-//! binary supplies its own builder that *also* wires real bank adapters and
-//! calls the same [`omni_me_server::run`].
+//! Public `omni-me-server` binary, bank-free: [`config_sources`] builds only the generic
+//! sources `sources.toml` declares, and none without the file. The overlay binary passes its
+//! own builder, with the bank adapters, to the same [`omni_me_server::run`].
 
 use omni_me_core::auto_import::config::{self, SourcesConfig};
 use omni_me_server::{RunConfig, SourceCtx, SourceFuture, run};

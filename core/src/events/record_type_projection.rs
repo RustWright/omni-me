@@ -143,14 +143,9 @@ pub async fn load_record_type(db: &Database, name: &str) -> Result<Option<Record
 
 /// The journal's record type, with the fallback an undeclared log needs.
 ///
-/// The fallback is the reflective preset, and that is load-bearing rather than
-/// a default worth tidying. Every install that predates record types has a log
-/// full of journal entries and no declaration in it, and the first thing that
-/// happens on upgrade is a replay. Falling back to the minimal preset would find
-/// nothing required, mark the entire back catalogue incomplete, and quietly undo a
-/// year of auto-closes. Falling back to the shape those entries were written under
-/// keeps `complete` identical, which is exactly what the migration test asserts.
-/// The seed written straight after startup then makes the declaration explicit.
+/// Falls back to the reflective preset on purpose: entries predating record types were written
+/// under it, and the minimal preset would undo their auto-closes on replay. The startup seed
+/// then makes the declaration explicit.
 pub async fn journal_record_type(db: &Database) -> RecordType {
     match load_record_type(db, crate::record_type::JOURNAL).await {
         Ok(Some(decl)) => decl,
@@ -165,20 +160,9 @@ pub async fn journal_record_type(db: &Database) -> RecordType {
 
 /// Declare the journal's shape once, on the first launch that finds none declared.
 ///
-/// Which preset depends on what the log already holds, and the distinction is the
-/// whole migration:
-/// - An install that predates record types has journal entries written under the
-///   three reflection prompts. It gets the reflective preset, so the declaration
-///   matches what its entries already are and nothing is reinterpreted.
-/// - A fresh install has no entries and no expectations, so it gets the minimal
-///   preset: a date, a body, and no prompts. The reflective preset stays available
-///   as a worked example rather than being imposed as the app's opinion.
-///
-/// Idempotent by the "already declared" check, so it is safe on every launch. Two
-/// devices upgrading at once both emit; they emit the same shape, and the
-/// projection's authoring-timestamp guard settles which row survives.
-///
-/// Returns what it declared, or `None` when a declaration already existed.
+/// An install with journal entries gets the reflective preset they were written under; a fresh
+/// one gets the minimal preset. Safe every launch; two devices emit the same shape and the
+/// authoring-time guard picks one. `None` when already declared.
 pub async fn seed_journal_record_type(
     db: &Database,
     writer: &super::writer::EventWriter,
@@ -353,15 +337,8 @@ mod tests {
         out
     }
 
-    /// The migration gate. The one test that had to exist before any of the
-    /// record-type work merged.
-    ///
-    /// Replays a corpus of real journal frontmatter shapes twice: once with no
-    /// declaration in the log at all (an install that predates record types, which
-    /// falls through to the reflective shape) and once with the reflective preset
-    /// declared ahead of the entries. `complete` must be identical for every entry.
-    /// A year of existing entries keep the answers they already had, or auto-close
-    /// history silently changes underneath the user.
+    /// The migration gate: real frontmatter shapes replayed with no declaration and with the
+    /// reflective preset must give identical `complete`, or auto-close history silently changes.
     #[tokio::test]
     async fn declaring_the_reflective_preset_changes_no_existing_entry() {
         let before = replay_completeness(None).await;

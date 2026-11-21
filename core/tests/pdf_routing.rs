@@ -1,13 +1,8 @@
 //! Both arms of the PDF fork, against real poppler and a mock endpoint.
 //!
-//! A PDF reaches the model as text or as pictures depending on whether it
-//! carries a text layer, and that choice is invisible in an `ExtractionResult`
-//! — the same shape comes back either way. So these assert on the request
-//! that was actually sent, which is the only place the routing shows.
-//!
-//! Deterministic and synthetic, so it runs in CI rather than being `#[ignore]`d
-//! (`core/tests/README.md` § Coverage lives in synthetic tests). Rationale for
-//! the routing itself is in `docs/src/extraction.md`.
+//! The text-or-pictures choice is invisible in an `ExtractionResult`, so these assert on the
+//! request actually sent. Synthetic, so it runs in CI. Routing rationale:
+//! `docs/src/extraction.md`.
 
 use std::path::PathBuf;
 

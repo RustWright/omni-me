@@ -7,6 +7,7 @@ mod llm;
 mod notes;
 mod statements;
 mod sync;
+mod tasks;
 mod wipe;
 
 pub use auto_import::auto_import_routes;
@@ -20,29 +21,16 @@ pub use llm::llm_routes;
 pub use notes::notes_routes;
 pub use statements::statement_routes;
 pub use sync::sync_routes;
+pub use tasks::task_routes;
 // Held on `AppState` for the same reason as `PurgeTicket`.
 pub use wipe::{WipeTicket, wipe_routes};
 
 #[cfg(test)]
 mod tests {
-    /// No handler may fail with a bare `String`.
-    ///
-    /// `String` is an axum `IntoResponse` that answers `200 OK`. A handler
-    /// returning `Err(e.to_string())` therefore reports its own failure as a
-    /// success carrying the error text as the body — and a caller checking the
-    /// status sees nothing wrong. `GET /feedback` shipped that way and served a
-    /// SurrealDB parse error as an empty-looking result for two months; the
-    /// endpoint was the read half of feedback capture, so the silence was
-    /// indistinguishable from "no one filed anything."
-    ///
-    /// Handlers only, by design. The discriminator is the `State<AppState>`
-    /// extractor, which is what makes a function reachable as a route; helpers
-    /// taking `&AppState` (`documents::store_blob`) keep `String` legitimately,
-    /// because their error is converted by whichever handler calls them.
-    ///
-    /// Blind spot, deliberate: a handler that takes no state at all is not
-    /// checked. Parsing Rust to do better is not worth it — every handler in
-    /// this crate reaches the database or the box, and so takes state.
+    /// No handler may fail with a bare `String`: axum answers it `200 OK`, so the failure
+    /// reads as success.
+    /// Handlers are found by their `State<AppState>` extractor; helpers taking `&AppState` may
+    /// keep `String`, and a handler with no state is not checked (none exists).
     /// One whitespace-stripped signature, ending at its opening brace.
     fn offends(sig: &str) -> bool {
         sig.contains("State<AppState>") && sig.ends_with(",String>{")

@@ -1002,4 +1002,249 @@ mod tests {
         tokio::join!(engine.flush(), engine.flush());
         assert_eq!(phone.0.lock().unwrap().len(), 1);
     }
+
+    #[test]
+    fn quiet_until_at_dst_and_the_window_edges() {
+        // Transitions from the IANA data: Chicago springs forward 2027-03-14 at 02:00 CST and
+        // falls back 2026-11-01 at 02:00 CDT.
+        let tz: Tz = "America/Chicago".parse().unwrap();
+        // 01:30 CST on the spring-forward night: 02:00 does not exist, so 03:00 CDT.
+        assert_eq!(
+            quiet_until(utc("2027-03-14T07:30:00Z"), tz, 22, 2),
+            Some(utc("2027-03-14T08:00:00Z"))
+        );
+        // The fall-back night: 01:30 CDT and 23:00 CDT the evening before both end at 08:00 CST.
+        assert_eq!(
+            quiet_until(utc("2026-11-01T06:30:00Z"), tz, 22, 8),
+            Some(utc("2026-11-01T14:00:00Z"))
+        );
+        assert_eq!(
+            quiet_until(utc("2026-11-01T04:00:00Z"), tz, 22, 8),
+            Some(utc("2026-11-01T14:00:00Z"))
+        );
+        // The start hour is inside, the end hour outside.
+        assert_eq!(
+            quiet_until(utc("2026-11-15T04:00:00Z"), tz, 22, 8),
+            Some(utc("2026-11-15T14:00:00Z"))
+        );
+        assert_eq!(quiet_until(utc("2026-11-15T14:00:00Z"), tz, 22, 8), None);
+        // A window ending at midnight: 23:00 holds to 00:00, 00:30 is outside.
+        assert_eq!(
+            quiet_until(utc("2026-11-15T05:00:00Z"), tz, 20, 0),
+            Some(utc("2026-11-15T06:00:00Z"))
+        );
+        assert_eq!(quiet_until(utc("2026-11-15T06:30:00Z"), tz, 20, 0), None);
+    }
+
+    async fn set_config(db: &Database, key: ConfigKey, v: crate::config::ConfigValue) {
+        use crate::events::{
+            ConfigProjection, EventStore, NewEvent, ProjectionRunner, SurrealEventStore,
+        };
+        let runner = ProjectionRunner::new(db.clone(), vec![Box::new(ConfigProjection)]);
+        let set = NewEvent::config_set("d1", key, Some(v)).unwrap();
+        let stored = SurrealEventStore::new(db.clone())
+            .append(set)
+            .await
+            .unwrap();
+        runner.apply_events(&[stored]).await.unwrap();
+    }
+
+    /// Quiet hours (UTC, the default zone) that contain this moment and the next hour.
+    async fn engine_in_quiet_hours(
+        extra: &[(ConfigKey, crate::config::ConfigValue)],
+    ) -> (AlertEngine, Arc<SurrealRunStore>, Arc<Phone>) {
+        use crate::config::ConfigValue;
+        let hour = chrono::Timelike::hour(&Utc::now()) as i64;
+        let mut settings = vec![
+            (ConfigKey::NotifyQuietStart, ConfigValue::Int(hour)),
+            (ConfigKey::NotifyQuietEnd, ConfigValue::Int((hour + 2) % 24)),
+        ];
+        settings.extend(extra.iter().cloned());
+        engine_with(&settings).await
+    }
+
+    /// The window ends: quiet hours off, and every held alert due.
+    async fn end_quiet_hours(db: &Database) {
+        use crate::config::ConfigValue;
+        set_config(db, ConfigKey::NotifyQuietStart, ConfigValue::Int(0)).await;
+        set_config(db, ConfigKey::NotifyQuietEnd, ConfigValue::Int(0)).await;
+        db.query("UPDATE job_alerts SET due_at = $past")
+            .bind(("past", stamp(Utc::now() - Duration::minutes(1))))
+            .await
+            .unwrap()
+            .check()
+            .unwrap();
+    }
+
+    async fn charge(engine: &AlertEngine) {
+        engine
+            .open_one_shot(
+                crate::jobs::BANK_IMPORT,
+                "bank/bank-r1",
+                LARGE_CHARGE,
+                "Large charge: 812.40 CAD".into(),
+                "2026-11-14 furniture store (bank)".into(),
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn quiet_hours_hold_an_alert_until_the_window_ends() {
+        let (engine, runs, phone) = engine_in_quiet_hours(&[]).await;
+        record(&engine, &runs, code()).await;
+        assert!(phone.0.lock().unwrap().is_empty(), "held");
+        let mut r = engine
+            .db
+            .query("SELECT VALUE due_at FROM job_alerts")
+            .await
+            .unwrap();
+        let due: Vec<String> = r.take(0).unwrap();
+        assert!(due[0] > stamp(Utc::now()), "{due:?}");
+
+        end_quiet_hours(&engine.db).await;
+        engine.flush().await;
+        engine.flush().await;
+        assert_eq!(phone.0.lock().unwrap().len(), 1, "sent once, when due");
+    }
+
+    #[tokio::test]
+    async fn a_charge_waits_out_quiet_hours_by_default() {
+        let (engine, _runs, phone) = engine_in_quiet_hours(&[]).await;
+        charge(&engine).await;
+        engine.flush().await;
+        assert!(phone.0.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn charges_at_night_lets_a_charge_through_but_not_an_episode() {
+        let on = crate::config::ConfigValue::Bool(true);
+        let (engine, runs, phone) =
+            engine_in_quiet_hours(&[(ConfigKey::NotifyChargesAtNight, on)]).await;
+        charge(&engine).await;
+        record(&engine, &runs, code()).await;
+        let sent = phone.0.lock().unwrap().clone();
+        assert_eq!(sent.len(), 1, "the episode is still held");
+        assert_eq!(sent[0].title, "Large charge: 812.40 CAD");
+    }
+
+    #[tokio::test]
+    async fn a_success_inside_the_window_cancels_the_held_alert() {
+        let (engine, runs, phone) = engine_in_quiet_hours(&[]).await;
+        record(&engine, &runs, code()).await;
+        record(&engine, &runs, run(0, RunOutcome::Success)).await;
+        end_quiet_hours(&engine.db).await;
+        engine.flush().await;
+        assert!(
+            phone.0.lock().unwrap().is_empty(),
+            "resolved before it was due"
+        );
+    }
+
+    async fn sent_alert(db: &Database, id: &str, job: &str, kind: &str, at: DateTime<Utc>) {
+        db.query(
+            "CREATE type::record('job_alerts', $id) CONTENT { alert_id: $id, job: $job, \
+             subject: 's', kind: $kind, title: 't', message: 'm', opened_at: $at, due_at: $at, \
+             sent_at: $at, closed_at: NONE, tier: 'critical' }",
+        )
+        .bind(("id", id.to_string()))
+        .bind(("job", job.to_string()))
+        .bind(("kind", kind.to_string()))
+        .bind(("at", stamp(at)))
+        .await
+        .unwrap()
+        .check()
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn the_budget_week_includes_its_first_millisecond() {
+        let now = Utc::now();
+        for (age, counted) in [
+            (Duration::days(7), true),
+            (Duration::days(7) + Duration::milliseconds(1), false),
+        ] {
+            let (engine, _runs, _phone) = engine().await;
+            for i in 0..3 {
+                sent_alert(
+                    &engine.db,
+                    &format!("a{i}"),
+                    crate::jobs::MAIL_IMPORT,
+                    "failing",
+                    now,
+                )
+                .await;
+            }
+            sent_alert(
+                &engine.db,
+                "edge",
+                crate::jobs::BANK_IMPORT,
+                "needs_user",
+                now - age,
+            )
+            .await;
+            let over = over_budget(&engine.db, now).await.unwrap();
+            assert_eq!(over.is_some(), counted, "{age:?}: {over:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_tie_names_the_last_kind_in_job_order() {
+        let (engine, _runs, _phone) = engine().await;
+        let now = Utc::now();
+        for (i, job, kind) in [
+            (0, crate::jobs::MAIL_IMPORT, "failing"),
+            (1, crate::jobs::MAIL_IMPORT, "failing"),
+            (2, crate::jobs::BANK_IMPORT, "needs_user"),
+            (3, crate::jobs::BANK_IMPORT, "needs_user"),
+        ] {
+            sent_alert(&engine.db, &format!("a{i}"), job, kind, now).await;
+        }
+        let line = over_budget(&engine.db, now).await.unwrap().unwrap();
+        assert!(
+            line.contains("Alert: mail import failing 24 h (2)"),
+            "{line}"
+        );
+    }
+
+    #[tokio::test]
+    async fn review_alerts_never_count_against_the_budget() {
+        let review = crate::config::ConfigValue::Text("review".into());
+        let (engine, runs, _phone) =
+            engine_with(&[(ConfigKey::NotifyTierMailNeedsUser, review)]).await;
+        let now = Utc::now();
+        for i in 0..3 {
+            sent_alert(
+                &engine.db,
+                &format!("a{i}"),
+                crate::jobs::BANK_IMPORT,
+                "failing",
+                now,
+            )
+            .await;
+        }
+        record(&engine, &runs, code()).await;
+        assert_eq!(open_review_alerts(&engine.db).await.unwrap().len(), 1);
+        assert_eq!(over_budget(&engine.db, now).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn the_demoting_choice_settings_offers_is_the_one_the_engine_reads() {
+        use crate::config::ConfigValue;
+        let key = ConfigKey::NotifyTierMailNeedsUser;
+        let ConfigValue::Text(default) = key.default_value() else {
+            panic!("a tier key is text");
+        };
+        let demote = key
+            .choices()
+            .unwrap()
+            .iter()
+            .find(|c| **c != default)
+            .expect("a tier offers a choice besides the default");
+        let (engine, runs, phone) =
+            engine_with(&[(key, ConfigValue::Text(demote.to_string()))]).await;
+        record(&engine, &runs, code()).await;
+        assert!(phone.0.lock().unwrap().is_empty(), "{demote} must demote");
+        assert_eq!(open_review_alerts(&engine.db).await.unwrap().len(), 1);
+    }
 }

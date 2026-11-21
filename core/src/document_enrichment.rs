@@ -116,12 +116,8 @@ pub struct SkippedDocument {
 
 /// What one tick did with every candidate it selected.
 ///
-/// The identity `seen == read + every skip reason` is checked at
-/// [`EnrichTally::finish`], on `ImportTally`'s reasoning: a pass that can
-/// under-report is one whose quiet ticks are indistinguishable from its broken
-/// ones. Each reason is counted rather than one being inferred by subtraction,
-/// so a reason added later that nobody sums fails the identity instead of
-/// hiding inside a sibling.
+/// `seen == read + every skip reason`, checked at [`EnrichTally::finish`] as `ImportTally` does.
+/// Each reason is counted, never inferred by subtraction, so an unsummed new one fails loudly.
 #[derive(Debug, Default)]
 pub struct EnrichTally {
     seen: usize,
@@ -306,12 +302,9 @@ const TRANSCRIBABLE_MIMES: [&str; 4] = ["image/jpeg", "image/png", "image/webp",
 
 /// Transcribe up to `max` documents nothing could read text off at ingest.
 ///
-/// An empty transcription IS appended, and that is deliberate. It records
-/// that a named model looked on a given date and found no text, which is a real
-/// answer for a photograph of a blank page. It also lifts `text_source` off
-/// `none`, so the document stops being a candidate — without that, every blank
-/// page in the archive would be re-read on every tick forever and starve the cap.
-/// A better model later is simply another event, per `TextSource::rank`'s `>=`.
+/// An empty transcription is appended on purpose: a real answer for a blank page, and it lifts
+/// `text_source` off `none`, or blank pages would be re-read every tick. A better model later is
+/// another event (`TextSource::rank`'s `>=`).
 pub async fn enrich_text_once(
     db: &Database,
     writer: &EventWriter,
@@ -732,7 +725,7 @@ mod tests {
         assert_eq!(reader.calls.load(Ordering::SeqCst), 1);
     }
 
-    /// The backfill (R4-6): a document catalogued before retention categories
+    /// The backfill, ruling 39 (RULINGS.md): a document catalogued before retention categories
     /// existed is read once more for one, and then left alone.
     #[tokio::test]
     async fn a_document_without_a_retention_category_is_read_once_more() {

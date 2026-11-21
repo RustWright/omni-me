@@ -1,20 +1,8 @@
 //! Wire types for the Tauri IPC boundary.
 //!
-//! Every struct here hand-mirrors one the backend owns, and that IS the design
-//! — reviewed and kept, not an omission waiting to be generated away. The
-//! frontend compiles to wasm and deliberately does not depend on `omni-me-core`
-//! (pulling it in drags a database driver and its transitive dependencies into
-//! the browser bundle), so there is no shared crate for these to come from.
-//!
-//! What makes it safe is that the mirroring is enforced at the only place it
-//! can go wrong: `serde` deserialisation of the actual IPC payload. A renamed
-//! or retyped field fails at runtime on the first call, in development, on the
-//! screen that uses it. A review of all of these against their backend
-//! counterparts found no drift.
-//!
-//! Trip-wire: if drift ever DOES ship to a user, stop hand-mirroring and
-//! generate this file from the backend types instead. Until then, generating it
-//! would add a build step to solve a problem that has not occurred.
+//! Hand-mirrored backend types, by design: depending on `omni-me-core` would pull a database
+//! driver into the wasm bundle. `serde` on the real payload catches drift on first call.
+//! Trip-wire: if drift ever ships to a user, generate this file from the backend types instead.
 
 use serde::{Deserialize, Serialize};
 
@@ -435,6 +423,7 @@ pub enum Feature {
     AutoImport,
     Llm,
     Documents,
+    Tasks,
 }
 
 pub const ALL_FEATURES: &[Feature] = &[
@@ -445,6 +434,7 @@ pub const ALL_FEATURES: &[Feature] = &[
     Feature::AutoImport,
     Feature::Llm,
     Feature::Documents,
+    Feature::Tasks,
 ];
 
 impl Feature {
@@ -457,6 +447,7 @@ impl Feature {
             Feature::AutoImport => "feature.auto_import",
             Feature::Llm => "feature.llm",
             Feature::Documents => "feature.documents",
+            Feature::Tasks => "feature.tasks",
         }
     }
 
@@ -1660,12 +1651,8 @@ impl AssistantProposal {
     /// How many items a batched action names, or `0` when it names none as a
     /// list.
     ///
-    /// Zero is the honest answer for an older proposal, not a bug. Cards
-    /// stored before batching carry a singular `item_id`, and this deliberately
-    /// does not go looking for it: the callers all fall through to the "a
-    /// routine item" wording, which is exactly right for one item. Do not
-    /// "fix" this by counting a singular key as 1 — the fallback already says
-    /// the true thing, and the special case would only add a way to disagree.
+    /// Zero for a pre-batching card with a singular `item_id`, on purpose: callers then say "a
+    /// routine item", which is true. Do not count the singular key as 1.
     fn batch_size(&self) -> usize {
         // Both keys, because the two batched actions name different things —
         // `item_ids` for a routine, `txn_ids` for the ledger. Checked rather than
@@ -1693,16 +1680,9 @@ impl AssistantProposal {
             .unwrap_or_default()
     }
 
-    /// Whether this action's whole case rests on what it read, so a card with no
-    /// evidence has to say so out loud rather than simply omitting the row.
-    /// Ledger membership is narrower than "takes an evidence argument".
-    /// `transaction.record` invents money that was not there and `transaction.clear`
-    /// asserts a statement agreed — for both, "proposed without opening any
-    /// record" is the sentence that should stop the user approving. Categorising
-    /// and tagging are judgments about a row that already exists, and a category
-    /// read off a payee name is an ordinary, honest proposal rather than a
-    /// suspicious one; making those cards apologise for having no citation would
-    /// teach the user to scroll past the warning that matters.
+    /// Whether the action's case rests on what it read, so a card with no evidence must say so.
+    /// Only `transaction.record` and `transaction.clear`: categorising and tagging judge an
+    /// existing row, and warning on them would teach the user to scroll past the warning.
     pub fn cites_evidence(&self) -> bool {
         matches!(
             self.action.as_str(),
@@ -2110,14 +2090,8 @@ mod proposal_tests {
         assert_eq!(item.detail().as_deref(), Some("About 10 minutes"));
     }
 
-    /// A proposal from a newer build must still render something decidable:
-    /// the raw action name, and its arguments verbatim. A blank card is the one
-    /// outcome that makes the inbox unusable — the user cannot accept or decline
-    /// what they cannot read.
-    ///
-    /// The stand-in name is deliberately one no action will ever take. A version
-    /// of this test used `routine.complete`, which stopped testing anything the
-    /// day that action was built.
+    /// A newer build's proposal still renders decidably: raw action name, arguments verbatim.
+    /// The stand-in name must be one no action will ever take, or the test goes hollow.
     #[test]
     fn an_unknown_action_still_renders_a_decidable_card() {
         let p = proposal(
@@ -2320,14 +2294,8 @@ mod proposal_tests {
         );
     }
 
-    /// The count is not decoration — it is the scope of what is being
-    /// approved. There is no partial approval, so a card reading "a routine
-    /// item" over a proposal that would tick five is asking for consent to four
-    /// things the user never saw.
-    ///
-    /// The last case pins the deliberate degradation: a card stored before
-    /// batching has a singular `item_id`, and the singular wording is the true
-    /// thing to say about it. See [`AssistantProposal::batch_size`].
+    /// The count is the scope of consent, since there is no partial approval. The last case pins
+    /// the singular wording for pre-batching cards ([`AssistantProposal::batch_size`]).
     #[test]
     fn a_batch_card_says_how_many_it_would_tick() {
         let many = proposal(
@@ -2433,6 +2401,7 @@ mod feature_tests {
             "feature.auto_import",
             "feature.llm",
             "feature.documents",
+            "feature.tasks",
         ];
         let actual: Vec<&str> = ALL_FEATURES.iter().map(|f| f.key()).collect();
         assert_eq!(actual, expected);

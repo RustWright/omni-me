@@ -1,21 +1,6 @@
-//! OpenAI-compatible vision `DocumentExtractor` (3.8a) — the multimodal half of
-//! the bring-your-own-LLM provider-swap.
-//!
-//! The text-side `LlmClient` swap (3.8) deliberately kept multimodal *off* the
-//! trait, so receipts/statements get their own extractor here. It POSTs the
-//! OpenAI vision shape (`content: [{type:"text"}, {type:"image_url"}]`) to the
-//! same `{base_url}/chat/completions` surface the text client uses, reusing the
-//! shared per-hint prompts + response schema + parse from the `extraction`
-//! module, so every extractor produces an identical `ExtractionResult`.
-//!
-//! It rides the same `[llm]` config (base_url / model / key) but is opt-in
-//! via `[llm] vision = true` (see `server::build_extractor`): vision support
-//! varies across OpenAI-compatible endpoints, so we never silently send images
-//! to one that can't handle them.
-//!
-//! No model reads PDF — a generated one is converted to text and a scanned
-//! one is rasterized, both before the call. Why, and why in that order, is in
-//! `docs/src/extraction.md`.
+//! The OpenAI vision `DocumentExtractor`: the vision content shape to `/chat/completions`, with
+//! the shared prompts, schema and parse, so every extractor returns the same `ExtractionResult`.
+//! Needs `[llm] vision = true`. PDFs become text or images first (`docs/src/extraction.md`).
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
@@ -38,14 +23,8 @@ use crate::llm::Sampling;
 
 /// How many times a 429 is retried before the document is given up on.
 ///
-/// Shared with the chat client rather than reasoned out again, because the
-/// argument is the same one: a 429 is usually not about our request rate. Pinning
-/// a gateway to one upstream — which any measurement must do — means that
-/// provider's shared-pool congestion comes back to us instead of being rerouted.
-///
-/// The stake here is higher than in chat. A refused question can be asked
-/// again; a refused document is dropped by the enrichment pass and retried only
-/// on a later tick, and before this existed a single "model busy" lost it outright.
+/// The chat client's reasoning: a pinned upstream returns its congestion to us. Higher stakes
+/// here, since a refused document waits for a later enrichment tick.
 const MAX_RATE_LIMIT_RETRIES: u32 = 3;
 
 /// First wait after a 429, doubled on each further retry.
@@ -73,31 +52,15 @@ pub struct OpenAiCompatExtractor {
     model: String,
     base_url: String,
     http: reqwest::Client,
-    /// Provider-specific fields merged into every request body — the same
-    /// escape hatch [`crate::llm::openai_compat::OpenAiCompatClient`] carries,
-    /// and for a sharper reason here.
-    ///
-    /// On a gateway it pins the upstream (`{"provider":{"only":[..],
-    /// "allow_fallbacks":false}}`), without which a reroute makes a measurement
-    /// unattributable. But `require_parameters` is the load-bearing one:
-    /// OpenRouter then refuses to route to an endpoint that lacks a parameter
-    /// we sent, so a provider that would treat `response_format` as a *hint*
-    /// becomes a routing error. That is the gateway-level guard against the
-    /// exact failure that put "HAND WASH" in `commodity` — a 200 response whose
-    /// schema was quietly ignored.
-    ///
-    /// It is also where `zdr` / `data_collection: "deny"` go. This is the
-    /// quarantined extractor: it is the one role that sends receipts and
-    /// statements off-device, so its privacy terms belong on its own requests.
+    /// Merged into every body. On a gateway it pins the upstream, and `require_parameters` turns
+    /// a provider that treats `response_format` as a hint into a routing error instead of a
+    /// quietly ignored schema. Also carries `zdr` and `data_collection: "deny"`: this role sends
+    /// documents off-device.
     extra_body: Option<Value>,
     /// Minimum gap between requests, when the endpoint caps request rate.
     ///
-    /// `None` by default for the reason the chat client gives: "OpenAI-compatible"
-    /// spans a local server with no limit and a free tier allowing ten requests a
-    /// minute, so a fixed interval would either throttle the first or be useless
-    /// for the second. Where a cap exists this is a correctness control — a
-    /// backfill makes one call per document, and without it the run reports
-    /// rate-limit errors as unreadable documents.
+    /// `None` by default, as in the chat client. Where a cap exists it is a correctness control:
+    /// without it a backfill reports rate limits as unreadable documents.
     min_interval: Option<Duration>,
     /// First wait after a 429, doubling per retry. See [`MAX_RATE_LIMIT_RETRIES`].
     retry_backoff: Duration,
@@ -251,15 +214,8 @@ impl OpenAiCompatExtractor {
 
     /// Convert every part into something the endpoint accepts, in order.
     ///
-    /// The PDF order is deliberate: text first, rasterize only on empty. A
-    /// generated PDF read as pictures would cost a model's OCR guess on figures
-    /// it could have had verbatim, and statement columns carry meaning that
-    /// survives `-layout` and does not survive being looked at.
-    ///
-    /// The photo parts are prepared as one set so they share a single request
-    /// budget; every other part converts on its own. The final check spans all
-    /// of them, because a rasterized PDF beside a photo overflows in a way
-    /// neither source can see alone.
+    /// PDFs: text first, pictures only when empty, since `-layout` text is verbatim. Photos share
+    /// one budget; the final check spans every part, as mixed sources overflow together.
     async fn payload_for(
         parts: &[DocumentPart<'_>],
         passwords: &[&str],
@@ -483,22 +439,9 @@ impl OpenAiCompatExtractor {
         // method sees only shapes the endpoint accepts.
         let payload = Self::payload_for(parts, &self.pdf_passwords.values()).await?;
 
-        // `json_schema`, NOT `json_object`, and the difference is measured.
-        //
-        // Under `json_object` the endpoint guarantees only *some* valid JSON and
-        // the shape is prose the model may drift from. On 2026-09-11 it did:
-        // `Qwen3.6-35B-A3B` reading a real receipt put the line label into
-        // `commodity` ("HAND WASH" where "CAD" belongs) while the arithmetic
-        // stayed perfect — so `verify` returned confidence 1.0 and no warnings
-        // over a posting that would enter the ledger as a new commodity. The
-        // Phase 0 spike ran the same model on the same photo under `json_schema`
-        // and the fields separated correctly.
-        //
-        // The cost is portability: an endpoint that rejects `json_schema`
-        // answers 400. That is the right trade here — a loud rejection beats
-        // silently mislabelled money, and four of five bake-off candidates
-        // passed schema output. The schema stays in the prompt too, which costs
-        // nothing and helps endpoints that treat it as advisory.
+        // `json_schema`, never `json_object`: under `json_object` a model put a line label in
+        // `commodity` while the arithmetic stayed perfect, so `verify` passed it. An endpoint that
+        // rejects `json_schema` answers 400, loud. The schema also stays in the prompt.
         let prompt = format!(
             "{instructions}\n\nRespond with a single JSON object conforming to this \
              JSON Schema. Output JSON only, no prose or code fences:\n{}",
@@ -530,14 +473,9 @@ impl OpenAiCompatExtractor {
         self.sampling.apply_to(&mut body);
         let prepared = self.apply_extra(body);
         let mut attempt = 0u32;
-        // Reset per attempt, never started before the loop. `elapsed_ms` is what
-        // the `max_tokens` ceilings and the seat latencies are sized from, and a
-        // clock spanning the retries would bill a provider's backoff to the model —
-        // the exact miscount the retry was added to stop. Each wait is logged on its
-        // own line, so congestion stays visible without being inside this number.
-        //
-        // Declared without a value so a dead initial one cannot sit here looking
-        // deliberate; the loop assigns it before any path out.
+        // Reset per attempt: a clock spanning retries would bill a provider's backoff to the model,
+        // and `elapsed_ms` sizes ceilings and seat latencies. Waits are logged on their own.
+        // Declared without a value; the loop assigns it before any exit.
         let mut started;
 
         let response_body: Value = loop {

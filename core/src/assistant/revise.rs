@@ -1,27 +1,9 @@
 //! Resolving an anchored mid-note edit against the note's live body.
 //!
-//! The assistant proposes a change to the middle of a note as a pair of strings:
-//! the text to find, and what to put in its place. This module turns that pair
-//! into a finished body, or refuses.
-//!
-//! The anchor is content, never a position. A byte offset into a body
-//! another device has already rewritten points at the wrong place and the
-//! corruption is silent, which is why `GenericNoteAppendedPayload` refuses to
-//! carry one. Text carries its own identity.
-//!
-//! Exactly one match, or nothing happens. Zero means the note moved under
-//! the proposal; two or more means there is no single place the edit belongs. In
-//! both cases this returns an error and the caller must refuse the approval —
-//! never fall back to a fuzzy match, a normalized one, or the nearest paragraph.
-//! A near-miss anchor is the case where guessing is most likely to look right and
-//! be wrong, and the user's acceptance criterion for the whole feature is that it
-//! cannot quietly mangle a note.
-//!
-//! The frontmatter is out of bounds, and that is not cosmetic. A note's
-//! `raw_text` carries its `---` block, so an anchor matching a line inside it
-//! would splice through the note's own properties and the YAML would keep
-//! parsing. Matches are counted in the body alone and the frontmatter bytes come
-//! back untouched.
+//! Turns an (anchor, replacement) pair into a finished body, or refuses: ruling 9 (RULINGS.md).
+//! Exactly one match in the body or an error: never a fuzzy, normalized or nearest fallback, where
+//! guessing looks right and is wrong. Frontmatter is out of bounds, or a splice through it would
+//! still parse.
 
 use crate::import::body_start_offset;
 

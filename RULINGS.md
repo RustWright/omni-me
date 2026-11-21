@@ -235,8 +235,9 @@ edit site carries their reasoning. These are settled. Do not re-open one without
 
 ## Tasks, planning and people ([0074]; rationale in `PUSH_0074_RESEARCH.md` §1–§6)
 - **90.** Tasks are hub and native. Repo and `~/life` tasks arrive read-only through
-  `.omni/tasks.toml`; omni-me owns tasks and projects made in-app or by the assistant. Session 2's
-  task design (`research.md`) is an input, not a baseline.
+  `.omni/tasks.toml` (`~/life`'s `USER` items are handed over, 121); omni-me owns tasks and
+  projects made in-app or by the assistant. Session 2's task design (`research.md`) is an input,
+  not a baseline.
 - **91.** Project tasks are pulled in deliberately; only needs-you items (`USER` size or a `due`)
   surface on their own. Indexes reach the server by the session hooks pushing each changed index,
   never by reading GitHub, which serves one branch while work lives on dev branches.
@@ -244,8 +245,12 @@ edit site carries their reasoning. These are settled. Do not re-open one without
   current?" line instead of its items; a native task untouched for 4 weeks is offered for drop in
   the weekly review. Hub surfacing is a 4-week trial of acted versus dismissed, after which the
   weekly review asks whether it stays.
-- **93.** Calibration is of his estimates, on native tasks: estimate at planning, actual asked at
-  completion. Project work keeps Claude's `XS`–`L` sizing, which log actuals may later check. No
+- **93.** Calibration is of his estimates, on native tasks: estimate at planning; the actual from
+  a start/pause/stop timer when he used one, else asked at completion. A timed session keeps both
+  active and elapsed time, and scheduling calibrates on elapsed, because breaks take day time. A
+  timer running well past its block gets one nudge. Start sits on the block reminder and on the
+  current block in the view; pause and stop on the view, an exception to read-only like Undo.
+  Project work keeps Claude's `XS`–`L` sizing, which log actuals may later check. No
   session-to-task tag.
 - **94.** No areas: a task without a project stands alone. Goals sit above projects, kept light,
   with gates only where evidence supports them.
@@ -256,9 +261,12 @@ edit site carries their reasoning. These are settled. Do not re-open one without
   so plan approval can earn autonomy. omni-me fires its own block reminders.
 - **97.** The day plan is mixed: blocks for deep work, an untimed list for small things.
 - **98.** Rituals are assistant-initiated: a morning day-plan proposal, an evening shutdown, a weekly
-  plan and a light monthly review. The morning plan has its own ritual tier: one silent push at a
-  set time outside quiet hours, the proposal expiring at noon. Evening, weekly and monthly ride
-  the 19:00 summary (60) as code-built count lines that tap through to chat.
+  plan and a light monthly review. The morning plan has its own ritual tier: one silent push,
+  drafted at his first activity of the day with a set time only as the fallback (114). Unanswered,
+  it lapses when its first block would start, not at a fixed hour, since a late start can pass
+  noon; the day then runs as after "Skip today", and asking for a plan drafts a fresh one.
+  Evening, weekly and monthly ride the 19:00 summary (60) as code-built count lines that tap
+  through to chat.
 - **99.** Ritual load is measured, never enforced, as in 55: at most 30 minutes a week, a weekly
   review of at most 10 decisions with the rest rolling over, and at most 2 planning or people
   pushes a day. Block reminders do not count, and burst days are measured, not blocked. A ritual
@@ -294,3 +302,90 @@ edit site carries their reasoning. These are settled. Do not re-open one without
 - **109.** Order: tasks, planning, people, with the people data prep beside the task build. The UI
   design session comes before any build, and the Cycle 5 test gaps on the summary and tiers come
   before the scheduled-prompt work.
+- **110.** The read-only view beside chat (100) is one scroll: what is left of today, then the rest
+  of the week as planned-against-free rows, then the month's goals (candidate C, `design/0102/`).
+  Provisional until he has used it.
+- **111.** An all-day calendar event is a label: it never takes free time and never enters the
+  timeline. One that looks like it takes the day is asked about once, and the answer holds for
+  that event or series. "Show me as" is not trusted, since hand-entered birthdays are ordinary
+  events. Reviewed after the calendar data prep ([0112]).
+- **112.** Planning is a specialist, as the ledger is (15): routing picks a planning brief, code
+  tools compute free time and fit, and a validator refuses a plan with a block on an event, outside
+  the window or overlapping another, back to the model on the same turn. The morning ritual is a
+  job with that brief and its own seat. Not a separate agent: re-planning lives in the chat thread.
+- **113.** The server checks the calendar for changes every 15 minutes, and every plan or re-plan
+  fetches it fresh first. Only the "now overlaps" flag on an accepted block waits on the interval.
+- **114.** The day is planned from when he is actually up toward a bedtime target, with no fixed
+  start window: his waking time varies widely, and a plan that assumes an early start on a late
+  morning gets ignored whole. The day starts at his first activity (his first journal line, a
+  routine tick, chat, or the push, whichever comes first) plus his learned morning routine, and
+  ends at the bedtime target less the evening routine. The bedtime target is the one number he
+  sets, as something to aim at. The evening shutdown shows what tomorrow's
+  bedtime buys, measured, never enforced (99). Day shape: overlay `PLANNING_DAY_SHAPE.md`.
+- **115.** Planning gets named places and a travel time between them, from his estimates, and
+  buffers travel before an event at a different place. Location history (`research.md`
+  § Locations) is its own later cycle and reuses those places, supplying real travel times.
+- **116.** Overlapping calendar events count once toward busy time; exact duplicates (same title
+  and time) merge silently. A real clash is one line on the plan card asking which he is going
+  to; travel (115) assumes the earlier until he answers, and an answer holds for that day only.
+  Reviewed after the calendar data prep ([0112]), as 111 is.
+- **117.** The morning plan card is section 1 of `design/0102/`: calendar events inline and greyed
+  so the fit can be checked, the fit line the one coloured line and never blocking Accept, "Skip
+  today" free of any follow-up, and a re-plan collapsing the old card to one line, its approval
+  refused. No "From:" row; a line appears only when an input could not be read.
+- **118.** People questions are section 2 of `design/0102/`, provisional until tested: one tap
+  answers with Undo and no confirm, email sources labelled amber (103), a new person provisional
+  until a second mention or his confirmation, and misspellings handled in "Someone I know…": a
+  search of everyone in the row, prefilled with the name, then one typo question (a hidden alias,
+  or a shown "also" name).
+- **119.** A person view is reached three ways: a name tapped in chat or on a card, the assistant
+  answering with a link, and a People tab with search. The tab is kept despite screens retiring
+  for chat, because it must work when the assistant is down or slow: search and the person view
+  read local records with no model call.
+- **120.** The person view is section 3 of `design/0102/`: read-only with Undo and "Wrong?" on its
+  links, a source chip on every fact, and roles, keep-in-touch cadence and project or goal links
+  left to the people data prep ([0108]). The People tab searches locally by text and spelling
+  closeness, one matcher shared with "Someone I know…" (118), never semantically: questions in
+  plain language go to the assistant.
+- **121.** A `USER` item in a `~/life` index is proposed once as a native task, keyed by its hub
+  id, and once accepted omni-me owns its status and ignores that id in the index. The topic's
+  next session closes the entry: SessionStart asks the server which ids were taken over (about a
+  2 s timeout, skipped with one line when unreachable), and the session marks them `cut`, "moved
+  to omni-me". omni-me never writes the repo; the server keeps a receipt until a pushed index
+  shows the cut. Revises 90 for `~/life`, whose indexes go unrefreshed for months.
+- **122.** Coursework deadlines come from the LEARN calendar feed, read-only like the calendar
+  (96): each due date attaches to a matching task or proposes one. Never routed through Google
+  Calendar, where a deadline would become an event. Deadlines an instructor did not post are
+  given in chat. The feed address is a credential.
+- **123.** Each course is a native project, created from the LEARN feed's course and term and
+  closed when the term ends, asking once about anything still open. A deadline attaches to a task
+  in its course's project.
+- **124.** A task has no person field: task text is a mention source (102), read like the journal
+  and email, so a task naming someone appears on their person view. Capture stays one line, and
+  the task build needs nothing from the people build.
+- **125.** Every timed calendar event is busy, whatever "Show me as" says, extending 111's
+  distrust of that field: in his calendars all 40 timed events marked Available are bookings
+  added from email (flights, tours), which are real commitments and recur with every trip.
+- **126.** Places start as Home and Campus, every campus building mapping to Campus, about 45 min
+  apart (30–60, his estimate). An event's location maps to a place when it has one; a recurring
+  series without one is asked about once (Campus first, then Home, Elsewhere), and the answer
+  holds for the series. A one-off without a location gets no travel buffer. His calendar events
+  are mostly on campus, and he focuses better there when nothing keeps him home.
+- **127.** Routine items are ticked from the journal: a line saying one is done ticks it at that
+  line's time, marked inferred and undoable, and the journal itself is never touched. The evening
+  shutdown (98) asks one line about items with no evidence that day, so an unjournaled day is not
+  read as skipped. No reminder pushes: a ticking habit is what he could not start.
+- **128.** A person fact (102) is: the person, a kind (relationship, work or school, life event,
+  identifying detail, where they live or can be found), one line in his words, the date it was
+  true as of, the line it cites, and his confirmation. Interactions are pointers in the mention
+  index, not facts. Sensitive kinds (health, an address, money) are never proposed: recorded only
+  when he asks in chat. His own deliberate note lines ("Eric, tall, glasses") are the first source.
+- **129.** People serves recall before talking first, with the professional network as part of it:
+  who someone is, where he met them, what they do. The person view leads with identifying
+  details. Keeping in touch waits for its cadence (120); admin counterparts need little new.
+- **130.** A task can carry two dates. Due is only for a real external deadline (LEARN, a bill, an
+  index `due`, or one he states). Scheduled is the day he intends to do it, and it never rolls
+  forward silently: a passed scheduled day comes back to him in the next plan or review.
+- **131.** A repeating obligation (rent, renewals) is a task with a repeat rule, and each
+  occurrence is its own task with its own due date, so one slipping never moves the next and the
+  record shows which were late. Not routines, which are habits (`Frequency::Custom` is [2,31]).

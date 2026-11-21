@@ -66,15 +66,10 @@ async fn push_handler(
 
 /// Cut an over-fetched result back to a page that ends on a clean boundary.
 ///
-/// `events` holds up to `page + 1` rows; the extra one says whether more
-/// remains. The cursor a client gets back is a timestamp compared with `>`, so
-/// a page ending in the middle of a group sharing one `received_at` would step
-/// over the rest of that group permanently. Trailing members of that group are
-/// dropped instead and arrive whole on the next pull.
-///
-/// If the entire page is one such group there is no boundary to cut on, so the
-/// page ships as-is and the loss is logged. Reaching that needs more than
-/// `page` events inside a single timestamp.
+/// `events` holds up to `page + 1` rows; the extra one says whether more remains. The cursor
+/// is compared with `>`, so a page must not end inside a group sharing one `received_at`:
+/// that group's tail is dropped and arrives whole next pull. A page that is all one group
+/// ships as-is, and the loss is logged.
 fn trim_to_page(events: &mut Vec<Event>, page: usize) {
     if events.len() <= page {
         return;
@@ -99,17 +94,8 @@ fn trim_to_page(events: &mut Vec<Event>, page: usize) {
 
 /// Return one page of events the caller has not seen.
 ///
-/// The page exists because the response used to be every event since `since`,
-/// which for a fresh device is the entire history in one JSON body. Measured
-/// 2026-09-16 at ~16k events: 25 MB, 68s over a tailnet link, against the
-/// client's 30s timeout. On a phone it lost that race four times and then won
-/// once — so the symptom was not a clean failure but a first sync that
-/// sometimes takes twenty minutes of retries, getting worse as history grows.
-/// Paging is free here: `get_since` already returns a total order and the
-/// cursor below is already keyset-shaped.
-///
-/// Clients that do not loop are not broken by this, they just converge over
-/// several polls instead of one.
+/// Paged because a fresh device's whole history in one body outran the client's 30 s
+/// timeout. A client that does not loop still converges, over several polls.
 async fn pull_handler(
     State(state): State<AppState>,
     Json(body): Json<PullRequest>,

@@ -1,6 +1,4 @@
-//! DSL ⇄ AST for the R2 query feature.
-//!
-//! Grammar (flat, whitespace-separated `field:value` terms):
+//! DSL to AST and back. Grammar (flat, whitespace-separated `field:value` terms):
 //!
 //! ```text
 //! account:Expenses:Food      subtree (account + descendants), case-insensitive
@@ -15,13 +13,8 @@
 //! desc:"whole foods"          case-insensitive description substring (quote for spaces)
 //! ```
 //!
-//! Terms join with AND by default; an unquoted `OR` separator switches the whole
-//! query to ANY. `AND` is accepted as a no-op separator. Mixed/nested boolean
-//! groups are not supported: there is no grouping syntax, and adding one
-//! means changing the AST alongside it (see `ast.rs`).
-//!
-//! [`to_dsl`] is the canonical serializer: `parse(to_dsl(&q))` reproduces `q`
-//! (for queries with ≥2 predicates, where the combinator is meaningful).
+//! Terms AND by default; an unquoted `OR` makes the whole query ANY, and `AND` is a no-op.
+//! No grouping (see `ast.rs`). `parse(to_dsl(&q))` reproduces `q` given two or more predicates.
 
 use super::ast::{AccountMatch, CmpOp, Combinator, DateRange, Predicate, Query, TagQuery};
 use rust_decimal::Decimal;

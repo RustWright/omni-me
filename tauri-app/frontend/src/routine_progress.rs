@@ -1,16 +1,9 @@
 //! One day's completion status for one routine group — the `2/3` in the card
 //! header and the greying-out of a finished routine.
 //!
-//! Lives outside `pages/routines.rs` because the rule it encodes is not the
-//! screen's own. `core::routines::roll_up` encodes the same rule for the
-//! assistant, and the two crates share no Rust code — the frontend is its own
-//! cargo workspace and everything crossing is JSON over Tauri IPC. Wiring the
-//! screen to `roll_up` was rejected by ruling 87 (RULINGS.md): an async
-//! round-trip is not worth it for a number already on screen. So the guarantee
-//! is carried by a test instead — `fixtures/routine_day_agreement.json` at the
-//! repo root feeds the same cases to this function and to `roll_up`, and both
-//! sides must land on the same answer. Pulling this derivation back inline
-//! would silently remove that alarm.
+//! Twin of `core::routines::roll_up`, which this crate cannot import; calling it over IPC was
+//! rejected by ruling 87 (RULINGS.md). `fixtures/routine_day_agreement.json` feeds both, so
+//! inlining this derivation into the page would silently remove the alarm.
 
 use crate::types::{CompletionEntry, RoutineItem};
 
@@ -28,22 +21,10 @@ pub struct DayProgress {
 
 /// Roll one day's completion rows up into the group's header status.
 ///
-/// A skipped item counts as done: ruling 86 (RULINGS.md). A skip is a
-/// deliberate act with a reason attached, not a failure to act, so any row —
-/// skipped or not — is an item that happened.
-///
-/// `items` are the routine's *current* items; the caller filters `removed`
-/// ones out, exactly as `roll_up`'s caller does. `date` is taken as a
-/// parameter even though the loader only ever holds one date's rows: it makes
-/// this function's input contract identical to `roll_up`'s, so the shared
-/// fixture can feed both sides the same case without massaging it per side.
-///
-/// The agreement this buys has limits, and they are worth naming:
-/// - the fixture pins agreement on the cases it covers, not on all inputs;
-/// - nothing forces the screen to keep *calling* this function — inline a fresh
-///   derivation in the component and no test fires;
-/// - `roll_up` also reports how many of `done` were skips, which this does not,
-///   so that field is asserted on the core side alone.
+/// A skipped item counts as done: ruling 86 (RULINGS.md). `items` excludes removed ones, and
+/// `date` mirrors `roll_up`'s contract so one fixture feeds both.
+/// Limits: the fixture covers only its cases, nothing forces the screen to call this, and the
+/// skip count is asserted on the core side alone.
 pub fn day_progress(
     items: &[RoutineItem],
     completions: &[CompletionEntry],
@@ -155,14 +136,8 @@ mod tests {
 
     /// Cross-boundary agreement alarm for the day-completion rule.
     ///
-    /// The other implementation is `core::routines::roll_up`, in a crate this
-    /// one cannot import. Change the rule on either side and nothing fails to
-    /// build; the divergence surfaces as the assistant answering "did I do my
-    /// routine" differently from what the user is looking at. This test and its
-    /// twin in `core/src/routines.rs` read one fixture and must agree.
-    ///
-    /// If it fires, decide which side is right FIRST. The fixture is a product
-    /// decision written down, not a pin to be nudged until the build is green.
+    /// This and its twin in `core/src/routines.rs` read one fixture and must agree. If it fires,
+    /// decide which side is right first: the fixture is a product decision, not a pin to nudge.
     #[test]
     fn day_progress_agrees_with_the_shared_day_fixture() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

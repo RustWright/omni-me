@@ -1,23 +1,9 @@
 //! The finances screen: Overview, Ledger and Analyze.
 //!
-//! Deliberately still one 7,000-line file. Splitting it three ways along the
-//! `surface_of()` seam below is the obvious move and is NOT being done yet, for
-//! a specific reason: that seam is the *output* of the finances IA rebuild, and
-//! the rebuild has not finished being verified. Its Overview / Ledger / Analyze
-//! structure has so far been exercised only against mock data in a browser —
-//! the end-to-end pass on a real device against real data is still queued
-//! behind a database reset.
-//!
-//! Split it before that pass and the pass stops being able to tell you
-//! anything: it would be testing a file layout no one has ever run, so any
-//! breakage it finds is ambiguous between the redesign and the split. Split it
-//! after and the two are independently attributable.
-//!
-//! Trip-wire: do this once the on-device real-data pass has come back clean.
-//! While splitting, also fix a drift this file has already accumulated —
-//! `StatementImportView` and `JournalImportView` are Overview surfaces
-//! according to `surface_of`, but physically sit down among the Analyze code.
-//! Group by surface, not by the order things happened to get written.
+//! One file on purpose until the redesign's on-device real-data pass comes back clean; a split
+//! before it would make any breakage ambiguous between redesign and split. Then split along
+//! `surface_of()`, grouping by surface: `StatementImportView` and `JournalImportView` are
+//! Overview surfaces sitting among the Analyze code.
 
 use std::collections::BTreeMap;
 
@@ -57,28 +43,9 @@ pub(crate) enum DocumentKind {
     Pdf,
 }
 
-/// Classify a `PendingShareCapture` MIME into a `DocumentKind`. Used when an
-/// Android share-target intent hands us bytes and we need to decide which
-/// capture view (Photo vs PDF) to route into.
-///
-/// Returns `None` when the MIME is something we don't support as a financial
-/// document (e.g., `text/plain` — that flow lives in EmailCapture, not here).
-/// `None` short-circuits the share-target routing: the bytes are dropped and
-/// the user lands on the regular Finances home so they can pick a flow
-/// manually.
-///
-/// `filename` is included so the implementation can fall back to the file
-/// extension when the MIME is generic (Android share apps sometimes hand us
-/// `application/octet-stream` for a PDF).
-///
-/// Permissive by design. Anything in `application/*` with a `.pdf` name
-/// (legacy `application/x-pdf`, misdeclared `application/zip`, the canonical
-/// `application/octet-stream` stripped-MIME case) routes to Pdf. The looseness
-/// is safe because the extractor is the actual validator downstream — a wrongly-
-/// classified share fails the extraction round-trip with a clean error that
-/// surfaces in `CaptureState::Error` one Retry away from recovery. Tightening
-/// this classifier costs lost legitimate shares; loosening it costs one
-/// recoverable round-trip. Asymmetry favors permissiveness.
+/// Route a shared file to the Photo or PDF capture view; `None` (e.g. `text/plain`) drops it
+/// and lands on Finances home. Permissive on purpose: any `application/*` named `.pdf` is a
+/// PDF, since a wrong guess costs one recoverable extraction error and a strict one loses shares.
 fn classify_share_mime(mime: &str, filename: &str) -> Option<DocumentKind> {
     const IMAGE_SUBTYPES: &[&str] = &["jpeg", "jpg", "png", "heic", "heif", "webp"];
     let mime = mime.to_ascii_lowercase();
@@ -269,14 +236,8 @@ pub fn FinancesPage() -> Element {
     // hardware-back handler needs to clear it too.
     let mut pending_share: Signal<Option<PendingShareCapture>> = use_context();
 
-    // A reminder row that named this tab asked for its review queue.
-    //
-    // Lands on the review inbox card, not inside one queue. The count that
-    // produced the row merges auto-import batches with assistant proposals, so
-    // there is no single queue it can mean — the card is where that split is
-    // visible, and it is one tap from either half. Before this the row switched
-    // tabs and nothing else, leaving the user at the top of Overview above a
-    // net-worth hero and a chart, with the thing they tapped for off-screen.
+    // A reminder row asked for this tab's review queue. Lands on the review inbox card, since
+    // its count merges batches and proposals and the card is one tap from either.
     let mut highlight_review = use_signal(|| false);
     let mut nav_intent = crate::use_nav_intent();
     use_effect(move || {
@@ -1687,15 +1648,8 @@ fn CaptureTile(
     }
 }
 
-// =============================================================================
-// Document capture sub-view (Phase 3.1 photos + 3.2 PDFs)
-//
-// Flow: tile click → file picker → bytes ship to /documents/extract →
-// structured ExtractedDraft renders below. PDFs surface a hint selector
-// because `core::extraction::route_from_mime` deliberately returns None for
-// application/pdf — receipt vs bank-statement vs paystub vs brokerage is
-// not auto-derivable from the MIME alone.
-// =============================================================================
+// Document capture: picker, `/documents/extract`, draft. PDFs get a hint selector because
+// `route_from_mime` cannot tell a receipt from a statement or paystub by MIME.
 
 const PDF_HINTS: &[(&str, &str)] = &[
     ("bank_statement", "Bank statement"),
@@ -2065,15 +2019,8 @@ fn HintRadio(
     }
 }
 
-// =============================================================================
-// Email body capture sub-view (Phase 3.4)
-//
-// A pasted email body — no file picker. User pastes the body text, clicks
-// Extract, and the same /documents/extract endpoint handles it (hint=email_body,
-// MIME=text/plain). Shares the state-machine pattern with DocumentCapture but
-// the input shape is different enough that DRY-ing further would tangle the
-// abstractions; the duplication is the bounded kind.
-// =============================================================================
+// Email body capture: a pasted body to `/documents/extract` (`email_body`, `text/plain`).
+// It repeats DocumentCapture's state machine on purpose; the inputs differ too much to share.
 
 #[component]
 fn EmailCapture(on_done: EventHandler<()>, on_extracted: EventHandler<ExtractedDraft>) -> Element {
@@ -2192,15 +2139,8 @@ fn EmailCapture(on_done: EventHandler<()>, on_extracted: EventHandler<ExtractedD
     }
 }
 
-// =============================================================================
-// Transaction form — manual entry + confirm-draft (Phases 3.5 + 3.6)
-//
-// One form, two entry points:
-//   - Manual tile         → initial = None,         empty form
-//   - Extracted draft     → initial = Some(draft),  pre-populated
-//
-// Save → record_transaction Tauri command → TransactionRecorded event.
-// =============================================================================
+// Transaction form, for manual entry (`initial = None`) and a confirmed draft (`Some`).
+// Save records a `TransactionRecorded` through `record_transaction`.
 
 /// One editable posting row. Maps 1-1 to a backend `Posting` once the user
 /// hits Save; `amount` stays a String here so the form can stage in-progress
@@ -2309,18 +2249,9 @@ fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -
     // new account (a posting on an account never seen before).
     let account_suggestions = use_context::<AccountSuggestions>();
 
-    // Hydration precedence (1.4):
-    //   1. a fresh extraction (`initial = Some`) wins over any stale stored
-    //      draft — the user just captured something new;
-    //   2. otherwise a stored draft means the user chose Resume (the Manual
-    //      path clears the slot before navigating here, so reaching this arm
-    //      with a draft is always a deliberate resume);
-    //   3. otherwise a blank manual form.
-    //
-    // Only arm 1 carries a verification verdict. A resumed draft is the user's
-    // own edits by then, so replaying the model's doubts about the original
-    // extraction would be stale advice about fields they have already fixed.
-    // Arm 1 only, like the verdict: a resumed draft is the user's own by then.
+    // Hydration: a fresh extraction wins; else a stored draft is a deliberate Resume (Manual
+    // clears the slot); else a blank form. Only a fresh extraction carries the verdict: a
+    // resumed draft is the user's own edits by then.
     let from_reading = initial.is_some();
     let verdict = initial.as_ref().map(|d| ExtractionVerdict {
         confidence: d.confidence,
@@ -2696,17 +2627,8 @@ fn render_error(message: &str) -> Element {
     }
 }
 
-// =============================================================================
-// Auto-import batch review (Phase 3.10.6)
-//
-// BatchListView: lists pending batches (one row per source/dedup) with quick
-// metadata. Click → BatchReviewView.
-//
-// BatchReviewView: per-row accept toggle; if any row carries a commodity in
-// MANUAL_FX_CURRENCIES (i.e., AED today), prompts for the manual base→quote
-// rate before Commit. Commit fans out to TransactionRecorded × N + optional
-// ExchangeRateRecorded + AutoImportBatchCommitted via `commit_batch`.
-// =============================================================================
+// Auto-import batch review: `BatchListView` lists pending batches; `BatchReviewView` toggles rows,
+// asks a manual rate for any `MANUAL_FX_CURRENCIES` commodity, and commits via `commit_batch`.
 
 /// Currencies that need a user-supplied FX rate because Frankfurter doesn't
 /// cover them. Mirror of `core::fx::MANUAL_FX_CURRENCIES`; kept in sync via
@@ -3228,14 +3150,9 @@ fn BatchLineagePanel(
 
 /// What `verify` concluded about the extraction behind a batch.
 ///
-/// These keys are written by `core::auto_import::receipts`, which spells them
-/// `effective_confidence` and `needs_manual_review` — not the `confidence` /
-/// `needs_review` of the capture route's JSON. `source_metadata` is opaque by
-/// design, so only agreement on these spellings connects the two.
-///
-/// Returning `None` when the keys are absent is deliberate: a batch from a
-/// source that runs no verification must show no verdict rather than a
-/// confident-looking zero.
+/// Keys spelled as `core::auto_import::receipts` writes them (`effective_confidence`,
+/// `needs_manual_review`), not as the capture route does; only the spelling connects them.
+/// `None` when absent, so an unverified source shows no verdict rather than a confident zero.
 fn batch_verdict(batch: &PendingBatchView) -> Option<ExtractionVerdict> {
     let meta = batch.source_metadata.as_ref()?;
     Some(ExtractionVerdict {
@@ -3258,16 +3175,8 @@ fn batch_verdict(batch: &PendingBatchView) -> Option<ExtractionVerdict> {
 
 /// The message a batch was derived from, shown beside its drafts.
 ///
-/// Renders the archive's extracted text (headers + body), not the raw
-/// `.eml`: the raw form is mostly MIME scaffolding and base64 attachment
-/// payloads, so showing it would technically display the source while hiding
-/// what it says.
-///
-/// Attachments render here, not by a link to the Archive. The figures on
-/// a receipt often live in a PDF while the covering mail states none of them, so
-/// a reviewer sent to another tab to check provenance is a reviewer approving a
-/// number they never saw. One viewer at a time, opened on tap — rendering every
-/// attachment eagerly would parse several PDFs to show one.
+/// The extracted text, not the raw `.eml` (mostly MIME scaffolding). Attachments render here,
+/// because a receipt's figures often live only in its PDF; one viewer at a time, on tap.
 #[component]
 fn SourceEmailPanel(document_id: String) -> Element {
     let id_for_text = document_id.clone();
@@ -3427,14 +3336,8 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
     let mut fx_rate_input: Signal<String> = use_signal(String::new);
     let mut busy: Signal<bool> = use_signal(|| false);
     let mut feedback: Signal<Option<String>> = use_signal(|| None);
-    // Committing a batch writes transactions the Ledger is already showing a
-    // cached page of. That list re-fetches on three triggers — a filter Apply,
-    // an inbound `sync:applied`, and the detail pane's own `refresh_epoch` — and
-    // a commit from THIS view is none of them, so the approved rows stayed
-    // invisible until the user pressed Apply. `refresh_epoch` can't help here:
-    // it is a signal local to `LedgerView`, unreachable from the review inbox.
-    // Bumping the app-wide epoch instead fixes the whole class in one place,
-    // since every read view already subscribes to it.
+    // A commit must bump the app-wide epoch: the Ledger's cached page refetches on none of its
+    // own triggers for a commit from here, and every read view subscribes to the epoch.
     let sync_epoch = crate::sync_refresh::use_sync_epoch();
 
     use_effect(move || {
@@ -4117,15 +4020,9 @@ fn posting_views(value: &serde_json::Value) -> Vec<PostingRowView> {
         .unwrap_or_default()
 }
 
-/// Ledger surface root (Stage C5) — a responsive master-detail. Desktop puts
-/// the transaction list and the selected transaction's detail side-by-side (uses
-/// the widened container); mobile shows the list, and tapping a row slides the
-/// detail over it. Selection lives here so the list can highlight the open row;
-/// the detail is keyed by id so switching rows refetches.
-///
-/// Wraps the existing [`TransactionListView`] + [`TransactionDetailView`] rather
-/// than reimplementing them — filtering, pagination, inline edit, and the
-/// attachment viewer all come along unchanged.
+/// Ledger master-detail: side by side on desktop, detail over the list on mobile. Selection
+/// lives here for the highlight; the detail is keyed by id so a new row refetches. Wraps
+/// [`TransactionListView`] and [`TransactionDetailView`] unchanged.
 #[component]
 fn LedgerView(#[props(default = None)] initial_filter: Option<TxnFilter>) -> Element {
     let mut selected: Signal<Option<String>> = use_signal(|| None);
@@ -4334,14 +4231,8 @@ fn TransactionListView(
         });
     };
 
-    // Length, not a clone of the list. `transactions` is the *accumulated*
-    // result of every "Load more" (`load_more` extends without windowing), and
-    // each `TransactionView` carries `postings: serde_json::Value` — a recursive
-    // JSON clone, not a memcpy. Cloning the whole Vec here re-cloned every
-    // accumulated row on every render, and `LedgerView` re-renders this on each
-    // `selected.set(..)`, so tapping a row — the single most common Ledger
-    // interaction — copied the entire browsed-so-far list, worsening the longer
-    // you browse.
+    // Length, never a clone: the list accumulates every "Load more" with JSON postings, and a
+    // clone here re-copied all of it on every row tap.
     let row_count = transactions.read().len();
     let is_loading = *loading.read();
     let err_msg = error.read().clone();
@@ -5020,14 +4911,8 @@ fn TransactionListRow(
     }
 }
 
-// =============================================================================
-// Transaction detail view (Phase 4.2)
-//
-// Read-only view of one transaction's full payload plus an attachment viewer.
-// Edit (category + tag) lands in Phase 4.3. Attachment rendering uses
-// `URL.createObjectURL(Blob)` so large PDFs don't bloat the DOM via base64
-// data URIs; the URL is revoked when the component unmounts via a guard.
-// =============================================================================
+// Transaction detail: the full payload plus an attachment viewer, rendered through
+// `URL.createObjectURL` (revoked on unmount) rather than base64 data URIs.
 
 #[component]
 fn TransactionDetailView(
@@ -8212,14 +8097,8 @@ fn BalanceCheckResultCard(result: BalanceCheckView) -> Element {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Phase 6.2 + 6.3 — hledger journal import view.
-//
-// Three states: Idle (path input + Preview button), Previewed (per-account
-// table + drop/rename + Commit), Done (result summary). One signal per state
-// keeps the UI flat — no enum nesting needed since transitions are linear
-// (Idle → Previewed → Done) and a Back button covers the only reverse path.
-// ---------------------------------------------------------------------------
+// hledger journal import: Idle, Previewed, Done, one signal each because the flow is linear
+// and Back is the only reverse path.
 
 #[component]
 fn JournalImportView(on_back: EventHandler<()>) -> Element {

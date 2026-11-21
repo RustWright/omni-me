@@ -1,15 +1,7 @@
 //! Unified reconciliation engine.
 //!
-//! Signal-only candidate scoring over `Unmatched`-touching transactions
-//! per [[project-unmatched-account-pattern]]. Source-agnostic: pairs
-//! any two transactions whose `Unmatched` postings cancel out, regardless
-//! of origin (auto-import × statement, statement × IMAP receipt,
-//! capture × auto-import, …).
-//!
-//! Output is a ranked list of candidate pairs with `MatchSignals` showing
-//! why each pair scored as it did. 5.7's review UI consumes this list +
-//! presents pairs for one-click confirmation (emits `TransactionsMerged`)
-//! or dismissal.
+//! Pairs any two transactions whose `Unmatched` postings cancel, whatever their sources, ranked
+//! with `MatchSignals` explaining each score, for one-click merge or dismissal in review.
 
 use crate::accounts::is_unmatched;
 use crate::events::Posting;
@@ -196,16 +188,9 @@ pub enum MergeRefusal {
 
 /// The merge precondition, stated once.
 ///
-/// Merging drops both `Unmatched` legs and concatenates what is left. Since
-/// each side balances on its own, the leftovers sum to
-/// `-(a.unmatched + b.unmatched)` — so the merged transaction balances iff
-/// the two Unmatched legs cancel in a single commodity. These are the same two
-/// rules `find_match_candidates` filters on; keeping them in one function is
-/// what stops the generator and the consumer from drifting apart.
-///
-/// Checked at merge time rather than trusted, because the ids arrive over IPC
-/// as two free-form strings and nothing in the type system ties them to a
-/// candidate the engine actually produced.
+/// The merge balances iff the two `Unmatched` legs cancel in one commodity; the same rule
+/// `find_match_candidates` filters on, kept in one place. Checked at merge, since the ids arrive
+/// over IPC untied to any candidate.
 pub fn check_mergeable(a: &UnmatchedTxn, b: &UnmatchedTxn) -> Result<(), MergeRefusal> {
     if a.unmatched_commodity != b.unmatched_commodity {
         return Err(MergeRefusal::CommodityMismatch {
@@ -230,14 +215,8 @@ pub fn check_mergeable(a: &UnmatchedTxn, b: &UnmatchedTxn) -> Result<(), MergeRe
 
 /// Does merging these two clear a statement?
 ///
-/// Only when exactly one side traces back to a statement. Both-sourced is
-/// deliberately false: two statement lines that cancel are the two halves of a
-/// transfer already reflected on both statements, so there is no third-party
-/// record left to reconcile against and nothing to mark cleared.
-///
-/// Extracted so `find_match_candidates`' `clears_statement` flag and the
-/// `TransactionCleared` decision at merge time cannot disagree — they were
-/// separately written expressions of this same rule until 2026-08-28.
+/// Only when exactly one side is from a statement; two cancelling statement lines are a transfer
+/// with nothing left to clear. Shared by the candidate flag and the merge-time decision.
 pub fn clears_statement(a: Option<&str>, b: Option<&str>) -> bool {
     a.is_some() != b.is_some()
 }
@@ -363,17 +342,9 @@ impl CategoryHistory {
 
 /// Build the surviving transaction's postings for a merge.
 ///
-/// Both `Unmatched` legs come out and what is left is concatenated. That is
-/// correct precisely when [`check_mergeable`] passes: each side balanced on its
-/// own, so its non-`Unmatched` legs sum to the negation of its `Unmatched` leg,
-/// and if the two `Unmatched` legs cancel then so do the two remainders. Call
-/// `check_mergeable` first — this function does no checking of its own, because
-/// it is also the shape `golden_reconcile` renders through the journal writer to
-/// prove the result still balances after a round-trip.
-///
-/// Lives in `core` rather than beside the Tauri command so the reconcile
-/// guardrail can reach it, and so a future LLM tool merges through the same
-/// rule the UI does.
+/// Drops both `Unmatched` legs and concatenates the rest, correct only after [`check_mergeable`]
+/// passes; it checks nothing itself, being the shape `golden_reconcile` renders. In core so every
+/// merger shares the rule.
 pub fn combine_for_merge(primary: &[Posting], secondary: &[Posting]) -> Vec<Posting> {
     primary
         .iter()

@@ -1,24 +1,8 @@
 //! Autonomy: the evidence for granting it, and the grant itself.
 //!
-//! `docs/src/assistant.md`'s destination is one rule — reversible things it may
-//! do freely; irreversible things it always asks about — and this module is
-//! where that stops being a sentence and becomes a refusal.
-//!
-//! ## The evidence is a query, not a new record
-//!
-//! Every proposal already records what was proposed and what the user decided, so
-//! the approval rate per action type is derivable from what the inbox has been
-//! doing all along. Nothing is written to track it. That matters beyond
-//! tidiness: a separately-maintained counter is a second place to be wrong, and
-//! it would be wrong *quietly*, because a plausible-looking rate is exactly the
-//! kind of number nobody re-derives.
-//!
-//! ## Who grants
-//!
-//! The user, always. There is no verb, no action and no proposal that
-//! produces a grant. An assistant able to ask for more power — however politely,
-//! however gated — inverts the model this whole phase is built on. What it may do
-//! is behave well enough, for long enough, that the record speaks for it.
+//! Enforces ruling 3 (RULINGS.md): irreversible actions are never granted, and only the user
+//! grants, through no verb or proposal. The evidence is a query over past decisions, never a
+//! counter, which would be a second place to be wrong, quietly.
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;

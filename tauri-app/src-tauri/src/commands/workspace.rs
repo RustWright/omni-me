@@ -1,11 +1,6 @@
-//! Workspace-continuity persistence (task 1.8a).
-//!
-//! Persists the frontend's in-memory continuity store (unsaved editor / capture
-//! / transaction-list state) to a flat JSON file in `app_data_dir`, so content
-//! the user left mid-edit survives an app-kill — the gap task 1.6 deliberately
-//! left to disk persistence rather than a root save daemon. The backend treats
-//! the blob opaquely; its shape is owned by the frontend
-//! (`continuity::PersistedWorkspace`).
+//! Persists the frontend's continuity store (unsaved editor, capture and list state) as JSON in
+//! `app_data_dir`, so mid-edit content survives an app kill. Opaque here; the frontend owns the
+//! shape (`continuity::PersistedWorkspace`).
 
 use tauri::State;
 

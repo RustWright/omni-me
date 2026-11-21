@@ -1,30 +1,10 @@
 //! Tauri commands for the budget feature.
 //!
-//! Pattern mirror of `commands::routines`: each mutating command builds a
-//! payload, calls `append_and_apply`, optionally returns the projected row.
-//! Reads go through `core::db::queries`.
-//!
-//! This file covers eight unrelated feature areas across ~30 commands.
-//! Splitting it is still owed; the order matters, because a refactor of
-//! untested code has nothing to tell you whether it preserved behaviour, and
-//! this file is reachable only through Tauri's IPC layer, so a mistake here
-//! surfaces as a screen that quietly stops working rather than as a failing
-//! build.
-//!
-//! The first half of that debt is paid. 2026-08-28 added tests over the logic
-//! that exists *only* here — `plan_merge` and `plan_resolve`, which rewrite
-//! postings — by pulling the payload construction out of the
-//! `#[tauri::command]` wrappers so it runs without an `AppState`
-//! (`check_wipe_confirmation` in `routines.rs` is the same shape). Everything
-//! those two rely on now lives in `core::reconciliation` next to its tests, and
-//! `golden_reconcile` renders a merge end-to-end.
-//!
-//! Still untested, and the trip-wire for the split: the read-side
-//! arithmetic — `dashboard_summary`, `budget_progress`, `account_summaries`,
-//! `net_worth_history`, `account_tag_breakdown` — and `import_chequing_csv`.
-//! Those mostly delegate to `core::{budget,balances,dashboard}`, which carry
-//! their own tests, so the residual risk is in the assembly rather than the
-//! sums. Cover that, then split.
+//! Mutating commands build a payload and `append_and_apply`; reads go through
+//! `core::db::queries`. Eight feature areas in one file, and the split is still owed.
+//! Trip-wire: test the untested read-side assembly (`dashboard_summary`, `budget_progress`,
+//! `account_summaries`, `net_worth_history`, `account_tag_breakdown`) and
+//! `import_chequing_csv` first; a mistake here shows as a quietly broken screen, not a build error.
 
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
@@ -511,14 +491,9 @@ pub async fn set_account_override(
     append_and_apply(&state, EventType::AccountAdded, account.clone(), payload).await
 }
 
-/// Per-account summary for the Accounts screen (Phase 4.4). Reads the
-/// per-device journal file in-process via `core::balances::account_summaries`
-/// + merges declared-account metadata. The journal lives at
-/// `<app_data>/budget.journal` per `lib.rs::setup`.
-///
-/// `base_currency` defaults to "CAD" when the caller doesn't supply one.
-/// `as_of` defaults to today (UTC) and drives FX-rate selection — latest
-/// `P`-directive rate ≤ that date wins.
+/// Per-account summary for the Accounts screen, from `<app_data>/budget.journal` plus
+/// declared-account metadata. `base_currency` defaults to CAD; `as_of` defaults to today (UTC)
+/// and picks the latest `P` rate on or before it.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn account_summaries(
     state: State<'_, AppState>,
@@ -582,15 +557,9 @@ pub struct AccountTagBreakdownView {
     pub groups: Vec<AccountTagGroupView>,
 }
 
-/// Per-account drill-down: slice one account's holdings by a posting tag so the
-/// user can see the per-institution (default) or per-product split that the MECE
-/// account name deliberately pools. Postings come from the tag-bearing
-/// `transactions` projection (same path R2 uses); base-currency conversion
-/// reuses the journal's `P` directives via `balances::account_tag_breakdown`.
-///
-/// `group_by` accepts `"institution"` (default) or `"product"`; anything else
-/// falls back to `institution`. `base_currency` / `as_of` default like
-/// `account_summaries`.
+/// Slice one account's holdings by posting tag, showing the per-institution or per-product
+/// split the account name pools. `group_by` is `"institution"` (default, and the fallback) or
+/// `"product"`; conversion uses the journal's `P` rates, defaults as `account_summaries`.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn account_tag_breakdown(
     state: State<'_, AppState>,
@@ -976,16 +945,8 @@ pub async fn budget_progress(
         .unwrap_or(as_of_date);
     let cutoff = earliest_start.to_string();
 
-    // The cached price table, not a fresh read-and-parse of `budget.journal`.
-    // This command used to do the latter — and the parse existed *solely* to
-    // build `Prices`, which `journal_artifacts()` already holds and shares with
-    // five sibling commands. So every Budget-screen load paid a full nom parse
-    // of the whole journal (~2.4 MB / 51k lines on real data) to reconstruct a
-    // table sitting in memory one field away.
-    //
-    // Note this is not the same shape as `net_worth_history`'s documented
-    // re-read below: that one needs the *dated transactions*, which the cache
-    // genuinely does not carry. This one needed nothing the cache was missing.
+    // The cached price table: re-parsing the whole journal for `Prices` cost every screen load.
+    // Unlike `net_worth_history`, nothing here needs what the cache lacks.
     let artifacts = state.journal_artifacts_or_empty().await;
 
     let txn_rows = queries::list_transactions_since(&state.db, &cutoff)
@@ -1155,16 +1116,9 @@ pub struct ScanRecurringResult {
     pub already_tracked: usize,
 }
 
-/// Sweep the transaction log for recurring expense patterns, emitting
-/// `RecurringTransactionDetected` events for patterns NOT already in the
-/// `recurring_patterns` table. The skip-already-tracked check preserves
-/// user confirmations/dismissals across re-scans — re-emitting `detected`
-/// against a `confirmed` row would silently revert it.
-///
-/// Scope: looks back `lookback_days` (default 365). A year is enough to
-/// surface monthly subscriptions with the 3-occurrence minimum and to
-/// catch quarterly patterns; longer windows add cost without proportional
-/// value for a "what's recurring right now" question.
+/// Emit `RecurringTransactionDetected` for patterns not already tracked: re-emitting against a
+/// confirmed row would silently revert it. Looks back `lookback_days` (365), enough for
+/// monthly and quarterly patterns at the 3-occurrence minimum.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn scan_recurring(
     state: State<'_, AppState>,
@@ -1291,12 +1245,8 @@ pub struct ImportStatementResult {
 /// Turn parsed statement rows into events, returning them alongside the count
 /// of zero-amount rows deliberately left out.
 ///
-/// Shared by every statement import path rather than written per format. What
-/// a row *becomes* — one posting on the source account, a balancing
-/// `Unmatched` mirror, batch attribution, the statement-source tag — is a
-/// property of statement import itself, not of the file it arrived in, and a
-/// second copy would be free to drift on the sign convention or forget the
-/// mirror.
+/// Shared by every statement path: what a row becomes (source posting, `Unmatched` mirror,
+/// attribution, source tag) belongs to statement import, and a copy could drift on the sign.
 fn build_statement_events(
     device_id: &str,
     rows: &[statement::StatementRow],
@@ -1348,29 +1298,11 @@ fn build_statement_events(
     Ok((events, skipped_zero_rows))
 }
 
-/// Import a statement export — each parsed row becomes a
-/// `TransactionRecorded` event with one posting on `source_account` and a
-/// balancing `Unmatched` placeholder. `statement_source` tags the events
-/// for the 5.7 reconciliation review (which uses it to mark cleared
-/// status when paired with a non-statement-sourced event).
-///
-/// Commodity defaults to CAD; the user picks the source account, which
-/// implicitly fixes the currency for this batch (mixing currencies in a
-/// single statement isn't a shape any of these exports produce).
-///
-/// `format` selects the parser: `chequing` (headerless debit/credit),
-/// `brokerage`, or `transfer`. All three come from `core::statement::parse`,
-/// which accounts for every line it reads — so a row that cannot be parsed
-/// reaches the caller in [`ImportStatementResult::skipped`] instead of
-/// disappearing. The parser this replaced split on bare commas and silently
-/// dropped anything it did not understand.
-///
-/// Like the document path, this refuses to write anything when
-/// `StatementParse::import_blockers` is non-empty, unless `force` is set. Note
-/// what that is worth per format: the chequing export carries no balance
-/// column, so its only blocker is an unreadable line — `verifiability` on the
-/// result says so, and a caller must not present a clean result here as a
-/// verified one.
+/// Import a statement export: each row becomes `TransactionRecorded` with one posting on
+/// `source_account` and an `Unmatched` mirror, tagged `statement_source` for reconciliation.
+/// `format` is `chequing`, `brokerage` or `transfer`; an unreadable row lands in
+/// [`ImportStatementResult::skipped`]. Refuses on `import_blockers` unless `force`. The chequing
+/// export has no balance column, so a clean result there is not a verified one (`verifiability`).
 #[tauri::command(rename_all = "snake_case")]
 pub async fn import_chequing_csv(
     state: State<'_, AppState>,
@@ -1401,23 +1333,10 @@ pub async fn import_chequing_csv(
     }
     .map_err(|e| format!("statement parse: {e}"))?;
 
-    // Collected, not appended per row. `append_new_and_apply` costs an
-    // event-store round trip *plus* a bookmark advance *plus* a debouncer nudge
-    // each time, so a 300-row statement paid ~900 serial awaits where
-    // `append_batch` folds the appends into one `BEGIN TRANSACTION` and the
-    // bookmark/nudge into one apiece. (The per-event projection work is
-    // unchanged — `apply_events` still walks events x projections — so this is
-    // roughly a 3x cut on the import, not a 300x one.)
-    //
-    // Failure semantics change with it, in the safer direction: a malformed row
-    // now aborts before anything is written, instead of leaving the first N-1
-    // rows committed under a returned Err. `commit_batch` next door already
-    // works this way.
-    // Attribution for every row in this batch. A statement is one account at
-    // one institution by definition, so it is a batch-level fact rather than a
-    // per-row one. Absent it, the rows import into a pooled account with
-    // nothing to tell them apart from another institution's — worth a warning,
-    // not a refusal, since the label still identifies the batch to a human.
+    // Collected and appended as one batch: one transaction instead of three awaits per row, and
+    // a malformed row aborts before anything is written.
+    // Attribution is batch-level (a statement is one account at one institution). Missing, it
+    // warns rather than refuses: the rows pool with other institutions' but the batch is labelled.
     let tags = accounts::institution_tags(institution.as_deref(), product.as_deref());
     if tags.is_empty() {
         tracing::warn!(
@@ -1534,22 +1453,9 @@ struct SkippedLineWire {
 /// Import a statement that arrives as a document rather than an export —
 /// a PDF, possibly encrypted.
 ///
-/// Parsing runs on the server, which is where the credentials live: the client
-/// sends bytes and the *name* of a secret, never a password. That also keeps
-/// `poppler` a server-side dependency rather than something every device needs.
-///
-/// ## This path refuses to import a statement that fails its own checks
-///
-/// Unlike the CSV formats, a rendered statement declares figures about itself —
-/// totals, transaction counts, opening and closing balances — so "did we read
-/// this correctly" has a real answer before anything is written. When the
-/// answer is no, writing the rows anyway would put money into the ledger that
-/// the statement itself contradicts, and the reconciliation view would then be
-/// measuring the books against a file we already know we misread.
-///
-/// `force` exists for the case where the user has read the failures and judges
-/// them benign. It is deliberately not a default: the whole value of the check
-/// is that clearing it takes a decision.
+/// Parsed on the server, where the credentials and `poppler` live; the client sends bytes and a
+/// secret's name. Refuses a statement that fails its own checks (`docs/src/archive.md`
+/// § "What ingest deliberately does not do"); `force` is for failures judged benign only.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn import_statement_document(
     state: State<'_, AppState>,
@@ -1735,11 +1641,8 @@ pub struct MatchCandidateView {
 /// Pull the `Unmatched` leg out of a set of postings and flatten the
 /// transaction into the shape `core::reconciliation` works in.
 ///
-/// Takes plain JSON rather than a `TransactionRow` so the Tauri commands (which
-/// hold a row) and the payload planners below (which are tested without a
-/// database) share one extraction. Returns `None` when there is no `Unmatched`
-/// posting: for the listing paths that means "not a reconciliation candidate",
-/// for the merge path it is a refusal.
+/// Plain JSON, so the commands and the database-free planners share one extraction. `None`
+/// means no `Unmatched` posting: not a candidate when listing, a refusal when merging.
 fn unmatched_from_parts(
     txn_id: &str,
     date: &str,
@@ -1806,12 +1709,8 @@ impl MergeSide {
 
     /// Postings as `Vec<Posting>` rather than raw JSON.
     ///
-    /// Not a formality. `validate_payload` runs only on the server's push path
-    /// (`routes/sync.rs`), never on local append, so this is the sole point at
-    /// which a locally-merged transaction's posting shape is checked. Anything
-    /// that entered through the canonical event builder round-trips fine; a
-    /// shape that does not is exactly what should stop here, rather than reach
-    /// the projection and the journal file and then fail to sync.
+    /// The only check of a local merge's posting shape: `validate_payload` runs on the server's
+    /// push path, not local append, so a bad shape would reach the projection and journal first.
     fn typed_postings(&self) -> Result<Vec<Posting>, String> {
         serde_json::from_value(self.postings.clone())
             .map_err(|e| format!("transaction {} has malformed postings: {e}", self.id))
@@ -1848,14 +1747,9 @@ struct MergePlan {
 /// Pure core of [`merge_transactions`] — everything between "both rows are in
 /// hand" and "append the events".
 ///
-/// Refuses when the pair fails `reconciliation::check_mergeable`. That check
-/// used to live only in the candidate *generator*, so this function trusted
-/// whatever two ids arrived over IPC. Merging drops both `Unmatched` legs and
-/// concatenates the rest, which balances only if those legs cancel — so an
-/// arbitrary pair produced a `TransactionsMerged` whose postings did not sum to
-/// zero. That event is replayed into both the SurrealDB projection and the
-/// on-disk hledger journal, so a bad merge lands in two places at once and
-/// surfaces only as balances that quietly disagree with the bank.
+/// Refuses a pair failing `reconciliation::check_mergeable`, whatever ids arrive over IPC:
+/// merging drops both `Unmatched` legs, which balances only if they cancel, and a bad merge
+/// lands in the projection and the journal at once.
 fn plan_merge(primary: &MergeSide, secondary: &MergeSide) -> Result<MergePlan, String> {
     let no_leg = |side: &MergeSide| {
         format!(
@@ -1958,14 +1852,9 @@ struct ResolvePlan {
 
 /// Pure core of [`resolve_unmatched`].
 ///
-/// Renames the `Unmatched` leg to a real category and leaves its amount,
-/// commodity and FX rate exactly as they were. That is the whole trick: the
-/// `Unmatched` leg was created as the sign-inverted mirror of the real posting
-/// (`core::accounts::make_unmatched_mirror`), so it already carries the
-/// balancing amount. Renaming the account preserves the sum, and a transaction
-/// that balanced before still balances after. Adjusting the amount or flipping
-/// the sign here would silently unbalance the entry — see
-/// `resolve_preserves_the_transaction_total`.
+/// Renames the `Unmatched` leg to a category and changes nothing else: the leg is already the
+/// balancing mirror, so touching its amount or sign would silently unbalance the entry
+/// (`resolve_preserves_the_transaction_total`).
 fn plan_resolve(
     txn_id: &str,
     date: &str,
@@ -2279,13 +2168,8 @@ pub async fn dismiss_recurring(
 mod tests {
     //! Tests for the money-mutating logic that exists only in this file.
     //!
-    //! Most commands here are glue over `core::budget`, `core::balances` and
-    //! `core::dashboard`, which carry their own tests. `plan_merge` and
-    //! `plan_resolve` are the exceptions: they rewrite postings, and until
-    //! 2026-08-28 that arithmetic had no coverage anywhere. Both feed events
-    //! that replay into the SurrealDB projection *and* the on-disk hledger
-    //! journal, so an unbalanced result corrupts two stores at once and shows
-    //! up only as balances disagreeing with the bank.
+    //! `plan_merge` and `plan_resolve` rewrite postings, and an unbalanced result corrupts the
+    //! projection and the journal at once.
 
     use super::*;
     use std::collections::BTreeMap;

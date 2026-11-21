@@ -1,25 +1,8 @@
 //! The agent loop: ask, let the model call verbs, hand back results, repeat.
 //!
-//! Bounded by a turn budget and ended by a prose answer. There is no terminal
-//! *verb* in this phase — `propose` is the write half and does not exist yet — so
-//! "the model stopped calling tools" is the only way a request finishes well.
-//!
-//! ## Why the loop rules are separate from the system prompt
-//!
-//! [`super::verbs::SYSTEM_PROMPT`] says what the assistant is and what it may
-//! never do; [`LOOP_RULES`] says how this particular loop runs. Keeping them apart
-//! matters because the first is a contract published in `docs/src/assistant.md`
-//! and the second is tuning: turn budgets and repeat handling will change, and a
-//! change to loop mechanics must not read as a change to the promise.
-//!
-//! ## The repeat rule is load-bearing
-//!
-//! `search` answers an identical query with identical rows forever, so repeating
-//! it looks free to a model with turns left and no sense of when it is done.
-//! Measured on the prototype, that burned every remaining turn in 11 of 24
-//! episodes. That is a defect in the *loop*, not in the model — and left in, it
-//! would penalise every candidate model equally and wrongly, which makes any
-//! comparison between them meaningless.
+//! Bounded by a turn budget and ended by a prose answer; there is no terminal verb. [`LOOP_RULES`]
+//! (tuning) stays apart from [`super::verbs::SYSTEM_PROMPT`] (the published contract). The repeat
+//! rule is load-bearing: repeated searches burned every turn in 11 of 24 prototype episodes.
 
 use std::time::{Duration, Instant};
 
@@ -62,35 +45,16 @@ fn today_line(config: &ResolvedConfig, now: chrono::DateTime<chrono::Utc>) -> St
 
 /// How many model calls one request may make, when nothing configures it.
 ///
-/// Discovery legitimately costs two or three (`list_types`, `describe_type`,
-/// then the real work), so a budget below about five would score a model as
-/// failing for planning correctly.
-///
-/// This is the fallback, not the authority. The live value is
-/// `ConfigKey::AssistantMaxTurns`, because the quality/cost balance is something
-/// to be found by trying rather than argued to once — see [`Session::new`]. The
-/// constant stays for tests and for callers with no config in hand.
-///
-/// Fifteen, tracking the config default it stands in for. Six left a caller without
-/// config on the pre-2026-09-14 behaviour, where establishing that a record does
-/// not exist — measured at eight turns against two to four for confirming one
-/// does — could not fit inside the budget.
+/// The fallback for callers without config; the live value is `ConfigKey::AssistantMaxTurns`
+/// ([`Session::new`]). Fifteen, matching that default: proving absence takes about eight turns,
+/// and discovery alone two or three.
 pub const MAX_TURNS: usize = 15;
 
 /// Extra turns a request may spend on `propose`, beyond its budget.
 ///
-/// Exempt, but bounded — and the bound is the point. The turn budget is
-/// the loop's only halting guarantee: there is no terminal verb, so a model that
-/// never emits prose never finishes. Making `propose` free without a separate
-/// ceiling would hand that guarantee back.
-///
-/// It is exempt at all because the risk the budget guards against is a
-/// *progress-free retrieval loop* — repeating searches until the turns run out,
-/// measured on the prototype at 11 of 24 episodes. `propose` cannot do that: it
-/// reads nothing, validates its arguments and returns, and `answer::proposals`
-/// discards a duplicate of one already made this run. Charging it the same rate
-/// as a search made a three-item routine unanswerable, which is what surfaced
-/// this.
+/// Exempt from the budget, which guards against retrieval loops `propose` cannot make; bounded,
+/// because the budget is the loop's only halting guarantee. Charging proposals like searches made
+/// a three-item routine unanswerable.
 pub const PROPOSAL_TURNS: usize = 4;
 
 /// Output cap per call in the loop. A model that reasons first spends its
@@ -101,15 +65,8 @@ pub const MAX_REPLY_TOKENS: u32 = 16_000;
 
 /// Sent on the final turn, when the budget is about to end the loop.
 ///
-/// Without it the budget's exit carries no text: the user waits through N model
-/// calls and receives nothing. Measured 2026-09-14 on "what does my note about
-/// car insurance say?" — six turns of legitimate narrowing and widening, then
-/// silence. Rationale and the presence/absence asymmetry: `docs/src/assistant.md`.
-///
-/// Note this is not new advice. [`LOOP_RULES`] already says "I could not
-/// find it" is a correct answer, and the model read that on every turn and kept
-/// searching anyway. What changes the outcome is saying it at the moment it is
-/// actionable and withholding the tools, so there is nothing else to do.
+/// Without it the budget ends in silence after N calls (`docs/src/assistant.md`). Not new advice
+/// ([`LOOP_RULES`] says it every turn); what works is saying it when the tools are withheld.
 const LAST_TURN_NUDGE: &str = "You have no lookups left. If the user asked for a change, \
      propose it now from what you have already found, then answer. Otherwise answer now using \
      only what you have already found. If the records you looked for do not exist, say plainly that you \
@@ -141,15 +98,8 @@ lookup researching, and do not describe the change instead of proposing it.";
 
 /// How to reply when the tool channel is closed and a grammar is in force.
 ///
-/// Load-bearing, and not obviously so: the schema is compiled into a token
-/// grammar by the serving stack and never shown to the model, so nothing else in
-/// the request describes the envelope the model is being held to. Without this
-/// the model is required to emit a shape it was never told about, and the run
-/// measures that instead of the constraint.
-///
-/// Separate from the verb catalogue on purpose, the same way [`LOOP_RULES`] is
-/// separate from [`SYSTEM_PROMPT`]: the catalogue is the contract, this is one
-/// loop's transport, and they change for unrelated reasons.
+/// Load-bearing: the grammar is never shown to the model, so nothing else describes the envelope.
+/// Apart from the verb catalogue (the contract), as transport changes for unrelated reasons.
 pub const CONSTRAINED_REPLY_RULES: &str = "\n
 Reply with a single JSON object of the form {\"verb\": …, \"arguments\": {…}}, and nothing \
 else. When you can answer the question, use the verb \"answer\" and put your reply in \
@@ -203,11 +153,8 @@ pub struct Outcome {
     /// Replies that did not satisfy the verb-call grammar, under a run that
     /// asked for one. Always zero free-form.
     ///
-    /// The canary for an endpoint that accepted `response_format` and then did
-    /// not enforce it: providers differ on whether a schema is a guarantee or a
-    /// strong hint, and the difference is invisible in a scorecard. Non-zero
-    /// means a "constrained" run was not constrained, and any number read off it
-    /// describes nothing.
+    /// The canary for an endpoint treating the schema as a hint: non-zero means the run was not
+    /// constrained, and its numbers describe nothing.
     pub off_schema: usize,
 }
 
@@ -325,17 +272,8 @@ impl<'a> Session<'a> {
 
     /// Run with grammar-constrained decoding. See [`Session::response_schema`].
     ///
-    /// Never let this request carry `tools` as well. Two ways to call a
-    /// verb means the model picks one per its own training, which makes the
-    /// resulting score a property of the model rather than of the constraint —
-    /// and comparing models is the only thing the number is for. One model
-    /// ignored the schema entirely; another emitted a verb envelope with
-    /// tool-call fields stuffed inside its `arguments`, recording a verb it had
-    /// not asked for.
-    ///
-    /// The closed channel is why [`verbs::tools_as_prompt`] exists: the verb
-    /// documentation lives in the tool definitions, so dropping them without
-    /// replacing the docs would measure information loss instead.
+    /// Never carry `tools` too: with two channels the score measures the model's training, not the
+    /// constraint. [`verbs::tools_as_prompt`] restores the verb docs the tool definitions held.
     pub fn constrained(mut self) -> Self {
         self.response_schema = Some(verb_call_schema());
         self
@@ -356,19 +294,8 @@ impl<'a> Session<'a> {
 
     /// Answer a question that continues a conversation.
     ///
-    /// `history` is the thread's earlier turns, oldest first, as prose. It is
-    /// deliberately not the earlier runs' full message lists:
-    ///
-    /// - A prior assistant turn goes back with `tool_calls` empty. Its tool
-    ///   *results* are long gone, and a provider handed a tool call with no
-    ///   matching result rejects the request — a failure that would only appear
-    ///   on the second question in a thread.
-    /// - Replaying every earlier turn's retrieved snippets would grow the prompt
-    ///   without bound over a long conversation, and re-send record text the
-    ///   current question may have no business seeing.
-    ///
-    /// What the model gets is what a person would remember of the exchange: what
-    /// was asked, and what was said back.
+    /// `history` is earlier turns as prose, oldest first, never full message lists: a tool call
+    /// without its result is rejected by providers, and replayed snippets grow without bound.
     pub async fn ask_with_history(
         &self,
         history: &[super::conversation::Turn],
@@ -442,7 +369,7 @@ impl<'a> Session<'a> {
                 // all the model can form: the nudge alone is advice, and this
                 // model ignored the response schema seven times in one bench run.
                 // `propose` stays so research that ran long can still end in the
-                // change asked for (R3-11: ten lookups, then nothing).
+                // change asked for (ten lookups, then nothing).
                 request = request.with_tools(
                     verbs::tools()
                         .into_iter()
@@ -480,22 +407,9 @@ impl<'a> Session<'a> {
             // hurts verb *selection* — the thing the constraint tax is about.
             let mut reply = reply;
             if self.response_schema.is_some() {
-                // A tool call under a schema is off-schema, and this is the
-                // subtler half of the canary. Closing our side of the two-channel
-                // problem — sending `tools` OR `response_format`, never both — does
-                // not close the model's: a request carrying no tool definitions at
-                // all can still come back with `finish_reason: "tool_calls"`,
-                // because some serving stacks parse a natively-trained tool syntax
-                // out of the completion regardless. `openai/gpt-oss-120b` on
-                // DeepInfra does exactly this.
-                //
-                // Left uncounted it is invisible and total: the constrained arm
-                // quietly becomes a second free-form arm, and the tax goes back to
-                // measuring which channel a model prefers — the original unsound
-                // measurement, wearing the fix as a disguise. The run still
-                // executes the call, so the accuracy numbers stay real; only the
-                // *difference* between the arms is void, which is what a non-zero
-                // `off_schema` already withholds.
+                // A tool call under a schema is off-schema: some stacks parse native tool syntax
+                // out of a completion whose request declared no tools. Counted, or the constrained
+                // arm silently becomes free-form; the call still runs, so accuracy stays real.
                 if !reply.tool_calls.is_empty() {
                     off_schema += 1;
                 }
@@ -539,7 +453,7 @@ impl<'a> Session<'a> {
                     Some(_) => unwrap_constrained_answer(reply.content),
                     None => reply.content,
                 };
-                // R3-7: a reply saying a change was made when nothing was
+                // A reply saying a change was made when nothing was
                 // proposed gets one chance to propose it or say otherwise.
                 let proposed = trace
                     .iter()
@@ -759,13 +673,8 @@ impl<'a> Session<'a> {
 
 /// Read a constrained reply as a verb call, if that is what it is.
 ///
-/// The schema is `{"verb": <name>, "arguments": {...}}`. Anything that does not
-/// parse, or names a verb that does not exist, is left alone and treated as prose
-/// — a constrained model is still allowed to answer, and forcing every reply
-/// through this would turn a final answer into a nonexistent tool call.
-///
-/// The synthetic id exists because a constrained reply has no provider call id
-/// and the result message still has to address something.
+/// `{"verb": <name>, "arguments": {...}}`; anything else is prose, since a constrained model may
+/// still answer. The id is synthetic: such replies have none, and the result must address one.
 fn parse_constrained_call(content: Option<&str>) -> Option<crate::llm::ToolCall> {
     let parsed: Value = serde_json::from_str(strip_fence(content?)).ok()?;
     let verb = parsed.get("verb")?.as_str()?;
@@ -797,15 +706,8 @@ fn strip_fence(text: &str) -> &str {
 
 /// Did this reply satisfy the verb-call grammar at all?
 ///
-/// The canary behind [`Outcome::off_schema`]. A stack that compiled the schema
-/// into a grammar cannot return anything else; one that treated it as a strong
-/// hint can, and the two are indistinguishable from a scorecard. Checking is the
-/// only way to tell a constrained run from a run that merely asked to be.
-///
-/// Deliberately not expressed as `parse_constrained_call(..).is_none()`,
-/// whose `None` conflates prose with the `answer` exit. `answer` satisfies the
-/// schema; prose does not, and folding them together would report every
-/// constrained answer as a violation.
+/// The canary behind [`Outcome::off_schema`]. Not `parse_constrained_call(..).is_none()`, whose
+/// `None` folds prose in with the `answer` exit, which satisfies the schema.
 fn is_verb_envelope(content: Option<&str>) -> bool {
     let Some(text) = content else {
         return false;
@@ -845,23 +747,14 @@ fn unwrap_constrained_answer(content: Option<String>) -> Option<String> {
 
 /// The pseudo-verb a constrained reply uses to stop.
 ///
-/// Load-bearing for the constraint-tax measurement. Free-form mode ends a
-/// request by simply not calling a tool; a reply held to a verb-call schema has no
-/// such move, because every reply must satisfy the schema. Without an exit the
-/// model re-calls until the turn budget runs out — observed live as
-/// `list_types → list_types → describe_type ×4` — and the resulting "tax" measures
-/// the harness having no way to finish rather than constrained decoding costing
-/// accuracy. It is not one of [`verbs::VERB_NAMES`] and never reaches `dispatch`.
+/// A schema-held reply cannot stop by not calling a tool, so without this exit it re-calls to the
+/// budget and the tax measures the harness. Not in [`verbs::VERB_NAMES`]; never reaches `dispatch`.
 const ANSWER_VERB: &str = "answer";
 
 /// A JSON-schema mirror of the tool surface, for the constrained variant.
 ///
-/// Not portable as written: `strict` is set while `arguments` stays an open
-/// object, which vLLM-family stacks accept and OpenAI's strict mode rejects — it
-/// requires `additionalProperties: false` on every object and every property
-/// listed in `required`. `arguments` cannot satisfy that while holding a
-/// different shape per verb, so an OpenAI endpoint needs a different schema
-/// rather than a tweak to this one.
+/// Not portable: `strict` with an open `arguments` object suits vLLM-family stacks; OpenAI's
+/// strict mode needs closed objects, which per-verb shapes cannot give, so it needs another schema.
 fn verb_call_schema() -> Value {
     let mut names: Vec<&str> = verbs::VERB_NAMES.to_vec();
     names.push(ANSWER_VERB);
@@ -1004,7 +897,7 @@ mod tests {
         ResolvedConfig::new(Default::default(), Default::default())
     }
 
-    /// R3-7: "Done ✅" with nothing proposed gets one correction, and the reply
+    /// "Done ✅" with nothing proposed gets one correction, and the reply
     /// that follows it is the answer.
     #[tokio::test]
     async fn a_claimed_change_with_nothing_proposed_is_sent_back_once() {
@@ -1179,14 +1072,8 @@ mod tests {
         );
     }
 
-    /// The guarantee, and the bug it closes. The budget's exit carries no
-    /// text, so a model still calling tools when it runs out leaves the user
-    /// with nothing after N calls. Measured 2026-09-14: six turns of legitimate
-    /// narrowing and widening on a record that did not exist, then silence.
-    ///
-    /// Withholding the tools is what makes it a guarantee rather than advice —
-    /// the same model ignored the response schema seven times in one bench run,
-    /// so a politely worded instruction is not enough.
+    /// The budget's exit must carry text. Withholding the tools makes it a guarantee: the same
+    /// model ignored a schema seven times in one run, so an instruction alone is not enough.
     #[tokio::test]
     async fn the_last_turn_offers_only_propose_so_no_lookup_can_spend_it() {
         let db = test_db().await;
@@ -1833,12 +1720,8 @@ mod tests {
 
     /// The quiet half of the canary, and the one that cost a real bench run.
     ///
-    /// A constrained request carries no tool definitions, so a reply arriving
-    /// as a native tool call means the serving stack answered on a channel we
-    /// never opened. `openai/gpt-oss-120b` on DeepInfra does this — the verb
-    /// still gets called and the run still succeeds, which is exactly why it is
-    /// invisible without a counter. Uncounted, the constrained arm silently
-    /// becomes a second free-form arm and the tax measures nothing.
+    /// A native tool call on a request with no tools means a channel we never opened; the run still
+    /// succeeds, so only the counter shows it. Uncounted, the tax measures nothing.
     #[tokio::test]
     async fn a_native_tool_call_under_a_schema_is_off_schema() {
         let db = test_db().await;

@@ -18,28 +18,29 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 
 ## Cycle 6: [0074] tasks, planning, people
 
-Rulings 90–109; evidence and design input in `PUSH_0074_RESEARCH.md`. In dependency order. Prep
-and design sessions need him; builds follow them.
-- [0102] **UI design session** (fresh session): render the plan card, picker card, person view and
-  a multi-timescale view; ruling 100 leaves Today-vs-timescales to his reaction. [USER]
-- [0103] **Task data prep, offline** (ruling 105): pull the hub indexes and his native tasks
-  locally, find the record shape with him, import as the seed. Before [0107]'s data model. [USER, M]
-- [0104] **Reminder spike** (ruling 96): does `tauri-plugin-notification` `Schedule::At` with
-  `allow_while_idle` fire on his phone with the app killed? Plugin 2.8.1 needs tauri ^2.12 and the
-  stack is held below it (deep-link pin): an older plugin, or the upgrade. [S]
-- [0105] **Test gaps before the summary and tier changes** (Cycle 5 review, `reviews/2026-11-16-
-  test-gaps.md`, this machine only): T3, T7, T10, T11, T12, T13, T17. Before [0106]. [M]
+Rulings 90–131, the UI ruled in `design/0102/`, the preps in overlay `*_PREP.md`;
+evidence in `PUSH_0074_RESEARCH.md`. In dependency order. Prep and design sessions need him;
+builds follow them.
 - [0106] **`CheckInPolicy` into named scheduled prompts**, each with its own tier, due-check and
   housekeeping (`check_in.rs` selects every scheduled message today). Gates every ritual. [M]
 - [0107] **Task records and hub intake:** native tasks and projects, estimates and actuals (93),
-  staleness and the hub trial (92), and the hook push of each changed index (91). [L]
-- [0108] **People data prep, offline** (105), beside [0107]: journal mentions, email senders, one
-  vCard export; check To/Cc and whether `watched_label` holds sent mail. Settles the fact shape
-  (102) and which people purpose comes first. [USER, L]
+  staleness and the hub trial (92), and the hook push of each changed index (91). Plus the
+  `~/life` hand-over and the SessionStart receipt (121; contract text then), the LEARN deadline
+  feed and course projects (122, 123), due and scheduled dates (130), repeating obligations
+  (131), the seed import (list confirmed 2026-11-21, overlay `TASKS_PREP.md`); and an intake that
+  reports unknown index values, never drops them (overlay `TASKS_PREP.md`). [L]
+- [0114] **Routines:** his routines are seeded on live (overlay `CALENDAR_PREP.md`). Left: tick
+  items from journal lines with the evening gap line (127), and learn the morning routine's
+  length from those ticks for the day start (114). Before [0109]. [M]
 - [0109] **Planning build:** read-only calendar (96), plan records, the ritual tier and summary
-  lines (98), block reminders, the load measure (99). Needs [0104], [0106]. [L]
+  lines (98), block reminders, the load measure (99). Needs [0106]. Reminders per [0104]'s results
+  (`PUSH_0074_RESEARCH.md` Appendix B): plugin 2.4.0, reschedule on every start, `USE_EXACT_ALARM`
+  (his phone is Android 15), `start:<block>` action ids; MainActivity reads a Start tap
+  from the launch intent so it works on a closed app (his call), handed over like the deep link. [L]
 - [0110] **People build:** mentions, facts, resolution, pickers and group cards (102–104), merge
-  and unmerge reversible for every attached record from the first event. Needs [0108]. [L]
+  and unmerge reversible for every attached record from the first event, the person view and the
+  People tab with model-free search (118–120), per `design/0102/`; task text as a source (124);
+  the fact shape (128), recall first (129). Seed and evidence: overlay `PEOPLE_PREP.md`. [L]
 
 ## Waiting on his decision
 
@@ -210,13 +211,14 @@ generic IMAP config source.
 
 ## Alongside Cycle 6
 
-- [0101] **Comment sweep tier 2** (`CLAUDE.md` § Comments): the 645 blocks of 8+ lines, one crate
-  per commit (core 385, frontend 135, src-tauri 58, agent 36, server 30). No proposals to him: apply
-  and commit. Also replace pre-reset IDs (`R3-7`, `R4-6`: 15 sites) with ruling numbers. [L]
 - [0111] **Standing test debt** (Cycle 5 review): T5, T8, T9, T14, T15, T16, T18, T19, each
   written when its code is next edited. T5 (stored rows after a type change) also gates areas. [M]
 
 ## Later cycles
+
+- [0113] **Locations** (`research.md` § Locations, ruling 115): location history as event
+  metadata, reusing planning's named places and feeding them real travel times. Its own cycle:
+  background location, battery, and the most sensitive data the app would sync. [L]
 
 - [0091] **Recurring detection to the server**, when it migrates onto the contract: it needs no
   offline run, and every open device runs it today (a duplicate risk, unverified). [M]

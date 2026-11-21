@@ -1,33 +1,6 @@
-//! Statement ingestion and replay — the acceptance test for any bulk import.
-//!
-//! ## Why this exists
-//!
-//! A bulk import of a few hundred rows cannot be validated by a human reading
-//! them; pretending otherwise produces rubber-stamping. And the obvious
-//! automatic check does not work either: `bal = 0` proves nothing in
-//! double-entry bookkeeping, because a transaction that was never emitted
-//! balances perfectly by being absent. Two real gaps in the canonical ledger —
-//! ~2.7 years of missing payroll deductions, and a documented pension account
-//! that exists in no ledger file — both balance exactly and are both wrong.
-//!
-//! The only check that catches that class compares against something *outside*
-//! the books. Statements are that oracle:
-//!
-//! 1. the transaction count for the period must match, and
-//! 2. the closing balance must match.
-//!
-//! Both are needed. A count check misses a wrong amount; a balance check misses
-//! an offsetting pair (one row dropped, another duplicated). The canonical
-//! ledger's own reconciliation script compared monthly *sums* only, which is
-//! precisely why the payroll gap survived in it for years.
-//!
-//! ## The oracle has to be trustworthy first
-//!
-//! A verifier built on a parser that quietly skips rows cannot prove anything,
-//! so nothing here is allowed to `continue` past a line it does not understand.
-//! [`StatementParse`] carries a skip ledger and its own accounting identity,
-//! and [`StatementParse::verify_running_balance`] checks the parse against the
-//! statement's *own* arithmetic before any of it is trusted.
+//! Statement ingestion and replay, the acceptance test for any bulk import: count and closing
+//! balance must both match the statement (`docs/src/statements.md`). No parser may skip a line
+//! silently; [`StatementParse`] keeps a skip ledger and checks the statement's own arithmetic.
 
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
@@ -131,30 +104,16 @@ pub struct StatementParse {
     /// Checks the statement failed against figures it states about *itself* —
     /// declared totals, transaction counts, opening and closing balances.
     ///
-    /// This is a different and stronger oracle than
-    /// [`StatementParse::verify_running_balance`], and it exists because some
-    /// formats publish a summary block the parse can be measured against
-    /// without a second source. A rendered document, for instance, states how
-    /// many debits and credits it contains — so a boilerplate line misread as a
-    /// transaction fails the count even when every amount is individually
-    /// right.
-    ///
-    /// Empty for formats that declare nothing (every CSV export in use), which
-    /// is why an empty vec here means *"nothing to check"* as often as it means
-    /// *"checked and passed"*. Callers reporting a verdict must say which.
+    /// Stronger than [`StatementParse::verify_running_balance`]: a declared count fails a
+    /// misread boilerplate line even when every amount is right. Empty also for formats that
+    /// declare nothing, so callers must say whether empty means checked or unchecked.
     pub declared_check_failures: Vec<String>,
     /// The period's opening and closing balances as the statement states
     /// them, for formats that print them outside the row table.
     ///
-    /// These are not a convenience duplicate of the first and last row's
-    /// running balance — they are the only source for them in a layout that
-    /// puts a balance on some rows and not others. Without these, a statement
-    /// whose last row happens to sit mid-group reports its closing balance as
-    /// *unavailable*, and an unavailable check is treated as a failure by
-    /// design, so a perfectly reconciling statement reads as unverifiable.
-    ///
-    /// They are safe to rely on precisely because [`Self::declared_check_failures`]
-    /// is empty only when every row walks from one to the other.
+    /// Not a duplicate of the edge rows' balances: in a layout with balances on some rows only,
+    /// they are the sole source. Safe because [`Self::declared_check_failures`] is empty only
+    /// when every row walks from one to the other.
     pub declared_opening: Option<Decimal>,
     pub declared_closing: Option<Decimal>,
     /// Every line the reader yielded, blank ones included, so the identity
@@ -186,15 +145,8 @@ impl StatementParse {
 
     /// The balance after the last row — the statement's closing balance.
     ///
-    /// Prefers the last row's own running balance and falls back to the figure
-    /// the statement declares. Both come from the bank and must agree, which is
-    /// checked; the row is preferred only because it is the more local of the
-    /// two, so a disagreement surfaces against the declared figure rather than
-    /// hiding behind it.
-    ///
-    /// `None` when the format supplies neither, in which case only the count
-    /// half of the acceptance test is available and the caller must say so
-    /// rather than silently checking less.
+    /// The last row's balance, else the declared figure (they must agree, and are checked).
+    /// `None` when neither exists: only the count half is available, and the caller must say so.
     pub fn closing_balance(&self) -> Option<Decimal> {
         self.rows
             .last()
@@ -219,14 +171,8 @@ impl StatementParse {
 
     /// Check the parse against the statement's own arithmetic.
     ///
-    /// Where a running balance is present, each row must satisfy
-    /// `balance[i] - balance[i-1] == amount[i]`. This is the strongest
-    /// available check on a parser, and it is free: it catches an inverted sign
-    /// convention, a mis-mapped column, a row read twice, and a row skipped —
-    /// all of which otherwise produce a plausible, balanced, wrong result.
-    ///
-    /// Returns the offending row indices with the discrepancy. An empty vec
-    /// means the parse reproduces the bank's own running total exactly.
+    /// `balance[i] - balance[i-1] == amount[i]` wherever a running balance exists: catches an
+    /// inverted sign, a mis-mapped column, a doubled or skipped row. Returns offending indices.
     pub fn verify_running_balance(&self) -> Vec<(usize, Decimal)> {
         let mut problems = Vec::new();
         for (i, pair) in self.rows.windows(2).enumerate() {
@@ -245,17 +191,9 @@ impl StatementParse {
 
     /// Every reason this parse must not be imported, in plain language.
     ///
-    /// Empty means "nothing this format can check came back wrong" — which is
-    /// not the same as "verified". A format carrying no running balance and
-    /// declaring no totals has nothing to fail, so it clears this gate by
-    /// having no gate to clear. [`Self::verifiability`] is what distinguishes
-    /// the two, and a caller reporting a result must not collapse them.
-    ///
-    /// Centralised here rather than at each import site because it is a policy
-    /// question — *when is a statement too suspect to write into the books* —
-    /// and the answer must not depend on which file format it arrived in. Two
-    /// call sites answering it separately is how one path ends up quietly
-    /// writing rows another would have refused.
+    /// Empty is not "verified": a format with nothing to check clears it trivially, and
+    /// [`Self::verifiability`] tells them apart. One policy here for every import path, so no
+    /// path writes rows another would refuse.
     pub fn import_blockers(&self) -> Vec<String> {
         let mut blockers = Vec::new();
 

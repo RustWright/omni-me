@@ -1,5 +1,5 @@
 //! Specialists: one request, routed to the instructions of the domain it is
-//! about. The ledger is the first (R4-2); archive and journal follow the same
+//! about. The ledger is the first, ruling 21 (RULINGS.md); archive and journal follow the same
 //! shape. A specialist adds instructions and context to the run; it never adds
 //! a verb or loosens a gate.
 

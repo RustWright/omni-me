@@ -1,14 +1,8 @@
 //! In-app updater (Android OTA half).
 //!
-//! Tauri's updater plugin does not support mobile, so Android updates are
-//! hand-rolled: the box serves a manifest + the signed APK under `/updates`
-//! (see the public server's `UPDATES_DIR` route), and these commands let the app
-//! check it, download the APK into the cache dir (covered by the FileProvider's
-//! `cache-path`), verify its sha256, and hand the path to the Kotlin
-//! `InstallBridge`, which fires the system package-installer intent.
-//!
-//! Desktop uses the Tauri updater plugin instead (see `lib.rs`); these commands
-//! compile everywhere but are only invoked on Android.
+//! Hand-rolled, since Tauri's updater does not support mobile: check the box's `/updates`
+//! manifest, download the APK to the cache dir, verify its sha256, and hand it to the Kotlin
+//! `InstallBridge`. Desktop uses the updater plugin (`lib.rs`).
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -40,14 +34,8 @@ pub struct UpdateCheck {
 
 /// True when `latest` is a strictly higher semver than `current`.
 ///
-/// Fails closed. This used to fall back to `latest != current` when either
-/// string failed to parse, on the reasoning that offering an update beats
-/// silently skipping one. That reasoning is inverted here: "different" includes
-/// "older", so a manifest naming an unparseable version turned the updater into
-/// a *downgrade* channel — back to a previous release that is validly signed
-/// and passes every other check, undoing whatever a later version fixed. An
-/// unparseable version is a broken manifest; the safe reading of a broken
-/// manifest is "no update".
+/// Fails closed: an unparseable version means no update. Falling back to "different" would
+/// include "older", making the updater a downgrade channel to a validly signed old release.
 fn is_newer(latest: &str, current: &str) -> bool {
     match (
         semver::Version::parse(latest),
@@ -143,23 +131,10 @@ pub async fn download_android_update(
     Ok(apk_path.to_string_lossy().to_string())
 }
 
-/// Ask the Android side to install the (already downloaded + verified) APK at
-/// `apk_path`. We write a one-line request side-file into the app's local data
-/// dir — the same `filesDir` MainActivity polls — and the Kotlin poller reads
-/// the path, fires the system package-installer intent (via the FileProvider),
-/// and deletes the request. This reuses the proven side-file Rust↔Kotlin channel
-/// (`take_pending_share_intent`) rather than a JS interface, whose injected
-/// object would only appear after a page reload in our SPA. No-op on desktop
-/// (nothing polls the file there).
-///
-/// The `apk_path` argument is ignored, and kept only so the existing
-/// frontend call compiles. It used to be written through verbatim, which made
-/// this command a bridge for installing *any* APK the webview could name —
-/// including one another app had dropped on shared external storage, because
-/// the FileProvider roots covered `external-path "."` as well. The only APK
-/// this command may ever install is the one `download_android_update` just
-/// wrote and checksummed, so that path is now derived here rather than
-/// supplied.
+/// Ask Android to install the downloaded, verified APK, via a request side-file MainActivity
+/// polls (the share-intent channel; a JS interface would need a page reload). No-op on desktop.
+/// `apk_path` is ignored, kept for the frontend call: the path is derived here, because a
+/// supplied one let the webview install any APK it could name.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn request_android_install(app: AppHandle, apk_path: String) -> Result<(), String> {
     let _ = apk_path;

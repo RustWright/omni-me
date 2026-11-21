@@ -40,11 +40,8 @@ impl Sampling {
     /// Temperature 0 and nothing else, for a seat whose question has one right
     /// answer.
     ///
-    /// No `seed`, and that is a trap rather than an omission: a gateway told to
-    /// route only to endpoints supporting every parameter we send will refuse the
-    /// ones without `seed`, turning a measurement into a routing error on some
-    /// rows and silently shrinking the slate. `scripts/bench-openrouter.sh`
-    /// reached the same conclusion from the other end.
+    /// No `seed`, on purpose: under `require_parameters` a gateway refuses endpoints lacking it,
+    /// silently shrinking the slate.
     pub const fn deterministic() -> Self {
         Self {
             temperature: Some(0.0),

@@ -1,28 +1,12 @@
-//! The answering loop: find questions that arrived, answer them, record what
-//! happened.
-//!
-//! This is what makes the agent an *interface* rather than a resident process
-//! with nothing to do. A question authored on the phone reaches this loop the
-//! ordinary way — through sync, into the local database, folded by
-//! `AssistantProjection` — and the answer goes back the same way. There is no
-//! second channel, and deliberately so: `surrealkv` holds an exclusive lock on
-//! its directory, so anything that wanted to hand this process a question
-//! out-of-band would have to open a database it cannot open.
-//!
-//! ## Why it runs inline rather than in a spawned task
-//!
-//! `Retrievers` borrows the embedder and the reranker, both of which live in
-//! `main::run`'s frame. A spawned task would need them `'static`, which means
-//! either leaking them or wrapping both in `Arc` for no reason other than to
-//! satisfy the spawn. Running the loop where the values already live keeps the
-//! ownership honest, and there is nothing else for the main task to do — it used
-//! to block on `ctrl_c`.
+//! The answering loop: find questions that arrived through sync, answer them, record what
+//! happened. Sync is the only channel, since `surrealkv` locks the database to this process.
+//! Runs inline, not spawned: `Retrievers` borrows the embedder and reranker from `main::run`.
 
 use std::time::Duration;
 
 use omni_me_core::assistant::chat_tidy;
-use omni_me_core::assistant::check_in::{self, CheckInPolicy};
 use omni_me_core::assistant::conversation::{PendingQuestion, pending_questions};
+use omni_me_core::assistant::scheduled::{self, ScheduledPrompt};
 use omni_me_core::assistant::{
     Retrievers, Session, answer_payload, inbox, promotion, proposals, skipped_payload,
 };
@@ -38,12 +22,8 @@ use tokio::sync::broadcast::error::RecvError;
 
 /// The floor under the pull-driven trigger.
 ///
-/// Not redundant with subscribing to [`PullEvent`]. A broadcast receiver that
-/// lags drops messages, a pull that fails emits nothing to act on, and a question
-/// that landed during a restart was never announced at all. The pusher's missing
-/// interval fallback is this codebase's own precedent for what a single edge
-/// trigger costs: there, an append that skipped the nudge did not sync slowly, it
-/// did not sync at all.
+/// Not redundant with [`PullEvent`]: a lagging receiver drops messages, a failed pull emits
+/// nothing, and a question that landed during a restart was never announced.
 const SWEEP_FLOOR: Duration = Duration::from_secs(30);
 
 /// How often idle chats are looked at. The windows are days, so hourly is plenty.
@@ -125,7 +105,7 @@ impl Responder<'_> {
                     // of its own. `is_due` is a date comparison, so asking it
                     // every 30s costs one query and removes a second clock that
                     // could disagree with this one about what day it is.
-                    self.maybe_check_in().await;
+                    self.maybe_run_scheduled().await;
                     self.maybe_tidy_chats(&mut last_tidy).await;
                     self.sweep().await;
                 }
@@ -152,31 +132,33 @@ impl Responder<'_> {
         }
     }
 
-    /// Raise the scheduled check-in, if one is due.
+    /// Raise every scheduled prompt that is due.
     ///
-    /// This authors an ordinary question and stops. The answering sweep
-    /// picks it up like any other, so a check-in inherits the whole path: the
-    /// same verbs, the same journal refusal, the same proposal gate, the same
-    /// inbox, the same sync. Nothing here decides what the assistant may do — it
-    /// only decides that it may be asked.
-    async fn maybe_check_in(&self) {
-        let policy = CheckInPolicy::from_config(&self.current_config().await);
-        if !policy.enabled {
-            return;
+    /// This authors ordinary questions and stops. The answering sweep picks them up like any
+    /// other, so a scheduled prompt inherits the whole path: verbs, journal refusal, proposal
+    /// gate, inbox, sync. Nothing here decides what the assistant may do, only that it may be asked.
+    async fn maybe_run_scheduled(&self) {
+        let config = self.current_config().await;
+        for prompt in scheduled::prompts(&config) {
+            if prompt.enabled {
+                self.maybe_run(&prompt).await;
+            }
         }
+    }
+
+    async fn maybe_run(&self, prompt: &ScheduledPrompt) {
         // Read fresh each tick rather than cached: the question is the record of
         // the last run, and it can arrive from another agent over sync.
-        let last = match check_in::last_check_in(self.db).await {
+        let last = match scheduled::last_run(self.db, prompt.name).await {
             Ok(last) => last,
             Err(e) => {
-                // Not fatal, but not treated as "never ran" either. Falling
-                // back to `None` on a read error would raise a check-in on every
-                // tick for as long as the error lasted.
-                tracing::warn!(error = %e, "could not read the last check-in; skipping this tick");
+                // Not treated as "never ran": that would raise it on every tick
+                // for as long as the error lasted.
+                tracing::warn!(prompt = prompt.name, error = %e, "could not read the last run; skipping this tick");
                 return;
             }
         };
-        if !check_in::is_due_now(&policy, last) {
+        if !scheduled::is_due_now(prompt, last) {
             return;
         }
 
@@ -185,46 +167,56 @@ impl Responder<'_> {
         let payload = AssistantQuestionAskedPayload {
             thread_id: thread_id.clone(),
             message_id: message_id.clone(),
-            text: policy.prompt.clone(),
-            title: Some("Daily check-in".to_string()),
+            text: prompt.text.clone(),
+            title: Some(prompt.title.to_string()),
             scheduled: true,
+            prompt_name: Some(prompt.name.to_string()),
         };
 
-        tracing::info!(thread = %thread_id, hour = policy.hour, "raising the daily check-in");
+        tracing::info!(prompt = prompt.name, thread = %thread_id, hour = prompt.hour, "raising a scheduled prompt");
         match NewEvent::assistant_question_asked(self.writer.device_id(), &payload) {
             Ok(event) => match self.writer.append_new(event).await {
-                Ok(_) => self.tidy_check_ins(&thread_id).await,
+                Ok(_) => self.tidy_scheduled(prompt, &thread_id).await,
                 // A refusal here is the feature guard doing its job — `feature.llm`
                 // went off between the config snapshot and now.
-                Err(e) => tracing::warn!(error = %e, "check-in refused"),
+                Err(e) => {
+                    tracing::warn!(prompt = prompt.name, error = %e, "scheduled prompt refused")
+                }
             },
-            Err(e) => tracing::error!(error = %e, "could not build the check-in question"),
+            Err(e) => {
+                tracing::error!(prompt = prompt.name, error = %e, "could not build the scheduled question")
+            }
         }
     }
 
-    /// Archive the earlier check-ins and delete those past the window, so a daily
-    /// question does not fill the chat list. See `check_in::plan_housekeeping`.
-    async fn tidy_check_ins(&self, current: &str) {
-        let threads = match check_in::check_in_threads(self.db).await {
+    /// Archive the prompt's earlier threads and delete those past its window, so a
+    /// daily question does not fill the chat list. See `scheduled::plan_housekeeping`.
+    async fn tidy_scheduled(&self, prompt: &ScheduledPrompt, current: &str) {
+        let threads = match scheduled::threads(self.db, prompt.name).await {
             Ok(t) => t,
             Err(e) => {
-                tracing::warn!(error = %e, "could not read check-in threads; not tidying");
+                tracing::warn!(prompt = prompt.name, error = %e, "could not read its threads; not tidying");
                 return;
             }
         };
-        let (plan, events) =
-            check_in::housekeeping_events(&threads, current, self.writer.device_id());
+        let (plan, events) = scheduled::housekeeping_events(
+            &threads,
+            current,
+            prompt.keep_days,
+            self.writer.device_id(),
+        );
         for event in events {
             let id = event.aggregate_id.clone();
             if let Err(e) = self.writer.append_new(event).await {
-                tracing::warn!(thread = %id, error = %e, "could not tidy a check-in");
+                tracing::warn!(prompt = prompt.name, thread = %id, error = %e, "could not tidy a scheduled thread");
             }
         }
         if !plan.archive.is_empty() || !plan.delete.is_empty() {
             tracing::info!(
+                prompt = prompt.name,
                 archived = plan.archive.len(),
                 deleted = plan.delete.len(),
-                "tidied earlier check-ins"
+                "tidied earlier scheduled threads"
             );
         }
     }
@@ -562,6 +554,7 @@ mod tests {
             text: "how did this week go".into(),
             title: None,
             scheduled,
+            prompt_name: None,
         }
     }
 

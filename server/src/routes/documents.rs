@@ -122,11 +122,8 @@ pub struct ArchiveResponse {
 /// Body: raw document bytes. `Content-Type` carries the MIME; `x-filename` the
 /// name to file it under.
 ///
-/// Archiving is not extracting. This stores the bytes and whatever text
-/// they already carry, and deliberately runs no model — a document nothing can
-/// read is archived all the same, and gains fields later from a separate event.
-/// Do not fold `/documents/extract` into this: that route answers "what does
-/// this receipt say", which is a different question with a finance-shaped answer.
+/// Archiving runs no model: it stores the bytes and their own text, and fields arrive later
+/// as a separate event. Keep `/documents/extract` apart; it answers a finance-shaped question.
 async fn archive_handler(
     State(state): State<AppState>,
     Query(q): Query<ArchiveQuery>,
@@ -454,14 +451,9 @@ async fn archive_capture(
 
 /// A preview the user has been shown, and the only set a purge may act on.
 ///
-/// The gate that keeps deletion out of a caller's hands. `apply` accepts a
-/// subset of the ids the matching preview returned and nothing else, so a client
-/// — buggy, or driven from a console — cannot purge a group nobody looked at, and
-/// cannot widen a set the user narrowed. It is `last_import_root`'s pattern,
-/// moved server-side because this is where the bytes are.
-///
-/// Single-use and single-slot. A second preview replaces the first, so a stale
-/// ticket cannot be replayed later against a group that has since changed.
+/// `apply` accepts only a subset of the preview's ids, so no client can purge a group nobody
+/// looked at or widen a narrowed set. Single-use and single-slot: a new preview replaces the
+/// old, so a stale ticket cannot be replayed against a changed group.
 #[derive(Debug, Clone)]
 pub struct PurgeTicket {
     pub token: String,

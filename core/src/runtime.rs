@@ -1,19 +1,8 @@
 //! Where a device's data lives, and which sync target it is allowed to reach.
 //!
-//! Every omni-me device — the desktop and phone clients, and the headless agent
-//! — has to answer the same two questions at startup, and one of the answers is
-//! a safety property rather than a preference.
-//!
-//! The non-production posture. Overriding the data root marks the run as
-//! non-production, and a non-production run never reads the persisted server
-//! URL. That asymmetry is the whole point, and it is not merely a precedence
-//! rule: a dev data root is very often a *copy* of the live one, so it carries
-//! the live `server_url` file, and honouring it would aim a test build straight
-//! at the box. Once the box holds real data that cannot be wiped before release,
-//! a stray test event is permanent and syncs everywhere.
-//!
-//! Lifted out of the Tauri client so a second binary inherits the property
-//! rather than growing a weaker copy of it.
+//! An overridden data root is non-production and never reads the persisted server URL: a dev
+//! root is often a copy of the live one, and its `server_url` would aim a test build at the box,
+//! where a stray event is permanent. Shared by every binary.
 
 use std::path::{Path, PathBuf};
 

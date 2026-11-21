@@ -1,26 +1,9 @@
 //! SurrealDB projection over what the assistant has concluded about the user.
 //!
-//! One table, `beliefs`. A row is a statement plus the evidence behind it and a
-//! confidence the model was made to choose from three words rather than invent a
-//! number.
-//!
-//! ## Why this is its own projection, not part of `assistant`
-//!
-//! `AssistantProjection` materializes the *conversation* — what was asked, what
-//! was answered, what was proposed. That is a record of the assistant's activity.
-//! Beliefs are a record of the user, which the assistant happens to have
-//! derived, and the difference is not filing: the conversation tables are
-//! deliberately absent from `assistant::catalog` so the assistant cannot mine its
-//! own past guesses as evidence, while `beliefs` is catalogued and is meant
-//! to be read back. One projection holding both would make that boundary a matter
-//! of remembering which table is which.
-//!
-//! ## Retired, never deleted
-//!
-//! Superseding sets `superseded_at` and leaves everything else. "What did it used
-//! to think, and why did that stop being true" has to stay a query — a belief
-//! that vanishes takes its own audit trail with it, and the audit trail is the
-//! entire mitigation for a system that accumulates opinions about a person.
+//! `beliefs`: a statement, its evidence, and a three-word confidence rather than an invented
+//! number. Separate from the conversation tables, which stay out of the catalog, because beliefs
+//! are meant to be read back. Retired by `superseded_at`, never deleted: the audit trail is the
+//! mitigation for a system holding opinions about a person.
 
 use async_trait::async_trait;
 

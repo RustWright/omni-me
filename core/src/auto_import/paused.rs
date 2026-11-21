@@ -1,18 +1,6 @@
-//! Persisted set of paused auto-import source names (#367).
-//!
-//! The runtime off-switch ([`crate::auto_import_scheduler::SourceRegistry::pause`])
-//! live-aborts a source's scheduler task, but that state is in-memory — a server
-//! restart would re-spawn every source and re-arm a source the user deliberately
-//! switched off. For a runaway bank source (repeated real login attempts →
-//! lockout / fraud-flag risk, the very incident that motivated #367) that is
-//! unacceptable: a pause MUST survive a restart.
-//!
-//! So the server records paused *names* here, in a small `paused_sources.toml`
-//! separate from `sources.toml`. Names, not definitions: this is deliberately
-//! source-agnostic so it covers compiled overlay bank sources too — they
-//! have no `sources.toml` entry, but they do have a registry name, which is all
-//! this file keys on. At boot the composition root loads this set and re-pauses
-//! each matching source *after* it spawns (see `omni-me-server::run`).
+//! Paused source names, in `paused_sources.toml`, so a pause survives a restart (a re-armed
+//! bank source risks lockout). Names, not definitions, so compiled overlay sources are covered;
+//! the server re-pauses them at boot (`omni-me-server::run`).
 //!
 //! ```toml
 //! paused = ["globepay", "my-checking"]

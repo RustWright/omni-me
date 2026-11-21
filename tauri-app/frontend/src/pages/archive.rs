@@ -1,16 +1,6 @@
-//! The document archive — everything filed, and what anyone has worked out
-//! about it.
-//!
-//! Two views. The list answers *find me the document about X*; the detail view
-//! answers *is this value right*, and that second question is why the layout is
-//! what it is.
-//!
-//! A field is only editable beside the document it came from. The detail
-//! view renders the document and its fields together, and correction is offered
-//! nowhere else. That is not a layout preference: a correction lands
-//! `verified: true`, and the only thing that makes the flag honest is that the
-//! person could see what the document actually says. A "fix these values" queue
-//! divorced from the documents would turn the flag into a lie at scale.
+//! The document archive: a list to find documents, and a detail view to check values.
+//! A field is editable only beside its document: a correction lands `verified: true`, honest
+//! only because the person could see the document. Never offer correction anywhere else.
 
 use dioxus::prelude::*;
 
@@ -662,19 +652,10 @@ fn DocumentDetail(
                             // which sets overflow-auto expecting to scroll itself —
                             // widen the track instead. The page then pans sideways.
                             div { class: "min-w-0",
-                                // An email renders from its stored text, never
-                                // from its bytes. The bytes are raw MIME — quoted-
-                                // printable and base64 parts — so the byte viewer
-                                // would show scaffolding, and parsing MIME again in
-                                // wasm would duplicate what ingest already did.
-                                // Checked before the viewer, never after. A
-                                // purged document still carries its `sha256`, so
-                                // the viewer would fetch, get a 404 and render
-                                // "couldn't load attachment" — which is what a
-                                // *broken* archive looks like. A 404 cannot tell
-                                // deliberate removal from a missing file; the
-                                // column can, and this is the only place that
-                                // distinction reaches the reader.
+                                // An email renders from its stored text; its
+                                // bytes are raw MIME. Purged is checked before the
+                                // viewer: it keeps its `sha256`, and the 404 would
+                                // read as a broken archive.
                                 if d.purged.unwrap_or(false) {
                                     div { class: "p-3 rounded border border-obsidian-border/10 text-xs text-obsidian-text-muted space-y-1",
                                         p { class: "text-obsidian-text", "This document was purged." }
@@ -1143,12 +1124,8 @@ fn RetentionPanel(on_review: EventHandler<(String, String)>) -> Element {
 /// The purge queue for one tag group: every document listed, each sparable, one
 /// confirm.
 ///
-/// This shape is ruling 3 (RULINGS.md), not a layout choice.
-/// Strict per-item confirmation was refused as unusable at backfill scale, and
-/// approving a *rule* was refused because it grants autonomy over an irreversible
-/// action. What makes this satisfy the autonomy rule is that nothing goes without
-/// the person having seen it listed — so if the list is ever truncated, the
-/// confirm must cover only what was listed, and say so.
+/// This shape is ruling 3 (RULINGS.md): nothing is purged unseen, so if the list is ever
+/// truncated, the confirm must cover only what was listed, and say so.
 #[component]
 fn PurgeGroup(
     tag: String,
@@ -1403,12 +1380,8 @@ fn PurgeGroup(
 
 /// Write a document's tag set.
 ///
-/// A free function rather than a closure in [`TagPanel`] because both the add and
-/// the remove handler need it, and a closure capturing the panel's signals is not
-/// `Copy` — it can be moved into one handler or the other, never both.
-///
-/// Always the whole set. The fold overwrites the `tags` key and can never
-/// remove one, so a delta would leave a tag the person took off still on the row.
+/// A free function so both [`TagPanel`] handlers can use it (a capturing closure is not
+/// `Copy`). Always the whole set: the fold overwrites `tags`, so a delta could never remove one.
 #[allow(clippy::too_many_arguments)]
 fn save_tag_set(
     document_id: String,

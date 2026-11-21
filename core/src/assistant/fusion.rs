@@ -14,17 +14,9 @@ pub struct RecordKey {
 
 /// One retriever decides the order; the other only contributes what the first missed.
 ///
-/// This, not [`rank`], is what the live search path uses. Fusing the two
-/// retrievers as equals was measured and it *lost* — see `docs/src/retrieval.md`
-/// § "Why the two retrievers are not equals". Do not swap this for RRF without a
-/// measurement that says otherwise.
-///
-/// `secondary` still earns a place in the answer, below everything `primary`
-/// ranked, so a record only one retriever can find is not lost. What it cannot do
-/// is reorder `primary`.
-///
-/// Scores are positional and exist only to satisfy [`cut`] and the reranker, which
-/// carry them without comparing them across calls.
+/// The live path, not [`rank`]: fusing as equals measured worse (`docs/src/retrieval.md` § "Why
+/// the two retrievers are not equals"); no RRF without a new measurement. `secondary` adds below
+/// `primary`, never reorders it. Scores are positional, for [`cut`] and the reranker.
 pub fn prefer(primary: &[RecordKey], secondary: &[RecordKey]) -> Vec<(RecordKey, f64)> {
     let seen: HashSet<&RecordKey> = primary.iter().collect();
     let order = primary
@@ -39,18 +31,9 @@ pub fn prefer(primary: &[RecordKey], secondary: &[RecordKey]) -> Vec<(RecordKey,
 
 /// Merge several ranked lists into one, then guarantee every type a seat.
 ///
-/// Not on the live path — [`prefer`] is. Kept because the argument for RRF
-/// survives the measurement that retired it: it is the right tool for two retrievers
-/// of *comparable* precision, which is what a second high-quality retriever would
-/// make true. Wiring it back in is a decision with a benchmark attached, not a
-/// simplification.
-///
-/// Fuses ranks, never scores. The two retrievers' scores are on scales with
-/// nothing in common, so feeding raw scores here silently reintroduces the
-/// incomparability that ranks exist to avoid.
-///
-/// The floor cannot be honoured when `limit` is below the number of matching types;
-/// the plain ranking wins there.
+/// Not live ([`prefer`] is); kept for retrievers of comparable precision, and rewiring it needs a
+/// benchmark. Fuses ranks, never scores, which share no scale. The floor yields when `limit` is
+/// below the number of matching types.
 pub fn fuse(rankings: &[Vec<RecordKey>], limit: usize) -> Vec<RecordKey> {
     cut(&rank(rankings), limit)
 }
@@ -78,13 +61,8 @@ pub fn rank(rankings: &[Vec<RecordKey>]) -> Vec<(RecordKey, f64)> {
 
 /// Take the top `limit` of an already-ordered list, then guarantee every type a seat.
 ///
-/// Does not sort. The caller's order is the answer's order. That is what lets a
-/// reranked list — scored in cross-encoder logits, not RRF weights — pass through
-/// unharmed. A sort would reorder it by whichever scale produced bigger numbers.
-///
-/// The floor belongs here, at the final width, not at the pool's. Applied to a
-/// wide rerank pool and then cut, the cut can discard every member of the type the
-/// floor just protected: still "applied", guarantee gone.
+/// Never sorts, so a reranked list passes through in its own order. The floor applies at the
+/// final width: applied to the pool, the cut could drop every member it protected.
 pub fn cut(ranked: &[(RecordKey, f64)], limit: usize) -> Vec<RecordKey> {
     if limit == 0 {
         return Vec::new();

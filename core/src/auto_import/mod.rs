@@ -1,18 +1,8 @@
 //! Auto-import source implementations.
 //!
-//! Each submodule implements `auto_import_scheduler::AutoImportSource` for a
-//! specific upstream — Northwind via Python subprocess, Globepay via REST API,
-//! IMAP poller for emailed statements / receipts.
-//!
-//! All sources share two invariants:
-//! - Pulled transactions are bundled into a single `AutoImportBatchProposed`
-//!   event (one event per tick that produced new data). On user-side commit
-//!   the batch fans out into `TransactionRecorded` events with one real-account
-//!   posting + one mirror posting to `Unmatched` (per the unmatched-account
-//!   pattern — the reconciliation matching engine collapses pairs later).
-//! - Dedup happens via the `dedup_key` field on the proposed event, derived
-//!   from each upstream's stable external id (e.g. Meridian AED message UID, Globepay
-//!   transfer-id watermark, etc.).
+//! `AutoImportSource` implementations (subprocess, REST, CSV, IMAP). Every source proposes one
+//! `AutoImportBatchProposed` per productive tick, committed as a real posting plus an `Unmatched`
+//! mirror, and dedupes on a `dedup_key` from the upstream's stable id.
 
 use crate::events::{AutoImportBatchProposedPayload, DraftTransaction, EventType, NewEvent};
 use chrono::Utc;
@@ -40,15 +30,8 @@ pub mod triage;
 /// What a record-oriented parse produced, including what it could not
 /// parse.
 ///
-/// Returning a bare `Vec<DraftTransaction>` is what made row loss invisible in
-/// the file/HTTP sources: a row with an unparseable date was logged at `warn!`
-/// and dropped, so `drafts.len()` was the only number the caller ever saw and
-/// there was nothing to compare it against. Carrying `rows_seen` alongside the
-/// drafts gives the caller both sides of the identity.
-///
-/// Note that a per-row parse failure stays non-fatal — one malformed row should
-/// not block an otherwise-good import, and the user reviews before commit. The
-/// change is that it is now *counted and named* rather than only logged.
+/// `rows_seen` beside the drafts gives the caller both sides of the identity; a bare `Vec` hid
+/// dropped rows. A failed row stays non-fatal, but is counted and named, not only logged.
 #[derive(Debug, Default)]
 pub struct ParseOutcome {
     /// Records the reader yielded, before any filtering.
@@ -63,18 +46,9 @@ pub struct ParseOutcome {
 /// A `dedup_key` derived from the drafts themselves, so a polling source that
 /// re-fetches an overlapping window collapses onto the row it already proposed.
 ///
-/// The projection keys `pending_auto_import_batches` on `source-dedup_key` and
-/// UPSERTs, so a *stable* key is what makes re-proposal idempotent. A key built
-/// from the wall clock defeats that by construction — it is unique every tick,
-/// so each poll adds another review row for data the user has already seen.
-/// That is not hypothetical: a timestamp key did exactly this to a polling
-/// source in production, adding a review row every tick for data already in
-/// the journal.
-///
-/// Order-insensitive (the ids are sorted first) because upstream APIs do not
-/// promise a stable row order, and a reordered-but-identical window is the same
-/// batch. FNV-1a rather than `DefaultHasher`, whose output is explicitly not
-/// stable across releases — this key has to survive a process restart.
+/// The projection UPSERTs on `source-dedup_key`, so a stable key makes re-proposal idempotent;
+/// never key on the clock, which adds a review row per tick. Sorted ids, since row order is not
+/// promised; FNV-1a, since `DefaultHasher` is not stable across releases.
 pub fn content_dedup_key(source: &str, drafts: &[DraftTransaction]) -> String {
     const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -95,18 +69,9 @@ pub fn content_dedup_key(source: &str, drafts: &[DraftTransaction]) -> String {
     format!("{source}-content-{hash:016x}")
 }
 
-/// Wrap a vec of draft transactions into a single `AutoImportBatchProposed`
-/// event. Called by each handler's `pull()` after fetching + per-row dedup.
-/// Generates a fresh ULID for the batch_id so cross-event correlation
-/// (commit / dismiss reference back to the proposal) is unambiguous.
-///
-/// `dedup_key` is the source's natural idempotency token — what the scheduler
-/// checks to avoid re-proposing the same upstream data. Shape is source-defined:
-/// - Meridian AED / receipts → `format!("{source}-uid-{message_uid}")` (per-email)
-/// - Globepay / Northwind → `format!("{source}-watermark-{max_external_id}")` (or similar)
-///
-/// `source_metadata` is opaque JSON the review UI can render (e.g. IMAP
-/// `from`/`subject` for context, Globepay statement window dates, etc.).
+/// Wrap drafts into one `AutoImportBatchProposed` with a fresh ULID batch id. `dedup_key` is the
+/// source's idempotency token (per email `{source}-uid-{uid}`, or a watermark); `source_metadata`
+/// is opaque JSON the review UI renders.
 pub fn to_proposed_event(
     source: &str,
     dedup_key: String,

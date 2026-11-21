@@ -1,22 +1,9 @@
 //! Per-device hledger journal file projection.
 //!
-//! Writes valid hledger entries to disk as transaction events apply. The file
-//! is a regenerable cache — source of truth lives in the event log. Same shape
-//! as `notes_projection` / `routines_projection`, but the side effect is a
-//! file write instead of a SurrealDB row.
-//!
-//! Writes are event-shaped:
-//! - `TransactionRecorded` / `ExchangeRateRecorded` — cheap append (order matters,
-//!   files never shrink on the hot capture/import path).
-//! - `AccountAdded` — in-place upsert of the one `account` directive (declarations,
-//!   only latest state matters).
-//! - `TransactionUpdated` / `TransactionDeleted` / `TransactionsMerged` — in-place
-//!   edit of the one entry, anchored on its `; txn_id:<id>` marker: re-render the
-//!   changed entry from its (already-updated) projection row, or splice it out.
-//!   Only the affected entry's bytes move, so account and `P` price directives are
-//!   preserved untouched and no whole-file regenerate or projection re-scan is paid.
-//! - `TransactionCategorized` / `TransactionTagged` / `TransactionCleared` — no-ops:
-//!   category, header tags, and cleared-state aren't part of the rendered entry.
+//! A regenerable hledger file written as events apply; the log is the truth.
+//! - Recorded transactions and rates append; `AccountAdded` upserts its directive.
+//! - Update, delete and merge edit one entry in place, anchored on `; txn_id:<id>`.
+//! - Categorize, tag and clear are no-ops: none is part of the rendered entry.
 
 use async_trait::async_trait;
 use std::path::PathBuf;
@@ -58,17 +45,8 @@ impl JournalFile {
     /// Append a transaction entry unless its `txn_id` anchor is already in the
     /// file.
     ///
-    /// This handler used to be the only non-idempotent projection in the system:
-    /// a plain append, so re-applying an event wrote the transaction into
-    /// `budget.journal` a second time. `transactions` (an UPSERT) stayed correct
-    /// while net worth and the Accounts screen — which are parsed back out of
-    /// this file — silently drifted, and nothing self-healed because `rebuild()`
-    /// is only reachable through `wipe_all_data`.
-    ///
-    /// Re-application is ordinary, not exotic: `pull_only` has no in-flight
-    /// guard and the Settings "Sync Now" button is a bare `spawn` with no
-    /// disabled state, so a double tap — or one tap landing inside the 20s
-    /// scheduler pull — applies the same pulled batch twice.
+    /// Idempotent on the anchor: events re-apply routinely, and a plain append silently drifted
+    /// net worth and the Accounts screen, which parse this file.
     async fn append_transaction(&self, txn_id: &str, content: &str) -> Result<(), EventError> {
         self.append_keyed(&format!("t:{txn_id}"), content).await
     }
@@ -313,20 +291,9 @@ impl Projection for JournalFile {
 /// Render a single `TransactionRecorded` into an hledger transaction block,
 /// trailing with one blank line so successive entries don't run together.
 pub fn render_transaction(t: &TransactionRecordedPayload) -> String {
-    // Two payload shapes have no valid hledger rendering at all, and both abort
-    // the *whole-file* parse rather than just corrupting their own entry:
-    //
-    // * no postings — `parse_transaction` ends in `many1(parse_posting)`, so a
-    //   header with no posting lines fails. `validate_payload` accepts
-    //   `postings: []` and `update_transaction` forwards an arbitrary `changes`
-    //   bag, so this is reachable without a malformed event.
-    // * a posting with an empty commodity — `""` fails `string_between_quotes`,
-    //   and a bare unqualified amount is not accepted by `ledger-parser` v6
-    //   either (asserted by `ledger::tests::unrenderable_transactions_are_quarantined`).
-    //
-    // Quarantine the entry as a comment: parseable, inert, still traceable by
-    // id, and it costs one transaction's worth of balance rather than every
-    // balance view in the app.
+    // No postings, or an empty commodity, cannot render and would abort the whole-file parse
+    // (`ledger::tests::unrenderable_transactions_are_quarantined`). Quarantined as a comment:
+    // inert, traceable by id, costing one transaction rather than every balance view.
     if let Some(reason) = unrenderable_reason(t) {
         return format!("; skipped {}: {}\n\n", t.txn_id, reason);
     }
@@ -365,40 +332,13 @@ fn unrenderable_reason(t: &TransactionRecordedPayload) -> Option<String> {
     None
 }
 
-/// Make a description safe to emit on an hledger transaction header line.
+/// Make a description safe for a header line (`DATE [*|!] [(CODE)] [DESCRIPTION]`). Breakers:
+/// - a leading `*` or `!` reads as status (`**PAYEE**`), and an unspaced one aborts the file;
+/// - a leading `(` opens a code; a `;` starts a comment, truncating the payee;
+/// - a newline orphans the postings, and an empty payee aborts the whole file.
 ///
-/// The header grammar is `DATE [*|!] [(CODE)] [DESCRIPTION]`, so several
-/// characters change the *structure* of the line rather than its content:
-///
-/// * a leading `*` or `!` is read as the status marker (`**PAYEE**` — the
-///   dominant bank-statement shape — parses as status `*` plus payee `*PAYEE**`,
-///   and `ledger-parser` v6 rejects a marker not followed by whitespace, which
-///   aborts the whole file);
-/// * a leading `(` opens a transaction code, so `(refund) Shopwell` re-parses as
-///   code `refund` with the payee reduced to `Shopwell`;
-/// * a `;` starts a header comment, silently truncating the payee;
-/// * an embedded newline ends the entry, orphaning the postings that follow;
-/// * an empty description leaves `preceded(space1, parse_payee)` nothing to
-///   match, which also aborts the whole file.
-///
-/// The last two are the dangerous class: one bad row makes `ledger::parse` fail
-/// wholesale, and `account_summaries` then falls back to empty — so net worth,
-/// the Accounts screen and the dashboard all collapse together from a single
-/// unlucky payee.
-///
-/// This is the only guard that covers every writer. `validate_payload` runs
-/// exclusively on the server's push path (`routes/sync.rs:40`), never on local
-/// append, and the record/import/auto-import commands each build payloads
-/// independently — so sanitizing here is what makes `record_transaction`,
-/// `import_chequing_csv` and `commit_batch` safe without changing any of them.
-/// It also covers replay of events already in the store, which no upstream
-/// validation can reach.
-///
-/// Normalization is lossy on the payee and exact on the money, which is the
-/// right trade: the projection keeps the user's original string and stays the
-/// authority for the Ledger list, search and export, while the journal file
-/// exists to be re-parsed for balances. `journal_import::normalize_status_marker`
-/// already makes the same trade in the opposite direction.
+/// The only guard covering every writer and replay. Lossy on the payee, exact on the money; the
+/// projection keeps the original string.
 fn sanitize_description(raw: &str, txn_id: &str) -> String {
     // Structural characters -> space. `;` would comment out the rest of the
     // line; CR/LF would terminate the entry mid-transaction.
@@ -1190,13 +1130,8 @@ account Assets:Bank  ; commodity:CAD
     /// Re-applying the same `TransactionRecorded` must not write the entry
     /// twice.
     ///
-    /// This handler was the only non-idempotent projection in the system. The
-    /// `transactions` table is an UPSERT and stayed correct, so the divergence
-    /// showed up only in the numbers parsed back out of this file — net worth
-    /// and the Accounts screen — and never self-healed, because `rebuild()` is
-    /// reachable only through `wipe_all_data`. Re-application needs no exotic
-    /// setup: `pull_only` has no in-flight guard and the Settings "Sync Now"
-    /// button has no disabled state.
+    /// Re-application is ordinary, and a duplicate here drifts only the numbers parsed from this
+    /// file, never self-healing.
     #[tokio::test]
     async fn re_applying_a_transaction_does_not_duplicate_it() {
         let (proj, _dir) = make_projection().await;

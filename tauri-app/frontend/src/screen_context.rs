@@ -1,23 +1,8 @@
 //! What the open screen is showing — read only when a problem report is filed.
 //!
-//! Why this is not the continuity store. `continuity.rs` persists what would
-//! be *lost* on an unmount or an Android app-kill, so it holds unsaved input and
-//! writes to disk on a debounce. A report wants what was *shown*, which is a
-//! different set: it includes loaded and derived state that was never at risk
-//! (a cached figure, a result count, a selected range) and excludes plenty that
-//! was. Widening the continuity store to cover reporting would pay disk churn
-//! and an eviction policy on every keystroke for a read that happens maybe once
-//! a week.
-//!
-//! So pages publish into a memory-only signal instead, and only the capture
-//! modal reads it.
-//!
-//! The rule for a describer: summarise, never quote. A report may be read by
-//! someone other than the person who filed it, and Settings holds the server
-//! token field and the LLM key state — so it reports which section was open and
-//! nothing else. The editor buffer is the one deliberate exception, because
-//! quoting the draft is the entire value of an editor report; it is also the
-//! line the modal lets the user drop before sending.
+//! Memory-only, unlike the continuity store: a report wants what was shown, not what would be
+//! lost, and it is read about weekly. A describer summarises and never quotes (Settings holds
+//! the token field); the editor draft is the one exception, and the user can drop it.
 
 use dioxus::prelude::*;
 
@@ -56,12 +41,8 @@ pub fn use_screen_report() -> Signal<ScreenReport> {
 /// Publish this page's description, recomputed whenever the state it reads
 /// changes.
 ///
-/// `build` runs inside a `use_effect`, so every signal it reads becomes a
-/// dependency — a page describes itself by writing the closure naturally and
-/// gets re-publishing for free. The equality check before writing keeps an
-/// unchanged description from waking the modal's subscribers on every render.
-///
-/// Being a hook it must be called unconditionally at the top of a component.
+/// `build` runs in a `use_effect`, so what it reads re-publishes it; an unchanged description is
+/// not written. A hook, so call it unconditionally.
 pub fn use_publish_screen_report(build: impl Fn() -> ScreenReport + 'static) {
     let ctx = try_consume_context::<ScreenContext>();
     use_effect(move || {

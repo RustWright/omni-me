@@ -1,17 +1,8 @@
 //! Auto-import observability commands + batch-review commands.
 //!
-//! Observability half is a pure HTTP proxy to `/auto_import/{status,tick}`
-//! on the sync server — the scheduler lives server-side
-//! (per [[feedback-llm-server-side]]), so the Tauri client has no in-process
-//! registry to query. Server errors surface inline on the Settings panel
-//! ("server returned 502: globepay upstream error").
-//!
-//! Batch-review half is fully local — the `AutoImportProjection` runs on
-//! the client (not the server, per `core/src/events/mod.rs` wiring), so
-//! `list/commit/dismiss_batch` read & write through `state.db` directly.
-//! `commit_batch` fans out events: N × `TransactionRecorded` + an optional
-//! `ExchangeRateRecorded` + one `AutoImportBatchCommitted` — appended as a
-//! single batch so the projection runner sees them atomically.
+//! Observability proxies the server's `/auto_import/*`, where the scheduler lives. Batch review
+//! is local, because `AutoImportProjection` runs on the client; `commit_batch` appends its
+//! transactions, optional rate and `AutoImportBatchCommitted` as one batch, atomically.
 
 use std::str::FromStr;
 
@@ -32,26 +23,11 @@ use omni_me_core::config::Feature;
 use crate::AppState;
 use crate::commands::shared::require_feature;
 
-/// Transaction id for a committed draft: the source's stable `external_id`
-/// plus a hash of the draft's own content, so committing the same draft
-/// twice is a no-op while genuinely different rows stay distinct.
-///
-/// This used to be a fresh `Ulid` per accepted draft, which quietly defeated
-/// every downstream guard: the `transactions` projection UPSERTs on `txn_id`
-/// and `budget.journal` skips a `t:<txn_id>` anchor it already holds, so a
-/// stable id makes a duplicate commit collapse — while a random one wrote a
-/// second copy of the same upstream transaction and neither guard could tell.
-///
-/// The content hash is not decoration: `external_id` alone is not unique
-/// per row. One upstream card charge can arrive as several drafts sharing a
-/// reference number — a multi-currency charge yields one leg per balance
-/// currency (observed live: `CARD-…` as both −13.12 USD and −13.22 CAD). Keying
-/// on the reference alone would UPSERT those onto one id and silently drop a
-/// leg, turning a duplicate-prevention fix into data loss.
-///
-/// A source that yields no `external_id` keeps a random id: there is nothing
-/// stable to key on, and colliding every such draft onto one id would be far
-/// worse than duplicating them.
+/// `external_id` plus a hash of the draft's content, so a repeated commit collapses (the
+/// projection and the journal both dedupe on the id) while distinct rows stay distinct.
+/// The hash is load-bearing: a multi-currency charge yields one leg per currency under one
+/// reference, and keying on the reference alone would silently drop a leg.
+/// No `external_id` means a random id: colliding every such draft would be worse.
 fn commit_txn_id(draft: &DraftTransaction) -> String {
     let external_id = draft.external_id.trim();
     if external_id.is_empty() {
@@ -123,15 +99,9 @@ pub async fn list_auto_import_sources(
 
 /// Wire mirror of the server's `ImportSummary`.
 ///
-/// A *mirror* rather than the real type because the Tauri client builds
-/// `omni-me-core` without the `auto-import` feature (it keeps `openssl-sys` out
-/// of the Android dependency tree), so `auto_import_scheduler` is not compiled
-/// here at all. The client only ever proxies these numbers.
-///
-/// Every field defaults, so an older server that still returns the single
-/// `events_appended` shape decodes rather than erroring — but it decodes as
-/// `fetched: 0`, which the UI renders as "server did not report", not as a
-/// clean tick.
+/// A mirror because the client builds core without `auto-import` (no `openssl-sys` on Android).
+/// Every field defaults, so an older server's shape decodes as `fetched: 0`, which the UI shows
+/// as "server did not report", not as a clean tick.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TickResponse {
     #[serde(default)]
@@ -180,14 +150,9 @@ pub async fn trigger_auto_import_tick(
     serde_json::from_str::<TickResponse>(&body).map_err(|e| format!("auto-import tick decode: {e}"))
 }
 
-/// Drive interactive re-auth for one source by relaying a one-time code to the
-/// server's `POST /auto_import/reauth`. The OTP travels in the JSON body
-/// (never the query string) so it can't leak into access logs. The successful
-/// response is the `ReauthOutcome` verbatim — `{ "status": "active" }` |
-/// `{ "status": "invalid_otp" }` | `{ "status": "not_supported" }` |
-/// `{ "status": "error", "message": "..." }` — all of which are *normal*
-/// outcomes (HTTP 200) the UI dispatches on, not transport errors. Only an
-/// unknown source (404) or a server fault surfaces as `Err`.
+/// Relay a one-time code to `POST /auto_import/reauth`, in the body so it never reaches access
+/// logs. Every `ReauthOutcome` status is a normal 200 the UI dispatches on; only an unknown
+/// source (404) or a server fault is `Err`.
 const REAUTH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(150);
 
 #[tauri::command(rename_all = "snake_case")]
@@ -250,15 +215,8 @@ pub async fn set_source_paused(
         .map_err(|e| format!("{action} source decode: {e}"))
 }
 
-// =============================================================================
-// Source-definition CRUD (3.7) — thin HTTP proxies to /auto_import/sources
-// =============================================================================
-//
-// Source definitions are untyped `serde_json::Value` at this layer: the client
-// builds `core` WITHOUT the `auto-import` feature (keeps IMAP/openssl out of the
-// Android tree), so `config::SourceDef` isn't in scope here. The frontend
-// assembles the JSON object; the server validates + persists. Restart-to-apply:
-// these mutate `sources.toml` only, so changes take effect on the next restart.
+// Source-definition CRUD, proxied to `/auto_import/sources`. Definitions are untyped JSON
+// here (no `auto-import` feature on the client); the server validates, saves and applies them.
 
 /// `GET /auto_import/sources` — the configured source definitions (distinct
 /// from the running `/status` list).
@@ -706,15 +664,9 @@ fn parse_tags(tags: &[String]) -> Vec<Tag> {
 /// event when a manual FX rate is supplied for a batch whose accepted rows
 /// may span multiple posting dates.
 ///
-/// The hledger `P` directive carries a single date; ledger-utils uses it as
-/// the effective-from point when valuing foreign-commodity postings. So the
-/// choice here determines: which posting dates the manual rate "covers" once
-/// projected into the journal file.
-///
-/// `accepted_dates` is guaranteed non-empty by the caller when this is
-/// invoked (only called inside `if let Some((..)) = fx_pair`, and an
-/// fx_pair-bearing commit always has at least one accepted row — otherwise
-/// the FX prompt wouldn't have appeared in the UI).
+/// The `P` directive's one date is the rate's effective-from point, so it decides which
+/// postings the manual rate covers. `accepted_dates` is never empty here: the FX prompt only
+/// appears for a commit with an accepted row.
 fn pick_fx_event_date(accepted_dates: &[NaiveDate], fetched_at: DateTime<Utc>) -> NaiveDate {
     // Latest accepted date — closest to "today's spot rate" semantics for the
     // batch. Earlier rows fall back to whatever prior `P` directives are in

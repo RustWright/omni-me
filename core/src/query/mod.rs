@@ -1,16 +1,8 @@
 //! Ad-hoc transaction query.
 //!
-//! A small filter DSL over the `transactions` projection. The GUI query builder
-//! emits DSL strings; hand-typers write the same grammar. The engine
-//! is split into three pure layers:
-//!
-//! - [`ast`] — the query AST plus the [`QueryTxn`] view the evaluator runs on.
-//! - [`parser`] — DSL ⇄ AST ([`parse`] / [`to_dsl`]).
-//! - [`eval`] — pure [`run`] / [`matches`] over a `QueryTxn` slice.
-//!
-//! Nothing here depends on the DB or Tauri; the command layer maps projection
-//! rows into [`QueryTxn`] and calls [`matches`]. Keeping the engine pure is what
-//! lets it double as a WASM demo island (query string + txn array → subset).
+//! A filter DSL over the `transactions` projection, the same grammar for the GUI builder and
+//! hand typing. Pure layers: [`ast`], [`parser`] ([`parse`]/[`to_dsl`]), [`eval`]
+//! ([`run`]/[`matches`]); the command layer maps rows into [`QueryTxn`].
 
 pub mod ast;
 pub mod eval;

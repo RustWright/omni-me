@@ -1,20 +1,7 @@
-//! Shared tag chip-editor used by both the journal and generic-note properties
-//! panels. Renders the current tags as removable chips plus an
-//! "Add tag…" input; the parent owns the tag vector and mutates it in the
-//! `on_add` / `on_remove` handlers, so this component stays stateless except for
-//! the in-progress draft.
-//!
-//! Tags are run through [`sanitize_tag`] here by default, so every emitted tag is
-//! safe for the inline `tags: [...]` serialization (never needs quoting).
-//!
-//! The archive opts out of that sanitizer, and must. `sanitize_tag` filters
-//! to alphanumerics plus `-_/`, which strips the `:` an archive `key:value` tag is
-//! built on — `institution:rbc` would arrive as `institutionrbc`. So the archive
-//! passes `sanitize: false` and the backend's `Tag::normalize` is the only
-//! authority. Do not add a second normalizer here to compensate: a tag stored
-//! in a form the query does not expect is invisible rather than wrong, and two
-//! normalizers is how the two forms come apart. The trim and lowercase it does do
-//! are steps `Tag::normalize` takes too, so they cannot disagree with it.
+//! Shared tag chip editor; the parent owns the tags, so only the draft is local. Tags pass
+//! [`sanitize_tag`] by default, safe for inline `tags: [...]`. The archive must pass
+//! `sanitize: false` (it strips the `:` of `key:value` tags), leaving `Tag::normalize` the only
+//! authority; never add a second normalizer here.
 
 use dioxus::prelude::*;
 
@@ -22,12 +9,8 @@ use crate::note_frontmatter::sanitize_tag;
 
 /// A chip editor for a list of tags.
 ///
-/// - `tags` — the current tags (owned by the parent; re-passed each render).
-/// - `on_add` — fired with a non-empty, non-duplicate tag, sanitized unless
-///   `sanitize` is false.
-/// - `on_remove` — fired with the index of the chip to remove.
-/// - `sanitize` — defaults true, which is the frontmatter-safe behaviour every
-///   caller but the archive wants.
+/// `on_add` gets a non-empty, non-duplicate tag; `on_remove` the chip's index; `sanitize`
+/// defaults true, which every caller but the archive wants.
 #[component]
 pub fn TagChipEditor(
     tags: Vec<String>,

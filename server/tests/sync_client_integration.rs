@@ -188,22 +188,9 @@ async fn sync_does_not_re_push_pulled_events() {
 /// A device that was offline for days must have its backlog delivered to a peer
 /// whose cursor is already *ahead* of those events' author timestamps.
 ///
-/// End-to-end regression for the mixed-clock cursor. The pull cursor is issued
-/// by the server, but the pull filter used to compare it against the authoring
-/// device's clock, which `append_batch` preserves verbatim. So: device B's
-/// cursor advances to "now" after a normal sync; device A comes back online and
-/// pushes events it authored days ago; B's next pull asks for "everything after
-/// now" and those events sit permanently below it. Not delayed — never
-/// delivered, and silently, because nothing is aware a gap exists. Routine clock
-/// skew between two devices reproduced it without anyone going offline.
-///
-/// Note the third device: B's cursor only moves when a pull actually returns
-/// something, so without C there is no "cursor ahead" state and the test passes
-/// against the broken code too. That is exactly what the first draft of this
-/// test did.
-///
-/// This is also the roadmap step 7–8 shape (bring imports current → wipe box →
-/// clean re-import), which is a bulk import of months-old dated data.
+/// The server-issued cursor must never be compared with the author's clock, or a backlog
+/// authored days ago sits below the cursor forever, silently. Device C is load-bearing: B's
+/// cursor moves only when a pull returns something, so without C this passes on broken code.
 #[tokio::test]
 async fn offline_backlog_reaches_a_peer_whose_cursor_is_already_ahead() {
     let (url, _h) = start_server().await;
@@ -267,12 +254,8 @@ async fn offline_backlog_reaches_a_peer_whose_cursor_is_already_ahead() {
 
 /// One event the server refuses must not wedge every other event behind it.
 ///
-/// The push path had no poison-pill escape: the server validates the whole
-/// request and 400s the *entire chunk* on one unknown `event_type` or one bad
-/// payload, and `retry_until_success` then resent the identical chunk forever at
-/// a 60s cap while the cursor never advanced. All outbound sync for the device
-/// stopped — permanently, and for every event, not just the bad one. The pull
-/// side already had `apply_events_resilient`; this is the missing other half.
+/// The server 400s a whole chunk for one bad event, so without an escape the client resends
+/// it forever and every outbound event stops. The push-side twin of `apply_events_resilient`.
 #[tokio::test]
 async fn one_rejected_event_does_not_wedge_the_rest_of_the_push() {
     let (url, _h) = start_server().await;

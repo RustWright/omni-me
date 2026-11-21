@@ -1,18 +1,8 @@
 //! The approval inbox: reading proposals back, and deciding them.
 //!
-//! The decision half lives in core rather than in the Tauri command layer for the
-//! same reason [`crate::events::EventWriter`] does — it is the only place where
-//! approving a proposal turns into real events, and a second implementation
-//! elsewhere would be a second chance to get the atomicity wrong.
-//!
-//! ## Why approval is one batch
-//!
-//! [`decide`] appends the action's events and the decision marker through a
-//! single [`EventWriter::append_batch`]. `commit_batch` in the auto-import path
-//! established this and the reason is not tidiness: split into two appends, a
-//! crash between them leaves the effect applied and the proposal still pending,
-//! so the next approval applies it a second time. One batch makes that
-//! unreachable rather than unlikely.
+//! In core, the one place approval becomes events. [`decide`] appends the effect and the decision
+//! marker in one [`EventWriter::append_batch`]: split, a crash between them leaves the proposal
+//! pending with its effect applied, and the next approval applies it twice.
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -68,12 +58,8 @@ pub enum DecideError {
     /// The record the proposal changes no longer supports the change it describes
     /// — the anchored text of a `note.revise` is gone, or appears more than once.
     ///
-    /// Its own variant rather than a [`DecideError::Invalid`], because the two
-    /// mean opposite things to the person reading the card: `Invalid` says the
-    /// proposal was never coherent, this says the proposal was fine and *the
-    /// record moved*. The proposal stays pending either way, which is deliberate —
-    /// the user can reread the note and reject it themselves, and nothing has been
-    /// written in the meantime.
+    /// Not [`DecideError::Invalid`] (never coherent): this says the record moved. Either way the
+    /// proposal stays pending and nothing is written, so the user can reread and reject it.
     #[error("{0}")]
     RecordMoved(String),
     /// Reading the record to resolve against failed. Distinct from
@@ -91,19 +77,9 @@ pub enum DecideError {
 
 /// Features whose proposals are reviewed on their own screen.
 ///
-/// Approval lives where the data lives — a proposal to categorise a
-/// transaction is decided in Finances, beside the ledger it changes, not in a
-/// list of assistant business. The user settled this on 2026-09-13, and it is a
-/// product rule rather than a routing convenience: deciding a change to money
-/// while looking at the money is what makes the decision informed.
-///
-/// A list, so that "no domain screen" is the default and stays visible.
-/// Notes, beliefs and routines are reviewed in the assistant inbox today; that is
-/// not a claim they should be, only that nothing else has been built. Adding a
-/// feature here moves its proposals and requires a screen to move them to —
-/// `nothing_is_routed_away_from_the_inbox_without_a_screen_to_route_it_to`
-/// refuses the half-done version, where a proposal leaves the inbox before
-/// anywhere else shows it.
+/// Approval lives with the domain, ruling 2 (RULINGS.md): money is decided beside the money. Notes,
+/// beliefs and routines stay in the inbox only because no screen exists yet. Adding a feature needs
+/// that screen (`nothing_is_routed_away_from_the_inbox_without_a_screen_to_route_it_to`).
 pub const DOMAIN_REVIEWED: &[Feature] = &[Feature::Finances];
 
 /// Whether this feature's proposals are decided on their own screen.
@@ -236,16 +212,9 @@ async fn query_proposals_bound(
 
 /// Approve or reject one proposal.
 ///
-/// On approval the action's events and the decision marker go out in one
-/// batch; see this module's header for why that is not negotiable. On rejection
-/// there is nothing to apply, so the batch is the marker alone.
-///
-/// Pendingness is checked, and the check is a narrow guard rather than a
-/// guarantee. Two devices approving the same proposal at the same moment both see
-/// it pending and both apply it — the log is honest about that (two decisions,
-/// two applications, both attributable) and closing it properly needs a
-/// conditional append the event store does not offer. Worth knowing before
-/// someone assumes exactly-once here.
+/// One batch on approval (see the module header); the marker alone on rejection. The pending check
+/// is not exactly-once: two devices approving at once both apply, attributably, and closing that
+/// needs a conditional append the store lacks.
 pub async fn decide(
     db: &Database,
     config: &ResolvedConfig,
@@ -315,24 +284,9 @@ pub async fn decide(
 
 /// Fill in the arguments only the moment of approval can know.
 ///
-/// Today that is `note.revise`'s finished body: the proposal carries an anchor and
-/// a replacement, and the body they produce depends on what the note says *now*,
-/// not on what it said when the assistant read it.
-///
-/// This is the only place the anchor is resolved, and it is deliberately not
-/// the projection. Projections consume events in `received_at` order — local
-/// arrival time — so two devices legitimately fold the same events in different
-/// orders. An anchor evaluated inside a fold can match on one device and miss on
-/// another, leaving the note permanently different between them with nothing to
-/// reconcile it. Resolving once and logging the finished body makes every device
-/// agree, because there is nothing left for them to disagree about.
-///
-/// A refusal here is the feature working. Zero matches means the note moved
-/// under the proposal; more than one means there is no single place the edit
-/// belongs. Never widen this into a fuzzy or nearest-match fallback.
-///
-/// Every other action passes through untouched — there is nothing about them that
-/// approval-time knows and propose-time did not.
+/// Today, `note.revise`'s finished body against the note as it is now. The only place the anchor
+/// resolves, never the projection: ruling 9 (RULINGS.md), see `NOTE_REVISE`. A refusal is the
+/// feature working; never widen it into a fuzzy match. Other actions pass through.
 async fn resolve_args(
     db: &Database,
     action: &ActionType,

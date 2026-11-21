@@ -20,12 +20,8 @@ pub enum RerankError {
 
 /// A loaded cross-encoder, shareable across tasks.
 ///
-/// A reranker is not automatically an improvement — three of the four offered
-/// models measured *worse* than the fused ranking they were given. `MODEL_BENCH.md`
-/// § Retrieval holds the per-model numbers.
-///
-/// The `Arc<Mutex<..>>` is not incidental: fastembed's `rerank` takes `&mut self`, and
-/// serialising inference is wanted anyway on a two-core host.
+/// Not automatically better: three of four models measured worse (`MODEL_BENCH.md` § Retrieval).
+/// `Arc<Mutex<..>>` because `rerank` takes `&mut self`, and serial inference suits two cores.
 #[derive(Clone)]
 pub struct Reranker {
     model: Arc<Mutex<TextRerank>>,

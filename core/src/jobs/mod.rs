@@ -278,6 +278,21 @@ pub const PENDING: &[PendingJob] = &[
         shape: Shape::PlainCode,
         host: Host::Device,
     },
+    PendingJob {
+        title: "Repeating tasks",
+        shape: Shape::PlainCode,
+        host: Host::Server,
+    },
+    PendingJob {
+        title: "Journal routine ticks",
+        shape: Shape::Workflow,
+        host: Host::Server,
+    },
+    PendingJob {
+        title: "LEARN deadline feed",
+        shape: Shape::PlainCode,
+        host: Host::Server,
+    },
 ];
 
 pub fn spec(name: &str) -> Option<&'static JobSpec> {

@@ -1,16 +1,6 @@
-//! The bearer gate on the box's HTTP surface.
-//!
-//! Three of the security review's Criticals (`POST /auto_import/sources` with an
-//! arbitrary `subprocess` command, a `rest` source that exfiltrates any
-//! `[secrets]` value, and `PUT /llm/config` repointing the LLM at an attacker)
-//! are all the same defect wearing different hats: a state-changing endpoint
-//! that anyone able to reach the port may call. These tests pin the gate that
-//! collapses all three.
-//!
-//! The important cases here are the *negative* ones. A test that only proves
-//! "the right token works" would pass just as happily against a server with no
-//! middleware at all — so each positive case is paired with the request that
-//! must be refused.
+//! The bearer gate on the box's HTTP surface: no state-changing endpoint may answer whoever
+//! reaches the port. Each positive case is paired with the request that must be refused,
+//! since "the right token works" also passes against a server with no gate at all.
 
 mod common;
 
@@ -151,26 +141,11 @@ async fn no_configured_token_leaves_the_box_open() {
     );
 }
 
-/// Every route the box exposes must be behind the gate — not just the one this
-/// file happens to drive.
-///
-/// The other tests here prove the gate *works*. None of them prove it *covers*.
-/// That distinction has teeth because of how the layer is attached in
-/// `build_app`: `protected.route_layer(...)` binds only the routes present on
-/// `protected` at the moment it is called, and the final router is
-/// `Router::new().route("/health", ...).merge(protected)`. So a new route group
-/// merged into `app` instead of `protected` — or merged into `protected` after
-/// the `if let Some(token)` block — is served with no authentication at all,
-/// and every existing test in this file still passes.
-///
-/// The path list is DERIVED from the route modules rather than written out
-/// here, so a route added tomorrow is covered without anyone remembering to
-/// extend this test. A hand-maintained list would reintroduce exactly the
-/// forgettable step the test exists to eliminate.
-///
-/// `/health` and `/updates` are deliberately open and are declared in `lib.rs`,
-/// not in `routes/` — so "everything declared in `routes/` is protected" is the
-/// whole rule, with no allow-list to keep in sync.
+/// Every route the box exposes must be behind the gate: the other tests prove it works, this
+/// one that it covers. `route_layer` binds only routes already on `protected`, so a group
+/// merged into `app`, or after the token block, would be served open with every other test green.
+/// Paths are derived from `routes/`, never listed by hand; the open ones (`/health`,
+/// `/updates`) live in `lib.rs`, so there is no allow-list to keep in sync.
 #[tokio::test]
 async fn every_route_module_path_is_behind_the_auth_gate() {
     let routes_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/routes");

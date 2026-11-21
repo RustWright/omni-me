@@ -1,26 +1,9 @@
 //! `--ask`: put one question through the assistant and print what happened.
 //!
-//! A dev tool, and it STAYS. This doc used to say it goes when the chat
-//! surface lands. That surface landed (the Assistant tab, 2026-09-10) and the
-//! trigger was still wrong, because by then this flag had acquired a second job
-//! the note never mentioned:
-//!
-//! - The chat surface prints prose; this prints the trace — which verbs
-//!   the model chose, the turn sequence, what it paid. Model re-evaluation is a
-//!   standing commitment and the trace is what that reads.
-//! - `--ask --constrained` is the cheap one-request rehearsal of the
-//!   schema-constrained path. `scripts/bench-openrouter.sh` branches on exactly
-//!   that pairing to decide whether its preflight needs `tools` or a schema;
-//!   delete the flag and that branch guards a case that can no longer happen.
-//!
-//! What *is* true is narrower: `--ask` cannot run on the box, because a
-//! resident agent holds an exclusive `surrealkv` lock on the directory. It is
-//! dead as a production flag, not as a local one. Nothing should be built on
-//! this output format.
-//!
-//! What it prints is the *trace*, not just the answer, because during Phase B
-//! the interesting question is which verbs the model chose and what it paid, not
-//! whether the prose reads well.
+//! A local dev tool that stays: it prints the trace (verbs chosen, turns, cost) that model
+//! re-evaluation reads, and `scripts/bench-openrouter.sh` relies on `--ask --constrained`.
+//! It cannot run on the box, where the resident agent holds the `surrealkv` lock. Nothing
+//! should be built on this output format.
 
 use omni_me_core::assistant::{Outcome, Retrievers, Session, StopReason};
 use omni_me_core::config::ResolvedConfig;
@@ -29,12 +12,8 @@ use omni_me_core::llm::LlmClient;
 
 /// Run one question and print the trace, the answer, and the cost.
 ///
-/// `constrained` runs it under the verb-call schema — the cheap rehearsal of the
-/// half of `--bench` that a serving stack can refuse outright.
-///
-/// `retrievers` carries whichever retrieval passes loaded. Both are optional and
-/// both are printed in the header rather than left implicit: a trace where
-/// retrieval quietly halved is one that gets misread later.
+/// `constrained` runs it under the verb-call schema. Both retrievers are optional and printed
+/// in the header, because a trace where retrieval quietly halved gets misread later.
 pub async fn run(
     db: &Database,
     config: &ResolvedConfig,

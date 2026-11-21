@@ -1,15 +1,8 @@
 //! SurrealDB projection over the document archive.
 //!
-//! One table, `documents`. A row is a file that entered the archive plus
-//! everything anything has since read out of it. Why that is three events and
-//! how fields fold: `docs/src/archive.md`.
-//!
-//! Rank is compared before arrival order, never after — see
-//! [`DocumentField::rank`] and [`merge_fields`] for fields, [`TextSource::rank`]
-//! and [`write_text_if_it_outranks`] for text. Reversing the two would make a
-//! re-extraction silently overwrite every value a person corrected by hand, and
-//! would let an archive event's absent text erase a transcription that reached
-//! this device first. Neither would report anything.
+//! `documents`: a file plus everything read out of it (`docs/src/archive.md`). Rank before
+//! arrival, never after ([`merge_fields`], [`write_text_if_it_outranks`]), or a re-extraction
+//! silently overwrites hand corrections.
 
 use async_trait::async_trait;
 use std::collections::BTreeMap;
@@ -215,19 +208,9 @@ impl DocumentsProjection {
 
     /// Tombstone a document: the row stays, marked purged, and its text goes.
     ///
-    /// `UPSERT`, not `UPDATE` — the lesson `routines_projection` paid for.
-    /// A bare `UPDATE` silently matches nothing when the purge folds before the
-    /// archive event it purges, and nothing ever retries a no-op'd mutation; the
-    /// archive event would then arrive and materialize a fully visible row whose
-    /// bytes had already been deleted. That is the one outcome this whole design
-    /// exists to prevent.
-    ///
-    /// `text` is cleared here, and that is the only place purging reclaims
-    /// anything from the log. Blob bytes live on disk and are deleted by the
-    /// caller; a document's text lives in the *event payload*, which is
-    /// append-only and stays. Nulling the column is what takes a purged spam
-    /// email out of search and out of the embedding sweep — the log still holds
-    /// the words, but nothing reads them back.
+    /// `UPSERT`, not `UPDATE`: a purge folding before its archive event would match nothing, and
+    /// the archive event would then show a document whose bytes are gone. Clearing `text` takes it
+    /// out of search and embeddings; the payload still holds it, unread.
     async fn on_purged(&self, event: &Event, db: &Database) -> Result<(), EventError> {
         let parsed: DocumentPurgedPayload = match serde_json::from_value(event.payload.clone()) {
             Ok(p) => p,
@@ -279,15 +262,9 @@ impl DocumentsProjection {
                 }
             };
 
-        // Read-modify-write rather than a single statement, because the merge is
-        // a rank comparison per key and SurrealQL cannot express it. Safe without
-        // a transaction: `ProjectionRunner` applies one event at a time and each
-        // device owns its own database, so there is no second writer to race.
-        // Read back as `serde_json::Value` and decode with serde, matching
-        // `verbs::count_rows`. The driver's own typed `take` needs `SurrealValue`
-        // on the struct, and `DocumentField` travels in an event payload — it is
-        // serde's shape, and giving it a second serialization contract is how the
-        // two drift.
+        // Read-modify-write: a per-key rank merge SurrealQL cannot express; safe, as one event
+        // applies at a time per device. Decoded through serde, not `SurrealValue`, since
+        // `DocumentField` travels in payloads and two contracts would drift.
         let existing: Vec<DocumentField> = db
             .query("SELECT VALUE fields FROM type::record('documents', $id)")
             .bind(("id", parsed.document_id.clone()))
@@ -379,15 +356,8 @@ fn merge_fields(existing: Vec<DocumentField>, incoming: Vec<DocumentField>) -> V
 /// Write a document's text only when its provenance is at least as good as what
 /// the row already holds.
 ///
-/// `>=`, matching [`merge_fields`] and for the same reason: equal ranks let
-/// the newer value through, so re-running transcription with a better model
-/// lands rather than being silently discarded. What the ordering itself is —
-/// and therefore what can shadow what — is [`TextSource::rank`].
-///
-/// Read-modify-write rather than one statement, because the comparison is a rank
-/// lookup SurrealQL cannot express. Safe without a transaction for
-/// [`DocumentsProjection::on_fields`]'s reason: `ProjectionRunner` applies one
-/// event at a time and each device owns its own database.
+/// `>=`, as in [`merge_fields`], so a re-run with a better model lands; the order is
+/// [`TextSource::rank`]. Read-modify-write, safe for [`DocumentsProjection::on_fields`]'s reason.
 async fn write_text_if_it_outranks(
     db: &Database,
     document_id: &str,

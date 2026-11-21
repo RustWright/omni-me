@@ -1,24 +1,8 @@
 //! The one place an outbound `reqwest::Client` is built.
 //!
-//! Every client in this workspace used to be a bare `reqwest::Client::new()`,
-//! which has no timeout of any kind — not on connect, not on the response
-//! body. That is not merely "a request might hang". Two of these clients sit on
-//! single-task loops:
-//!
-//! - `sync::puller`/`sync::pusher` await their request *inside* one arm of the
-//!   scheduler's `tokio::select!`, so one unresponsive connection stalls the
-//!   whole 20 s pull loop and the debounced push loop forever — nothing else in
-//!   that task runs until the OS gives up, which for a black-holed TCP
-//!   connection can be minutes or never.
-//! - each auto-import source owns its own spawn loop, so a wedged poll silently
-//!   retires that source until the app restarts.
-//!
-//! A hung request is therefore indistinguishable from "sync is broken" and
-//! surfaces no error, no retry and no `NeedsReauth`. Timeouts are what turn it
-//! back into an ordinary failure the retry engine already knows how to handle.
-//!
-//! `no_bare_reqwest_client_in_core` (below) and its `src-tauri` counterpart fail
-//! the build if a new call site skips this module.
+//! A client without timeouts can hang forever, stalling the single-task sync loops and
+//! silently retiring an auto-import source, with no error or retry. Timeouts make it an ordinary
+//! failure. `no_bare_reqwest_client_in_core` and its `src-tauri` twin enforce this module.
 
 use std::time::Duration;
 
@@ -37,18 +21,8 @@ pub const LLM_TIMEOUT: Duration = Duration::from_secs(180);
 
 /// Vision extraction gets its own, longer budget — measured, not guessed.
 ///
-/// A single 2048px receipt through `Qwen3-VL-30B-A3B` on DeepInfra took 34s,
-/// 66s, 144s and ~194s on four real photos (2026-09-11). The last one sat
-/// right on the 180s LLM budget and failed intermittently, surfacing as an
-/// opaque "error sending request" three minutes after the user took the photo.
-///
-/// Do NOT fix that by raising [`LLM_TIMEOUT`]: the assistant's verb loop
-/// shares it, and a five-minute hang there is far worse than a failed turn.
-/// The two workloads have genuinely different shapes — one is interactive and
-/// should give up, the other is a user-initiated batch that should finish.
-///
-/// This is a floor under a latency problem, not a solution to it. 194s for
-/// one receipt is bad on its own terms and wants a faster model or endpoint.
+/// Measured receipts took up to ~194 s. Never raise [`LLM_TIMEOUT`] instead: the interactive
+/// verb loop shares it and should give up. A floor under a latency problem, not a fix.
 pub const VISION_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Per-request budget for file downloads from the box (an APK, a document's

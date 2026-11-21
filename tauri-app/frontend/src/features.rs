@@ -1,11 +1,7 @@
 //! The feature set this launch is running with, as app-wide context.
 //!
-//! Read once, at boot, and never refreshed — deliberately. A feature's
-//! projections and schedulers were decided when the backend started, so a live
-//! value would produce a tab whose data nothing is maintaining. Core says the
-//! same thing from the other side: `ConfigKey::applies_immediately` is `false`
-//! for every feature key, and the settings row already tells the user the change
-//! lands at the next launch.
+//! Read once at boot, never refreshed: projections were decided then, and a live value would
+//! show a tab nothing maintains (`ConfigKey::applies_immediately` is false for features).
 
 use dioxus::prelude::*;
 
@@ -21,11 +17,8 @@ pub struct FeatureSet(pub Signal<Option<Features>>);
 /// Provide the feature set to the tree, returning the signal for the root's
 /// config future to fill.
 ///
-/// The fetch itself is *not* here: the root already reads the same
-/// `Vec<ConfigEntry>` for theme and accent, and a second `get_config` at boot
-/// would put a redundant round trip on the pre-paint path. Whoever holds this
-/// signal must set it exactly once — including on failure, or `features_ready`
-/// never becomes true and the splash never lifts.
+/// The root's own config read fills it, sparing a round trip before paint. The holder must
+/// set it exactly once, failure included, or the splash never lifts.
 pub fn use_features_provider() -> Signal<Option<Features>> {
     let set = use_signal(|| None::<Features>);
     use_context_provider(|| FeatureSet(set));

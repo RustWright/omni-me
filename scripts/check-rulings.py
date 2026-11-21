@@ -10,7 +10,9 @@ import subprocess
 import sys
 
 LISTED = re.compile(r"^- \*\*(\d+)\.\*\*", re.MULTILINE)
-CITED = re.compile(r"ruling (\d+) \(RULINGS\.md\)")
+# Case-insensitive, and tolerant of a comment line break between the number and the file:
+# "Ruling 39" opening a sentence, or "ruling 39" wrapped onto the next `//` line, still counts.
+CITED = re.compile(r"ruling (\d+)\s+(?://[/!]?\s*)?\(RULINGS\.md\)", re.IGNORECASE)
 
 
 def main() -> int:
