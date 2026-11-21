@@ -11,6 +11,7 @@ pub mod registry;
 mod retention_projection;
 mod routines_projection;
 mod store;
+mod tasks_projection;
 mod types;
 mod writer;
 
@@ -28,5 +29,6 @@ pub use record_type_projection::{
 pub use retention_projection::RetentionProjection;
 pub use routines_projection::RoutinesProjection;
 pub use store::{Event, EventError, EventStore, NewEvent, SurrealEventStore};
+pub use tasks_projection::{TasksProjection, TimerState};
 pub use types::*;
 pub use writer::{EventWriter, WriteError, feature_off_message};

@@ -101,6 +101,16 @@ pub enum EventType {
     DocumentPurged,
     /// A retention rule for one document tag. See `crate::retention`.
     DocumentRetentionSet,
+    // Tasks: native tasks and projects, and hub indexes pushed by session hooks.
+    TaskCreated,
+    TaskModified,
+    TaskStatusSet,
+    TaskTimerStarted,
+    TaskTimerPaused,
+    TaskTimerStopped,
+    TaskProjectCreated,
+    TaskProjectClosed,
+    HubIndexReceived,
 }
 
 impl fmt::Display for EventType {
@@ -162,6 +172,15 @@ impl fmt::Display for EventType {
             EventType::DocumentTextTranscribed => "document_text_transcribed",
             EventType::DocumentPurged => "document_purged",
             EventType::DocumentRetentionSet => "document_retention_set",
+            EventType::TaskCreated => "task_created",
+            EventType::TaskModified => "task_modified",
+            EventType::TaskStatusSet => "task_status_set",
+            EventType::TaskTimerStarted => "task_timer_started",
+            EventType::TaskTimerPaused => "task_timer_paused",
+            EventType::TaskTimerStopped => "task_timer_stopped",
+            EventType::TaskProjectCreated => "task_project_created",
+            EventType::TaskProjectClosed => "task_project_closed",
+            EventType::HubIndexReceived => "hub_index_received",
         };
         write!(f, "{s}")
     }
@@ -228,6 +247,15 @@ impl FromStr for EventType {
             "document_text_transcribed" => Ok(EventType::DocumentTextTranscribed),
             "document_purged" => Ok(EventType::DocumentPurged),
             "document_retention_set" => Ok(EventType::DocumentRetentionSet),
+            "task_created" => Ok(EventType::TaskCreated),
+            "task_modified" => Ok(EventType::TaskModified),
+            "task_status_set" => Ok(EventType::TaskStatusSet),
+            "task_timer_started" => Ok(EventType::TaskTimerStarted),
+            "task_timer_paused" => Ok(EventType::TaskTimerPaused),
+            "task_timer_stopped" => Ok(EventType::TaskTimerStopped),
+            "task_project_created" => Ok(EventType::TaskProjectCreated),
+            "task_project_closed" => Ok(EventType::TaskProjectClosed),
+            "hub_index_received" => Ok(EventType::HubIndexReceived),
             other => Err(format!("unknown event type: {other}")),
         }
     }
@@ -296,6 +324,15 @@ impl EventType {
         EventType::DocumentTextTranscribed,
         EventType::DocumentPurged,
         EventType::DocumentRetentionSet,
+        EventType::TaskCreated,
+        EventType::TaskModified,
+        EventType::TaskStatusSet,
+        EventType::TaskTimerStarted,
+        EventType::TaskTimerPaused,
+        EventType::TaskTimerStopped,
+        EventType::TaskProjectCreated,
+        EventType::TaskProjectClosed,
+        EventType::HubIndexReceived,
     ];
 
     /// Every event type a set of features owns, for a scoped wipe.
@@ -410,6 +447,16 @@ impl EventType {
             | EventType::DocumentTextTranscribed
             | EventType::DocumentPurged
             | EventType::DocumentRetentionSet => &[Feature::Documents],
+
+            EventType::TaskCreated
+            | EventType::TaskModified
+            | EventType::TaskStatusSet
+            | EventType::TaskTimerStarted
+            | EventType::TaskTimerPaused
+            | EventType::TaskTimerStopped
+            | EventType::TaskProjectCreated
+            | EventType::TaskProjectClosed
+            | EventType::HubIndexReceived => &[Feature::Tasks],
 
             EventType::DataWiped
             | EventType::FeedbackCaptured
@@ -1699,6 +1746,97 @@ pub struct DocumentRetentionSetPayload {
     pub keep_days: Option<u32>,
 }
 
+// Tasks: rulings 90-93 and 121-131 (RULINGS.md); the shared rules are in `crate::tasks`.
+
+/// A native task. `aggregate_id` is `task_id`, a ULID.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskCreatedPayload {
+    pub task_id: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    /// His estimate in minutes, made at planning: ruling 93 (RULINGS.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub estimate_min: Option<u32>,
+    /// A real external deadline only, as `tasks::parse_due` reads it: ruling 130 (RULINGS.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due: Option<String>,
+    /// The day he intends to do it. Never rolled forward silently: ruling 130 (RULINGS.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scheduled: Option<chrono::NaiveDate>,
+    /// A `tasks::RepeatRule`; each occurrence is its own task. Ruling 131 (RULINGS.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repeat: Option<String>,
+    /// The first occurrence's id, on every later occurrence of a repeating task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub series_id: Option<String>,
+    /// The hub id this was taken over from; the hub item is then ignored. Ruling 121 (RULINGS.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hub_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+/// A change to a native task: only the fields given change, and `clear` empties fields.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TaskModifiedPayload {
+    pub task_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub estimate_min: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scheduled: Option<chrono::NaiveDate>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repeat: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub clear: Vec<crate::tasks::TaskField>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskStatusSetPayload {
+    pub task_id: String,
+    pub status: crate::tasks::TaskStatus,
+    /// Minutes it took, asked at completion when no timer ran: ruling 93 (RULINGS.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actual_min: Option<u32>,
+}
+
+/// A timer start, pause or stop; the time is the event's timestamp.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskTimerPayload {
+    pub task_id: String,
+}
+
+/// A native project. `aggregate_id` is `project_id`, a ULID.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskProjectCreatedPayload {
+    pub project_id: String,
+    pub name: String,
+    /// The course code, for a project made from the LEARN feed: ruling 123 (RULINGS.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub course: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub term: Option<String>,
+    /// When it should close; a course closes when its term ends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ends_on: Option<chrono::NaiveDate>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskProjectClosedPayload {
+    pub project_id: String,
+}
+
+/// A project's `.omni/tasks.toml` as pushed, parsed. `aggregate_id` is the project slug.
+pub type HubIndexReceivedPayload = crate::tasks::hub::HubIndex;
+
 /// Keys the projection hoists into columns. See [`DocumentFieldsExtractedPayload::fields`].
 pub const DOCUMENT_KIND_KEY: &str = "kind";
 pub const DOCUMENT_TITLE_KEY: &str = "title";
@@ -1846,6 +1984,33 @@ pub fn validate_payload(
         EventType::DocumentRetentionSet => {
             serde_json::from_value::<DocumentRetentionSetPayload>(payload.clone()).map(|_| ())
         }
+        EventType::TaskCreated => {
+            serde_json::from_value::<TaskCreatedPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::TaskModified => {
+            serde_json::from_value::<TaskModifiedPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::TaskStatusSet => {
+            serde_json::from_value::<TaskStatusSetPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::TaskTimerStarted => {
+            serde_json::from_value::<TaskTimerPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::TaskTimerPaused => {
+            serde_json::from_value::<TaskTimerPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::TaskTimerStopped => {
+            serde_json::from_value::<TaskTimerPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::TaskProjectCreated => {
+            serde_json::from_value::<TaskProjectCreatedPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::TaskProjectClosed => {
+            serde_json::from_value::<TaskProjectClosedPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::HubIndexReceived => {
+            serde_json::from_value::<HubIndexReceivedPayload>(payload.clone()).map(|_| ())
+        }
         EventType::RecordTypeDeclared => {
             serde_json::from_value::<RecordTypeDeclaredPayload>(payload.clone()).map(|_| ())
         }
@@ -1934,6 +2099,26 @@ pub fn validate_payload(
             .map_err(super::store::EventError::Validation)?;
     }
 
+    // A due date or repeat rule decodes as any string; checked here so a bad one from sync
+    // never reaches the planner.
+    let task_formats = match event_type {
+        EventType::TaskCreated => serde_json::from_value::<TaskCreatedPayload>(payload.clone())
+            .ok()
+            .map(|p| (p.due, p.repeat)),
+        EventType::TaskModified => serde_json::from_value::<TaskModifiedPayload>(payload.clone())
+            .ok()
+            .map(|p| (p.due, p.repeat)),
+        _ => None,
+    };
+    if let Some((due, repeat)) = task_formats {
+        if let Some(due) = due {
+            crate::tasks::valid_due(&due).map_err(super::store::EventError::Validation)?;
+        }
+        if let Some(repeat) = repeat {
+            crate::tasks::valid_repeat(&repeat).map_err(super::store::EventError::Validation)?;
+        }
+    }
+
     Ok(())
 }
 
@@ -2015,10 +2200,19 @@ mod tests {
                 | EventType::DocumentFieldsExtracted
                 | EventType::DocumentTextTranscribed
                 | EventType::DocumentPurged
-                | EventType::DocumentRetentionSet => counted += 1,
+                | EventType::DocumentRetentionSet
+                | EventType::TaskCreated
+                | EventType::TaskModified
+                | EventType::TaskStatusSet
+                | EventType::TaskTimerStarted
+                | EventType::TaskTimerPaused
+                | EventType::TaskTimerStopped
+                | EventType::TaskProjectCreated
+                | EventType::TaskProjectClosed
+                | EventType::HubIndexReceived => counted += 1,
             }
         }
-        assert_eq!(counted, 56, "EventType::ALL does not list every variant");
+        assert_eq!(counted, 65, "EventType::ALL does not list every variant");
 
         let unique: std::collections::BTreeSet<String> =
             EventType::ALL.iter().map(|t| t.to_string()).collect();

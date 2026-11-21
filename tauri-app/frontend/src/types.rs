@@ -423,6 +423,7 @@ pub enum Feature {
     AutoImport,
     Llm,
     Documents,
+    Tasks,
 }
 
 pub const ALL_FEATURES: &[Feature] = &[
@@ -433,6 +434,7 @@ pub const ALL_FEATURES: &[Feature] = &[
     Feature::AutoImport,
     Feature::Llm,
     Feature::Documents,
+    Feature::Tasks,
 ];
 
 impl Feature {
@@ -445,6 +447,7 @@ impl Feature {
             Feature::AutoImport => "feature.auto_import",
             Feature::Llm => "feature.llm",
             Feature::Documents => "feature.documents",
+            Feature::Tasks => "feature.tasks",
         }
     }
 
@@ -2398,6 +2401,7 @@ mod feature_tests {
             "feature.auto_import",
             "feature.llm",
             "feature.documents",
+            "feature.tasks",
         ];
         let actual: Vec<&str> = ALL_FEATURES.iter().map(|f| f.key()).collect();
         assert_eq!(actual, expected);

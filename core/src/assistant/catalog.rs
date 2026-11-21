@@ -8,6 +8,7 @@
 use crate::config::{Feature, ResolvedConfig};
 use crate::events::{
     BeliefsProjection, BudgetProjection, DocumentsProjection, NotesProjection, RoutinesProjection,
+    TasksProjection,
 };
 use crate::record_type::JOURNAL;
 
@@ -572,8 +573,163 @@ const TRANSACTION: CatalogEntry = CatalogEntry {
 };
 
 /// Every catalogued collection, before feature gating.
-pub const ALL_ENTRIES: &[CatalogEntry] =
-    &[JOURNAL_ENTRY, NOTE, ROUTINE, BELIEF, DOCUMENT, TRANSACTION];
+const TASK: CatalogEntry = CatalogEntry {
+    name: "task",
+    table: "tasks",
+    projection: TasksProjection::NAME,
+    feature: Feature::Tasks,
+    description: "Something the user means to do, kept in omni-me: its status, the project \
+                  it belongs to, a due date (only ever a real external deadline), the day it \
+                  is scheduled for, the user's estimate, and what it actually took.",
+    identity: IdentityKind::Opaque,
+    handle: "title",
+    text_fields: &["title"],
+    filters: &[
+        FilterField {
+            key: "status",
+            kind: FilterKind::Exact,
+            description: "todo, done, or dropped.",
+        },
+        FilterField {
+            key: "due_date",
+            kind: FilterKind::Range,
+            description: "The deadline's date (YYYY-MM-DD); due_time holds its time if any.",
+        },
+        FilterField {
+            key: "scheduled",
+            kind: FilterKind::Range,
+            description: "The day the user intends to do it (YYYY-MM-DD).",
+        },
+        FilterField {
+            key: "project_id",
+            kind: FilterKind::Exact,
+            description: "Identity of the project it belongs to, from a search of projects.",
+        },
+    ],
+    list_order: ListOrder {
+        column: "created_at",
+        descending: true,
+    },
+    children: &[],
+    derived: None,
+    record_type: None,
+    // Timer bookkeeping for the session in progress; the totals stay visible.
+    hidden_fields: &[
+        "timer_session_start",
+        "timer_running_since",
+        "timer_active_secs",
+    ],
+    hidden_when: None,
+    hidden_when_set: None,
+};
+
+const PROJECT: CatalogEntry = CatalogEntry {
+    name: "project",
+    table: "task_projects",
+    projection: TasksProjection::NAME,
+    feature: Feature::Tasks,
+    description: "A group of the user's tasks with one outcome, such as a course; a course \
+                  project carries its course code and term.",
+    identity: IdentityKind::Opaque,
+    handle: "name",
+    text_fields: &["name"],
+    filters: &[
+        FilterField {
+            key: "closed",
+            kind: FilterKind::Flag,
+            description: "Whether it is finished. Normally filter this to false.",
+        },
+        FilterField {
+            key: "course",
+            kind: FilterKind::Exact,
+            description: "The course code, e.g. ME 641.",
+        },
+    ],
+    list_order: ListOrder {
+        column: "created_at",
+        descending: true,
+    },
+    children: &[ChildCollection {
+        name: "tasks",
+        table: "tasks",
+        foreign_key: "project_id",
+        order: ListOrder {
+            column: "created_at",
+            descending: true,
+        },
+        limit: 100,
+        description: "The tasks in this project, newest first.",
+        hidden_fields: &[
+            "timer_session_start",
+            "timer_running_since",
+            "timer_active_secs",
+        ],
+        hidden_when: None,
+    }],
+    derived: None,
+    record_type: None,
+    hidden_fields: &[],
+    hidden_when: None,
+    hidden_when_set: None,
+};
+
+/// Read-only: the repo's own sessions change these, never omni-me. Ruling 90 (RULINGS.md).
+const HUB_TASK: CatalogEntry = CatalogEntry {
+    name: "hub_task",
+    table: "hub_tasks",
+    projection: TasksProjection::NAME,
+    feature: Feature::Tasks,
+    description: "A task listed in one of the user's code projects or life topics, as that \
+                  project's own index last stated it. Read-only. `needs_you` marks the ones \
+                  that need the user personally or have a due date.",
+    identity: IdentityKind::Opaque,
+    handle: "title",
+    text_fields: &["title"],
+    filters: &[
+        FilterField {
+            key: "project",
+            kind: FilterKind::Exact,
+            description: "The project's slug, e.g. omni-me.",
+        },
+        FilterField {
+            key: "status",
+            kind: FilterKind::Exact,
+            description: "todo, doing, blocked, done, shelved, or cut.",
+        },
+        FilterField {
+            key: "needs_you",
+            kind: FilterKind::Flag,
+            description: "Whether it needs the user personally or has a due date.",
+        },
+        FilterField {
+            key: "is_open",
+            kind: FilterKind::Flag,
+            description: "Whether it is still open: not done, shelved, or cut.",
+        },
+    ],
+    list_order: ListOrder {
+        column: "hub_id",
+        descending: false,
+    },
+    children: &[],
+    derived: None,
+    record_type: None,
+    hidden_fields: &[],
+    hidden_when: None,
+    hidden_when_set: None,
+};
+
+pub const ALL_ENTRIES: &[CatalogEntry] = &[
+    JOURNAL_ENTRY,
+    NOTE,
+    ROUTINE,
+    BELIEF,
+    DOCUMENT,
+    TRANSACTION,
+    TASK,
+    PROJECT,
+    HUB_TASK,
+];
 
 /// The entries visible under this config.
 ///

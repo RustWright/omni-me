@@ -13,7 +13,7 @@ use crate::journal_file::JournalFile;
 use super::{
     AssistantProjection, AutoImportProjection, BeliefsProjection, BudgetProjection,
     ConfigProjection, DocumentsProjection, NotesProjection, Projection, RecordTypeProjection,
-    RetentionProjection, RoutinesProjection,
+    RetentionProjection, RoutinesProjection, TasksProjection,
 };
 
 /// Projections that are never feature-gated.
@@ -35,6 +35,7 @@ pub const ALL_PROJECTIONS: &[&str] = &[
     BeliefsProjection::NAME,
     DocumentsProjection::NAME,
     RetentionProjection::NAME,
+    TasksProjection::NAME,
 ];
 
 /// The projections a feature owns. Non-obvious entries:
@@ -55,6 +56,7 @@ pub fn owned_projections(feature: Feature) -> &'static [&'static str] {
         Feature::Finances => &[BudgetProjection::NAME, JournalFile::NAME],
         Feature::AutoImport => &[BudgetProjection::NAME, AutoImportProjection::NAME],
         Feature::Documents => &[DocumentsProjection::NAME, RetentionProjection::NAME],
+        Feature::Tasks => &[TasksProjection::NAME],
     }
 }
 
@@ -99,6 +101,7 @@ fn all_projections(journal_path: PathBuf) -> Vec<Box<dyn Projection>> {
         Box::new(BeliefsProjection),
         Box::new(DocumentsProjection),
         Box::new(RetentionProjection),
+        Box::new(TasksProjection),
     ]
 }
 
@@ -163,7 +166,7 @@ pub fn build_projections_server() -> Vec<Box<dyn Projection>> {
     // Retention: the backfill skips mail whose timer ran out (purge groups form on a device).
     // Notes and budget: receipt import checks accounts against them, or all land in Unknown.
     // Config: skip-senders and the zone. Auto-import: the triage scorecard. Assistant: the
-    // daily summary's pending count.
+    // daily summary's pending count. Tasks: hub intake and the handover receipt.
     vec![
         Box::new(ConfigProjection),
         Box::new(AssistantProjection),
@@ -172,6 +175,7 @@ pub fn build_projections_server() -> Vec<Box<dyn Projection>> {
         Box::new(NotesProjection),
         Box::new(BudgetProjection),
         Box::new(RetentionProjection),
+        Box::new(TasksProjection),
     ]
 }
 
