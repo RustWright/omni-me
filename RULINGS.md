@@ -317,10 +317,10 @@ edit site carries their reasoning. These are settled. Do not re-open one without
   fetches it fresh first. Only the "now overlaps" flag on an accepted block waits on the interval.
 - **114.** The day is planned from when he is actually up toward a bedtime target, with no fixed
   start window: his waking time varies widely, and a plan that assumes an early start on a late
-  morning gets ignored whole.
-  The day starts at his first activity (first routine tick, chat, or the push) plus his learned
-  morning routine, and ends at the bedtime target less the evening routine. The bedtime target is
-  the one number he sets, as something to aim at. The evening shutdown shows what tomorrow's
+  morning gets ignored whole. The day starts at his first activity (his first journal line, a
+  routine tick, chat, or the push, whichever comes first) plus his learned morning routine, and
+  ends at the bedtime target less the evening routine. The bedtime target is the one number he
+  sets, as something to aim at. The evening shutdown shows what tomorrow's
   bedtime buys, measured, never enforced (99). Day shape: overlay `PLANNING_DAY_SHAPE.md`.
 - **115.** Planning gets named places and a travel time between them, from his estimates, and
   buffers travel before an event at a different place. Location history (`research.md`

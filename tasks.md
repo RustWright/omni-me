@@ -18,7 +18,7 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 
 ## Cycle 6: [0074] tasks, planning, people
 
-Rulings 90–124, the UI ruled in `design/0102/`, the task prep in overlay `TASKS_PREP.md`;
+Rulings 90–127, the UI ruled in `design/0102/`, the task prep in overlay `TASKS_PREP.md`;
 evidence in `PUSH_0074_RESEARCH.md`. In dependency order. Prep and design sessions need him;
 builds follow them.
 - [0106] **`CheckInPolicy` into named scheduled prompts**, each with its own tier, due-check and
@@ -32,10 +32,9 @@ builds follow them.
 - [0108] **People data prep, offline** (105), beside [0107]: journal mentions, email senders, one
   vCard export; check To/Cc and whether `watched_label` holds sent mail. Settles the fact shape
   (102) and which people purpose comes first. [USER, L]
-- [0112] **Calendar and routines data prep, offline** (105): pull his calendar locally, count the
-  all-day events and how they are marked (reviews 111) and the clashes and duplicates (reviews
-  116), and enter his routines, places and travel
-  times (114, 115) so the fit check has real minutes. Before [0109]. [USER, M]
+- [0114] **Routines:** import his drafted routines (overlay `CALENDAR_PREP.md`; a live write, his
+  go), tick items from journal lines with the evening gap line (127), and learn the morning
+  routine's length from those ticks for the day start (114). Before [0109]. [M]
 - [0109] **Planning build:** read-only calendar (96), plan records, the ritual tier and summary
   lines (98), block reminders, the load measure (99). Needs [0106]. Reminders per [0104]'s results
   (`PUSH_0074_RESEARCH.md` Appendix B): plugin 2.4.0, reschedule on every start, `USE_EXACT_ALARM`

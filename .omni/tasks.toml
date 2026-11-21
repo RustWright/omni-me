@@ -1,8 +1,8 @@
 schema  = 1
 project = "omni-me"
 cycle   = 6
-updated = 2026-11-19
-next_id = 112
+updated = 2026-11-21
+next_id = 115
 
 # Narrative lives in tasks.md. Contract: ../../setup_files/TASK_HUB_CONTRACT.md
 # Public repo: titles are public. Keep private identity out.
@@ -785,7 +785,7 @@ title  = "Planning build: read-only calendar, plans, rituals, reminders"
 status = "todo"
 size   = "L"
 ref    = "tasks.md § Cycle 6"
-blocked_by = ["omni-me-0104", "omni-me-0106", "omni-me-0112"]
+blocked_by = ["omni-me-0104", "omni-me-0106", "omni-me-0112", "omni-me-0114"]
 
 [[task]]
 id     = "omni-me-0110"
@@ -805,7 +805,7 @@ ref    = "tasks.md § Alongside Cycle 6"
 [[task]]
 id     = "omni-me-0112"
 title  = "Calendar and routines data prep, offline"
-status = "todo"
+status = "done"
 size   = "USER"
 ref    = "tasks.md § Cycle 6"
 
@@ -815,3 +815,10 @@ title  = "Locations: history as event metadata, on planning's places"
 status = "todo"
 size   = "L"
 ref    = "tasks.md § Later cycles"
+
+[[task]]
+id     = "omni-me-0114"
+title  = "Routines: seed his drafted routines, tick them from the journal"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Cycle 6"
