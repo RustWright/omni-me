@@ -14,8 +14,8 @@ live: live deploy, app release and the task seed import each wait for his go.
 ⛔ **Never `cargo build`/`test` on this box** (`project-dev-machines-and-build-limits`); the mock demo
 page is the one exception. Renders use the cached headless shell
 (`~/.cache/ms-playwright/chromium_headless_shell-*/…/chrome-headless-shell --screenshot`).
-The dev agent runs on this machine in Docker (`omni-me-agent-dev`, against dev :3001), since the box
-cannot fit it beside live's; `docker stop omni-me-agent-dev` frees about 1.2 GB.
+The dev agent runs on this machine in Docker, since the box cannot fit it beside live's: stopped
+between uses (ruling 45), `docker start omni-me-agent-dev` resumes it against dev :3001.
 
 ## ⛔ Waiting on him
 - **[0006] R2 account and [0010] OpenRouter privacy setting** (10 gates OpenRouter's next use, 107).
