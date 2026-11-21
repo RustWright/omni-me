@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::de::DeserializeOwned;
+use surrealdb::types::SurrealValue;
 
 use crate::db::Database;
 use crate::tasks::{TaskField, TaskStatus, parse_due};
@@ -365,7 +366,7 @@ impl TimerState {
     }
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, SurrealValue)]
 struct TimerRow {
     timer_state: Option<String>,
     timer_session_start: Option<String>,
@@ -580,7 +581,7 @@ mod tests {
         )
     }
 
-    #[derive(Debug, serde::Deserialize)]
+    #[derive(Debug, SurrealValue)]
     struct Row {
         title: String,
         status: String,
@@ -595,7 +596,11 @@ mod tests {
 
     async fn row(db: &Database, id: &str) -> Row {
         let mut resp = db
-            .query("SELECT * FROM type::record('tasks', $id)")
+            .query(
+                "SELECT title, status, due_date, due_time, scheduled, note, actual_min,
+                        active_secs_total, elapsed_secs_total
+                 FROM type::record('tasks', $id)",
+            )
             .bind(("id", id.to_string()))
             .await
             .unwrap();
