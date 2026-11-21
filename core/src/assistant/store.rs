@@ -780,7 +780,7 @@ mod tests {
     use crate::assistant::catalog::ALL_ENTRIES;
     use crate::events::{
         BeliefsProjection, BudgetProjection, DocumentsProjection, NotesProjection, Projection,
-        RoutinesProjection,
+        RoutinesProjection, TasksProjection,
     };
 
     async fn test_db() -> Database {
@@ -790,6 +790,7 @@ mod tests {
         DocumentsProjection.init_schema(&db).await.unwrap();
         BudgetProjection.init_schema(&db).await.unwrap();
         BeliefsProjection.init_schema(&db).await.unwrap();
+        TasksProjection.init_schema(&db).await.unwrap();
         db
     }
 

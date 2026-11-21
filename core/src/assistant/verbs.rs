@@ -623,6 +623,7 @@ mod tests {
     use crate::config::Feature;
     use crate::events::{
         BudgetProjection, DocumentsProjection, NotesProjection, Projection, RoutinesProjection,
+        TasksProjection,
     };
 
     async fn test_db() -> Database {
@@ -631,6 +632,7 @@ mod tests {
         RoutinesProjection.init_schema(&db).await.unwrap();
         DocumentsProjection.init_schema(&db).await.unwrap();
         BudgetProjection.init_schema(&db).await.unwrap();
+        TasksProjection.init_schema(&db).await.unwrap();
         db
     }
 
@@ -755,7 +757,11 @@ mod tests {
                 "routine",
                 "belief",
                 "document",
-                "transaction"
+                "transaction",
+                "task",
+                "project",
+                "hub_task",
+                "deadline"
             ]
         );
         let note = types.iter().find(|t| t["name"] == "note").unwrap();

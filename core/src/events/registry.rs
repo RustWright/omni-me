@@ -274,6 +274,7 @@ mod tests {
             BeliefsProjection.name(),
             DocumentsProjection.name(),
             RetentionProjection.name(),
+            TasksProjection.name(),
         ];
         let listed: BTreeSet<&str> = ALL_PROJECTIONS.iter().copied().collect();
         let actual: BTreeSet<&str> = live.iter().copied().collect();
