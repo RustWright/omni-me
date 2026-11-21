@@ -2,7 +2,7 @@ schema  = 1
 project = "omni-me"
 cycle   = 6
 updated = 2026-11-21
-next_id = 115
+next_id = 118
 
 # Narrative lives in tasks.md. Contract: ../../setup_files/TASK_HUB_CONTRACT.md
 # Public repo: titles are public. Keep private identity out.
@@ -759,7 +759,7 @@ ref    = "tasks.md § Cycle 6"
 [[task]]
 id     = "omni-me-0106"
 title  = "Generalise the check-in into named scheduled prompts"
-status = "todo"
+status = "done"
 size   = "M"
 ref    = "tasks.md § Cycle 6"
 blocked_by = ["omni-me-0105"]
@@ -767,7 +767,7 @@ blocked_by = ["omni-me-0105"]
 [[task]]
 id     = "omni-me-0107"
 title  = "Task records and hub intake"
-status = "todo"
+status = "done"
 size   = "L"
 ref    = "tasks.md § Cycle 6"
 blocked_by = ["omni-me-0103"]
@@ -819,6 +819,28 @@ ref    = "tasks.md § Later cycles"
 [[task]]
 id     = "omni-me-0114"
 title  = "Routines: seed his drafted routines, tick them from the journal"
+status = "done"
+size   = "M"
+ref    = "tasks.md § Cycle 6"
+
+[[task]]
+id     = "omni-me-0115"
+title  = "Task inputs: seed import go, hook wiring, LEARN feed address"
+status = "todo"
+size   = "USER"
+ref    = "tasks.md § Cycle 6"
+
+[[task]]
+id     = "omni-me-0116"
+title  = "Task surfaces: deadlines and hub items in rituals, trial, settings"
 status = "todo"
 size   = "M"
+ref    = "tasks.md § Cycle 6"
+blocked_by = ["omni-me-0109"]
+
+[[task]]
+id     = "omni-me-0117"
+title  = "Watch the next app upgrade for the first-launch crash"
+status = "todo"
+size   = "S"
 ref    = "tasks.md § Cycle 6"

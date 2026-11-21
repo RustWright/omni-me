@@ -21,17 +21,14 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 Rulings 90–131, the UI ruled in `design/0102/`, the preps in overlay `*_PREP.md`;
 evidence in `PUSH_0074_RESEARCH.md`. In dependency order. Prep and design sessions need him;
 builds follow them.
-- [0106] **`CheckInPolicy` into named scheduled prompts**, each with its own tier, due-check and
-  housekeeping (`check_in.rs` selects every scheduled message today). Gates every ritual. [M]
-- [0107] **Task records and hub intake:** native tasks and projects, estimates and actuals (93),
-  staleness and the hub trial (92), and the hook push of each changed index (91). Plus the
-  `~/life` hand-over and the SessionStart receipt (121; contract text then), the LEARN deadline
-  feed and course projects (122, 123), due and scheduled dates (130), repeating obligations
-  (131), the seed import (list confirmed 2026-11-21, overlay `TASKS_PREP.md`); and an intake that
-  reports unknown index values, never drops them (overlay `TASKS_PREP.md`). [L]
-- [0114] **Routines:** his routines are seeded on live (overlay `CALENDAR_PREP.md`). Left: tick
-  items from journal lines with the evening gap line (127), and learn the morning routine's
-  length from those ticks for the day start (114). Before [0109]. [M]
+- [0115] **Task inputs only he can give:** go for the seed import (overlay `TASKS_PREP.md`); wiring
+  `scripts/task-hub.sh` into the shared session hooks (push and SessionStart receipt, 91, 121);
+  the LEARN feed address as `learn_feed_url` in dev and live secrets (122). [USER]
+- [0116] **Task surfaces, with [0109]:** unattached deadlines and `USER` hub items reach him in a
+  ritual, the hub trial's acted/dismissed record (92), courses closed at term end (123), staleness
+  thresholds as settings (92), timer controls on the view (93), an "inferred" mark on ticks (127). [M]
+- [0117] **1.1.54 crashed on the S9's first launches after the upgrade**, before a reboot; no log
+  survived, and it ran clean after. Watch the next upgrade with logcat running before any release. [S]
 - [0109] **Planning build:** read-only calendar (96), plan records, the ritual tier and summary
   lines (98), block reminders, the load measure (99). Needs [0106]. Reminders per [0104]'s results
   (`PUSH_0074_RESEARCH.md` Appendix B): plugin 2.4.0, reschedule on every start, `USE_EXACT_ALARM`
