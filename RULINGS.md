@@ -363,3 +363,6 @@ edit site carries their reasoning. These are settled. Do not re-open one without
 - **124.** A task has no person field: task text is a mention source (102), read like the journal
   and email, so a task naming someone appears on their person view. Capture stays one line, and
   the task build needs nothing from the people build.
+- **125.** Every timed calendar event is busy, whatever "Show me as" says, extending 111's
+  distrust of that field: in his calendars all 40 timed events marked Available are bookings
+  added from email (flights, tours), which are real commitments and recur with every trip.
