@@ -311,7 +311,7 @@ pub fn morning_minutes(samples: &[MorningSample]) -> Option<u32> {
     }
     gaps.sort_unstable();
     let mid = gaps.len() / 2;
-    let median = if gaps.len() % 2 == 0 {
+    let median = if gaps.len().is_multiple_of(2) {
         (gaps[mid - 1] + gaps[mid]) / 2
     } else {
         gaps[mid]
