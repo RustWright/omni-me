@@ -46,6 +46,7 @@ pub mod record_type;
 pub mod recurring;
 pub mod retention;
 pub mod retention_class;
+pub mod routine_ticks;
 pub mod routines;
 pub mod runtime;
 pub mod statement;

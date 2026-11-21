@@ -284,6 +284,11 @@ pub const PENDING: &[PendingJob] = &[
         host: Host::Server,
     },
     PendingJob {
+        title: "Journal routine ticks",
+        shape: Shape::Workflow,
+        host: Host::Server,
+    },
+    PendingJob {
         title: "LEARN deadline feed",
         shape: Shape::PlainCode,
         host: Host::Server,

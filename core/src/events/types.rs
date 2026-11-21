@@ -610,6 +610,12 @@ pub struct RoutineItemCompletedPayload {
     pub group_id: String,
     pub date: chrono::NaiveDate,
     pub completed_at: chrono::DateTime<chrono::Utc>,
+    /// Ticked by the journal job rather than by him; undoable like any tick. Ruling 127.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub inferred: bool,
+    /// The journal line it was read from, as `HH:MM text`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_line: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

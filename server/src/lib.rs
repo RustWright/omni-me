@@ -450,6 +450,43 @@ pub async fn run(cfg: RunConfig) {
             }
         });
     }
+    // Routine items ticked from journal lines, on the structurer seat. Ruling 127.
+    if state.llm_client.model_name() != "none" {
+        let (db, writer, llm) = (
+            (*state.db).clone(),
+            enrich_writer.clone(),
+            state.llm_client.clone(),
+        );
+        tokio::spawn(async move {
+            use omni_me_core::routine_ticks;
+            if let Err(e) = routine_ticks::init_schema(&db).await {
+                tracing::error!(error = %e, "journal ticks: no state table; job off");
+                return;
+            }
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(15 * 60));
+            loop {
+                tick.tick().await;
+                let tz = match omni_me_core::events::load_shared(&db).await {
+                    Ok(c) => omni_me_core::assistant::scheduled::user_timezone(&c),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "journal ticks: no config; skipped");
+                        continue;
+                    }
+                };
+                let today = chrono::Utc::now().with_timezone(&tz).date_naive();
+                let dates = [today - chrono::Duration::days(1), today];
+                match routine_ticks::run(&db, &writer, llm.as_ref(), &dates, tz).await {
+                    Ok(r) if r.lines_read == 0 => {}
+                    Ok(r) => tracing::info!(
+                        lines = r.lines_read,
+                        ticked = r.ticked,
+                        "journal ticks: lines read"
+                    ),
+                    Err(e) => tracing::warn!(error = %e, "journal ticks: run failed"),
+                }
+            }
+        });
+    }
     // Coursework deadlines from the LEARN feed, when its address is configured. Ruling 122.
     if let Some(url) = state.secrets.get("learn_feed_url").cloned() {
         let (db, writer) = ((*state.db).clone(), enrich_writer.clone());

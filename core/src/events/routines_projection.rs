@@ -23,8 +23,9 @@ impl Projection for RoutinesProjection {
         Self::NAME
     }
 
+    /// 3 adds `routine_completions.inferred` and `source_line` (ruling 127).
     fn version(&self) -> u32 {
-        2
+        3
     }
 
     async fn init_schema(&self, db: &Database) -> Result<(), EventError> {
@@ -52,7 +53,9 @@ impl Projection for RoutinesProjection {
              DEFINE FIELD IF NOT EXISTS date ON routine_completions TYPE string;
              DEFINE FIELD IF NOT EXISTS completed_at ON routine_completions TYPE datetime;
              DEFINE FIELD IF NOT EXISTS skipped ON routine_completions TYPE bool;
-             DEFINE FIELD IF NOT EXISTS reason ON routine_completions TYPE option<string>;",
+             DEFINE FIELD IF NOT EXISTS reason ON routine_completions TYPE option<string>;
+             DEFINE FIELD IF NOT EXISTS inferred ON routine_completions TYPE option<bool>;
+             DEFINE FIELD IF NOT EXISTS source_line ON routine_completions TYPE option<string>;",
         )
         .await?
         .check()?;
@@ -359,6 +362,8 @@ impl RoutinesProjection {
             .as_str()
             .map(String::from)
             .unwrap_or_else(|| event.timestamp.to_rfc3339());
+        let inferred = event.payload["inferred"].as_bool().unwrap_or(false);
+        let source_line = event.payload["source_line"].as_str().map(String::from);
         let completion_id = completion_key(&item_id, &date, false);
 
         // `completion_key` is `{item_id}-{date}-done` — deterministic, and
@@ -373,13 +378,17 @@ impl RoutinesProjection {
                 date = $date,
                 completed_at = type::datetime($completed_at),
                 skipped = false,
-                reason = NONE",
+                reason = NONE,
+                inferred = $inferred,
+                source_line = $source_line",
         )
         .bind(("completion_id", completion_id))
         .bind(("item_id", item_id))
         .bind(("group_id", group_id))
         .bind(("date", date))
         .bind(("completed_at", completed_at))
+        .bind(("inferred", inferred.then_some(true)))
+        .bind(("source_line", source_line))
         .await?
         .check()?;
 

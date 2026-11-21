@@ -166,7 +166,8 @@ pub fn build_projections_server() -> Vec<Box<dyn Projection>> {
     // Retention: the backfill skips mail whose timer ran out (purge groups form on a device).
     // Notes and budget: receipt import checks accounts against them, or all land in Unknown.
     // Config: skip-senders and the zone. Auto-import: the triage scorecard. Assistant: the
-    // daily summary's pending count. Tasks: hub intake and the handover receipt.
+    // daily summary's pending count. Tasks: hub intake and the handover receipt. Routines: the
+    // journal-tick job (ruling 127).
     vec![
         Box::new(ConfigProjection),
         Box::new(AssistantProjection),
@@ -176,6 +177,7 @@ pub fn build_projections_server() -> Vec<Box<dyn Projection>> {
         Box::new(BudgetProjection),
         Box::new(RetentionProjection),
         Box::new(TasksProjection),
+        Box::new(RoutinesProjection),
     ]
 }
 
@@ -223,6 +225,10 @@ mod tests {
         assert!(
             names.contains(&RetentionProjection::NAME),
             "the older-mail backfill reads the timers: {names:?}"
+        );
+        assert!(
+            names.contains(&RoutinesProjection::NAME),
+            "the journal-tick job reads routine items: {names:?}"
         );
     }
 
