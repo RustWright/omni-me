@@ -46,6 +46,12 @@ pub enum ActionKind {
     TransactionTag,
     TransactionUpdate,
     TransactionClear,
+    TaskCreate,
+    TaskUpdate,
+    TaskComplete,
+    TaskDrop,
+    ProjectCreate,
+    ProjectClose,
 }
 
 /// Where an argument's value comes from.
@@ -1050,6 +1056,194 @@ const TRANSACTION_CLEAR: ActionType = ActionType {
     trigger: Trigger::OnRequest,
 };
 
+/// A field `task.update` may clear, spelled as `TaskField` serializes it.
+fn valid_task_field(value: &str) -> Result<(), String> {
+    serde_json::from_value::<crate::tasks::TaskField>(json!(value))
+        .map(|_| ())
+        .map_err(|_| "must be one of project, estimate, due, scheduled, note, repeat".to_string())
+}
+
+/// Ruling 100 (RULINGS.md): tasks are made in chat; due is a real deadline only (130).
+const TASK_CREATE: ActionType = ActionType {
+    name: "task.create",
+    kind: ActionKind::TaskCreate,
+    feature: Feature::Tasks,
+    description: "Add something the user means to do. Give a due date only for a real \
+                  external deadline (a course, a bill, one the user stated); the day they \
+                  intend to do it is `scheduled`. A repeating obligation such as rent takes \
+                  a repeat rule, and each occurrence becomes its own task.",
+    params: &[
+        ActionParam::text("title", "One line saying what is to be done.", 200),
+        ActionParam::text(
+            "project_id",
+            "Identity of the project it belongs to, from a search of projects.",
+            64,
+        )
+        .optional(),
+        ActionParam::text(
+            "due",
+            "The deadline, as YYYY-MM-DD or YYYY-MM-DD HH:MM in the user's time.",
+            16,
+        )
+        .optional()
+        .checked_by(crate::tasks::valid_due),
+        ActionParam::text(
+            "scheduled",
+            "The day they intend to do it, as YYYY-MM-DD.",
+            10,
+        )
+        .optional()
+        .checked_by(valid_future_date),
+        ActionParam::text(
+            "estimate_min",
+            "The user's own estimate in whole minutes, if they gave one.",
+            8,
+        )
+        .optional()
+        .checked_by(valid_minutes),
+        ActionParam::text(
+            "repeat",
+            "For a repeating obligation: every:Nd, weekly:<day>, monthly:<1-31>, \
+             monthly:last or yearly:MM-DD.",
+            16,
+        )
+        .optional()
+        .checked_by(crate::tasks::valid_repeat),
+        ActionParam::text("note", "Anything the title cannot carry.", 400).optional(),
+        ActionParam::text(
+            "hub_id",
+            "When taking over a hub_task, its identity, so the project stops listing it.",
+            64,
+        )
+        .optional(),
+    ],
+    produces: &[EventType::TaskCreated],
+    reversible: true,
+    reversibility: "A task is undone by dropping it; the log keeps it.",
+    autonomy: Autonomy::AlwaysAsk,
+    trigger: Trigger::OnRequest,
+};
+
+const TASK_UPDATE: ActionType = ActionType {
+    name: "task.update",
+    kind: ActionKind::TaskUpdate,
+    feature: Feature::Tasks,
+    description: "Change a task: give only what should change, and list in `clear` any field \
+                  that should become empty. Moving a task to another day is a new \
+                  `scheduled` date.",
+    params: &[
+        ActionParam::text("task_id", "Identity of the task, from searching tasks.", 64),
+        ActionParam::text("title", "A new title.", 200).optional(),
+        ActionParam::text("project_id", "Identity of the project to move it to.", 64).optional(),
+        ActionParam::text("due", "A new deadline, YYYY-MM-DD or YYYY-MM-DD HH:MM.", 16)
+            .optional()
+            .checked_by(crate::tasks::valid_due),
+        ActionParam::text("scheduled", "A new intended day, YYYY-MM-DD.", 10)
+            .optional()
+            .checked_by(valid_future_date),
+        ActionParam::text("estimate_min", "A new estimate in whole minutes.", 8)
+            .optional()
+            .checked_by(valid_minutes),
+        ActionParam::text("repeat", "A new repeat rule.", 16)
+            .optional()
+            .checked_by(crate::tasks::valid_repeat),
+        ActionParam::text("note", "A new note.", 400).optional(),
+        ActionParam::list(
+            "clear",
+            "Fields to empty: project, estimate, due, scheduled, note, repeat.",
+            16,
+            6,
+        )
+        .optional()
+        .checked_by(valid_task_field),
+    ],
+    produces: &[EventType::TaskModified],
+    reversible: true,
+    reversibility: "A change is undone by another change back; the log keeps the old values.",
+    autonomy: Autonomy::AlwaysAsk,
+    trigger: Trigger::OnRequest,
+};
+
+/// Ruling 93 (RULINGS.md): the actual is asked at completion when no timer ran.
+const TASK_COMPLETE: ActionType = ActionType {
+    name: "task.complete",
+    kind: ActionKind::TaskComplete,
+    feature: Feature::Tasks,
+    description: "Mark a task done. If no timer ran for it, ask the user how long it took and \
+                  pass that as `actual_min`; never guess it.",
+    params: &[
+        ActionParam::text("task_id", "Identity of the task, from searching tasks.", 64),
+        ActionParam::text(
+            "actual_min",
+            "How long it took, in whole minutes, as they said.",
+            8,
+        )
+        .optional()
+        .checked_by(valid_minutes),
+    ],
+    produces: &[EventType::TaskStatusSet],
+    reversible: true,
+    reversibility: "Done is undone by setting the task back to todo.",
+    autonomy: Autonomy::AlwaysAsk,
+    trigger: Trigger::OnRequest,
+};
+
+const TASK_DROP: ActionType = ActionType {
+    name: "task.drop",
+    kind: ActionKind::TaskDrop,
+    feature: Feature::Tasks,
+    description: "Drop a task the user no longer means to do. It stays in the record.",
+    params: &[ActionParam::text(
+        "task_id",
+        "Identity of the task, from searching tasks.",
+        64,
+    )],
+    produces: &[EventType::TaskStatusSet],
+    reversible: true,
+    reversibility: "Dropped is undone by setting the task back to todo.",
+    autonomy: Autonomy::AlwaysAsk,
+    trigger: Trigger::OnRequest,
+};
+
+/// Ruling 123 (RULINGS.md): a course is a project with its code and term.
+const PROJECT_CREATE: ActionType = ActionType {
+    name: "project.create",
+    kind: ActionKind::ProjectCreate,
+    feature: Feature::Tasks,
+    description: "Start a project: tasks with one outcome. For a course, give its code and \
+                  term, and the term's last day as `ends_on`.",
+    params: &[
+        ActionParam::text("name", "What the user calls it.", 120),
+        ActionParam::text("course", "A course code, e.g. ME 641.", 32).optional(),
+        ActionParam::text("term", "The term, e.g. Fall 2026.", 32).optional(),
+        ActionParam::text("ends_on", "When it should close, as YYYY-MM-DD.", 10)
+            .optional()
+            .checked_by(valid_future_date),
+    ],
+    produces: &[EventType::TaskProjectCreated],
+    reversible: true,
+    reversibility: "A project is undone by closing it; the log keeps it.",
+    autonomy: Autonomy::AlwaysAsk,
+    trigger: Trigger::OnRequest,
+};
+
+const PROJECT_CLOSE: ActionType = ActionType {
+    name: "project.close",
+    kind: ActionKind::ProjectClose,
+    feature: Feature::Tasks,
+    description: "Close a finished project. Ask about any task in it still open first.",
+    params: &[ActionParam::text(
+        "project_id",
+        "Identity of the project, from searching projects.",
+        64,
+    )],
+    produces: &[EventType::TaskProjectClosed],
+    reversible: false,
+    reversibility: "No event reopens a project, so the log cannot restore it.",
+    autonomy: Autonomy::AlwaysAsk,
+    trigger: Trigger::OnRequest,
+};
+
 /// Every action this build knows, enabled or not.
 pub const ALL_ACTIONS: &[ActionType] = &[
     NOTE_CREATE,
@@ -1068,6 +1262,12 @@ pub const ALL_ACTIONS: &[ActionType] = &[
     TRANSACTION_TAG,
     TRANSACTION_UPDATE,
     TRANSACTION_CLEAR,
+    TASK_CREATE,
+    TASK_UPDATE,
+    TASK_COMPLETE,
+    TASK_DROP,
+    PROJECT_CREATE,
+    PROJECT_CLOSE,
 ];
 
 /// The actions whose feature is on, which is the set the model is told about.
@@ -1647,7 +1847,127 @@ pub fn build_events(
                 }),
             )])
         }
+        ActionKind::TaskCreate => {
+            let task_id = ulid::Ulid::new().to_string();
+            let payload = crate::events::TaskCreatedPayload {
+                task_id: task_id.clone(),
+                title: text_arg(&args, "title").unwrap_or_default(),
+                project_id: text_arg(&args, "project_id"),
+                estimate_min: minutes(&args, "estimate_min"),
+                due: text_arg(&args, "due"),
+                scheduled: day_arg(&args, "scheduled"),
+                repeat: text_arg(&args, "repeat"),
+                series_id: None,
+                hub_id: text_arg(&args, "hub_id"),
+                note: text_arg(&args, "note"),
+            };
+            task_event(EventType::TaskCreated, task_id, device_id, &payload)
+        }
+        ActionKind::TaskUpdate => {
+            let clear = args["clear"]
+                .as_array()
+                .map(Vec::as_slice)
+                .unwrap_or(&[])
+                .iter()
+                .map(|v| serde_json::from_value::<crate::tasks::TaskField>(v.clone()))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            let payload = crate::events::TaskModifiedPayload {
+                task_id: text_arg(&args, "task_id").unwrap_or_default(),
+                title: text_arg(&args, "title"),
+                project_id: text_arg(&args, "project_id"),
+                estimate_min: minutes(&args, "estimate_min"),
+                due: text_arg(&args, "due"),
+                scheduled: day_arg(&args, "scheduled"),
+                repeat: text_arg(&args, "repeat"),
+                note: text_arg(&args, "note"),
+                clear,
+            };
+            let changes_nothing = payload.title.is_none()
+                && payload.project_id.is_none()
+                && payload.estimate_min.is_none()
+                && payload.due.is_none()
+                && payload.scheduled.is_none()
+                && payload.repeat.is_none()
+                && payload.note.is_none()
+                && payload.clear.is_empty();
+            if changes_nothing {
+                return Err(format!("{} names nothing to change", action.name));
+            }
+            let task_id = payload.task_id.clone();
+            task_event(EventType::TaskModified, task_id, device_id, &payload)
+        }
+        ActionKind::TaskComplete | ActionKind::TaskDrop => {
+            let (status, actual_min) = match action.kind {
+                ActionKind::TaskComplete => {
+                    (crate::tasks::TaskStatus::Done, minutes(&args, "actual_min"))
+                }
+                _ => (crate::tasks::TaskStatus::Dropped, None),
+            };
+            let payload = crate::events::TaskStatusSetPayload {
+                task_id: text_arg(&args, "task_id").unwrap_or_default(),
+                status,
+                actual_min,
+            };
+            let task_id = payload.task_id.clone();
+            task_event(EventType::TaskStatusSet, task_id, device_id, &payload)
+        }
+        ActionKind::ProjectCreate => {
+            let project_id = ulid::Ulid::new().to_string();
+            let payload = crate::events::TaskProjectCreatedPayload {
+                project_id: project_id.clone(),
+                name: text_arg(&args, "name").unwrap_or_default(),
+                course: text_arg(&args, "course"),
+                term: text_arg(&args, "term"),
+                ends_on: day_arg(&args, "ends_on"),
+            };
+            task_event(
+                EventType::TaskProjectCreated,
+                project_id,
+                device_id,
+                &payload,
+            )
+        }
+        ActionKind::ProjectClose => {
+            let payload = crate::events::TaskProjectClosedPayload {
+                project_id: text_arg(&args, "project_id").unwrap_or_default(),
+            };
+            let project_id = payload.project_id.clone();
+            task_event(
+                EventType::TaskProjectClosed,
+                project_id,
+                device_id,
+                &payload,
+            )
+        }
     }
+}
+
+fn text_arg(args: &Value, key: &str) -> Option<String> {
+    args.get(key).and_then(Value::as_str).map(str::to_string)
+}
+
+fn day_arg(args: &Value, key: &str) -> Option<chrono::NaiveDate> {
+    args.get(key)
+        .and_then(Value::as_str)
+        .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
+}
+
+/// Envelope for a task or project event, keyed on the task or project it is about.
+fn task_event<T: serde::Serialize>(
+    event_type: EventType,
+    aggregate_id: String,
+    device_id: &str,
+    payload: &T,
+) -> Result<Vec<NewEvent>, ArgError> {
+    Ok(vec![NewEvent {
+        id: None,
+        event_type: event_type.to_string(),
+        aggregate_id,
+        timestamp: chrono::Utc::now(),
+        device_id: device_id.to_string(),
+        payload: serde_json::to_value(payload).map_err(|e| e.to_string())?,
+    }])
 }
 
 /// Envelope for a note event that changes a note the user already has.
@@ -1961,6 +2281,27 @@ mod tests {
                 "statement_source": "chequing-2026-08",
                 "cleared_date": "2026-08-16",
             }),
+            ActionKind::TaskCreate => json!({
+                "title": "ME 641 take-home",
+                "due": "2026-12-04 19:00",
+                "repeat": "monthly:last",
+            }),
+            ActionKind::TaskUpdate => json!({
+                "task_id": "01TASK000000000000000001",
+                "scheduled": "2026-12-03",
+                "clear": ["note"],
+            }),
+            ActionKind::TaskComplete => json!({
+                "task_id": "01TASK000000000000000001",
+                "actual_min": "150",
+            }),
+            ActionKind::TaskDrop => json!({ "task_id": "01TASK000000000000000001" }),
+            ActionKind::ProjectCreate => json!({
+                "name": "ME 641",
+                "course": "ME 641",
+                "term": "Fall 2026",
+            }),
+            ActionKind::ProjectClose => json!({ "project_id": "01PROJ000000000000000001" }),
         }
     }
 
