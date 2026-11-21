@@ -223,11 +223,7 @@ async fn append(
 
 /// Fetch a feed's text. The address is a credential: never logged.
 pub async fn fetch_feed(url: &str) -> Result<String, String> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| e.to_string())?;
-    let resp = client
+    let resp = crate::http::client()
         .get(url)
         .send()
         .await
