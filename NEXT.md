@@ -4,10 +4,13 @@
 live in `RULINGS.md`, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`), rationale in
 `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
-## ▶ NEXT ACTION — his pick of the next Cycle 6 item (asked 2026-11-21)
-Every prep is done: [0112] (125–127, 114 revised; overlay `CALENDAR_PREP.md`, routines seeded on
-live) and [0108] (128–129; overlay `PEOPLE_PREP.md`). What is left is builds. Read other repos from their remote: `~/life` here lagged 119 commits.
-[0101]'s judgment calls are in overlay `DECISION_LOG_2026-11-20.md`, worth a skim.
+## ▶ NEXT ACTION — unattended, back to back: [0106], then [0107], then [0114] (his plan, 2026-11-21)
+His call: **dev only.** Build, CI on draft PR 9 (check it is still open), deploy and prove on dev
+and the S9; the task seed import, live deploys and any app release wait for his go. Every question
+for [0107] is answered (130, 131; seed confirmed in overlay `TASKS_PREP.md`). [0114]'s journal
+reading uses a DeepInfra seat (zero retention, 107), never Anthropic or Google. Log each judgment
+call in a new overlay `DECISION_LOG_<date>.md`, backup before any data mutation.
+All preps are done (overlay `TASKS_PREP.md`, `CALENDAR_PREP.md`, `PEOPLE_PREP.md`).
 
 ⛔ Live is the pause: every live step waits for his go, one at a time.
 ⛔ **Never `cargo build`/`test` on this box** (`project-dev-machines-and-build-limits`); the mock demo
