@@ -19,10 +19,10 @@ page is the one exception. Renders use the cached headless shell
 Playwright MCP's Chrome is not installed.
 
 ## ⛔ Waiting on him
-- **His actions:** [0006] the R2 account (he chose later), [0010] the OpenRouter privacy setting,
-  which now gates OpenRouter's next use (ruling 107).
-- **Calendar leftovers (his, in Google):** delete Tim Sarvis's timed occurrence on 5 Nov 2027
-  if it shows twice; delete the biweekly bookkeeping series in `efeogheneerhie.o` (didn't stick).
+- **[0006] R2 account and [0010] OpenRouter privacy setting:** agreed for right after the three
+  unattended builds; raise both with him then (10 gates OpenRouter's next use, ruling 107).
+- **Calendar leftover (his, in Google):** delete the biweekly bookkeeping series in
+  `efeogheneerhie.o` (didn't stick). Tim Sarvis's 2027 double: his call, not an issue.
 - [0013] is parked until a real blank delivery item appears in review; ask with it on screen.
 - **Promoting ~11 general feedback notes to `~/.claude/rules/`:** the always-loaded tier is at 315 of
   320 lines, so promotion means compressing something. His call on what.
