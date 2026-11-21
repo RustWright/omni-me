@@ -111,6 +111,7 @@ pub enum EventType {
     TaskProjectCreated,
     TaskProjectClosed,
     HubIndexReceived,
+    DeadlineFeedReceived,
 }
 
 impl fmt::Display for EventType {
@@ -181,6 +182,7 @@ impl fmt::Display for EventType {
             EventType::TaskProjectCreated => "task_project_created",
             EventType::TaskProjectClosed => "task_project_closed",
             EventType::HubIndexReceived => "hub_index_received",
+            EventType::DeadlineFeedReceived => "deadline_feed_received",
         };
         write!(f, "{s}")
     }
@@ -256,6 +258,7 @@ impl FromStr for EventType {
             "task_project_created" => Ok(EventType::TaskProjectCreated),
             "task_project_closed" => Ok(EventType::TaskProjectClosed),
             "hub_index_received" => Ok(EventType::HubIndexReceived),
+            "deadline_feed_received" => Ok(EventType::DeadlineFeedReceived),
             other => Err(format!("unknown event type: {other}")),
         }
     }
@@ -333,6 +336,7 @@ impl EventType {
         EventType::TaskProjectCreated,
         EventType::TaskProjectClosed,
         EventType::HubIndexReceived,
+        EventType::DeadlineFeedReceived,
     ];
 
     /// Every event type a set of features owns, for a scoped wipe.
@@ -456,7 +460,8 @@ impl EventType {
             | EventType::TaskTimerStopped
             | EventType::TaskProjectCreated
             | EventType::TaskProjectClosed
-            | EventType::HubIndexReceived => &[Feature::Tasks],
+            | EventType::HubIndexReceived
+            | EventType::DeadlineFeedReceived => &[Feature::Tasks],
 
             EventType::DataWiped
             | EventType::FeedbackCaptured
@@ -1773,6 +1778,10 @@ pub struct TaskCreatedPayload {
     /// The hub id this was taken over from; the hub item is then ignored. Ruling 121 (RULINGS.md).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hub_id: Option<String>,
+    /// The feed deadline this task carries; the feed stays the source of its due date.
+    /// Ruling 122 (RULINGS.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deadline_uid: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
 }
@@ -1836,6 +1845,9 @@ pub struct TaskProjectClosedPayload {
 
 /// A project's `.omni/tasks.toml` as pushed, parsed. `aggregate_id` is the project slug.
 pub type HubIndexReceivedPayload = crate::tasks::hub::HubIndex;
+
+/// A read of a deadline feed (LEARN), parsed. `aggregate_id` is the feed's source name.
+pub type DeadlineFeedReceivedPayload = crate::tasks::deadlines::DeadlineFeed;
 
 /// Keys the projection hoists into columns. See [`DocumentFieldsExtractedPayload::fields`].
 pub const DOCUMENT_KIND_KEY: &str = "kind";
@@ -2010,6 +2022,9 @@ pub fn validate_payload(
         }
         EventType::HubIndexReceived => {
             serde_json::from_value::<HubIndexReceivedPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::DeadlineFeedReceived => {
+            serde_json::from_value::<DeadlineFeedReceivedPayload>(payload.clone()).map(|_| ())
         }
         EventType::RecordTypeDeclared => {
             serde_json::from_value::<RecordTypeDeclaredPayload>(payload.clone()).map(|_| ())
@@ -2209,10 +2224,11 @@ mod tests {
                 | EventType::TaskTimerStopped
                 | EventType::TaskProjectCreated
                 | EventType::TaskProjectClosed
-                | EventType::HubIndexReceived => counted += 1,
+                | EventType::HubIndexReceived
+                | EventType::DeadlineFeedReceived => counted += 1,
             }
         }
-        assert_eq!(counted, 65, "EventType::ALL does not list every variant");
+        assert_eq!(counted, 66, "EventType::ALL does not list every variant");
 
         let unique: std::collections::BTreeSet<String> =
             EventType::ALL.iter().map(|t| t.to_string()).collect();

@@ -719,6 +719,42 @@ const HUB_TASK: CatalogEntry = CatalogEntry {
     hidden_when_set: None,
 };
 
+/// Read-only, like the calendar: a task attaches by `deadline_uid`. Rulings 122-123 (RULINGS.md).
+const DEADLINE: CatalogEntry = CatalogEntry {
+    name: "deadline",
+    table: "feed_deadlines",
+    projection: TasksProjection::NAME,
+    feature: Feature::Tasks,
+    description: "A coursework deadline from the LEARN calendar feed, as last read: course, \
+                  term, title and due date in the user's time. Read-only. A task carrying one \
+                  has its `deadline_uid`; one with no such task has not been planned for yet.",
+    identity: IdentityKind::Opaque,
+    handle: "title",
+    text_fields: &["title"],
+    filters: &[
+        FilterField {
+            key: "course",
+            kind: FilterKind::Exact,
+            description: "The course code, e.g. ME 744.",
+        },
+        FilterField {
+            key: "due_date",
+            kind: FilterKind::Range,
+            description: "The day it is due (YYYY-MM-DD); due_time holds the time.",
+        },
+    ],
+    list_order: ListOrder {
+        column: "due_date",
+        descending: false,
+    },
+    children: &[],
+    derived: None,
+    record_type: None,
+    hidden_fields: &[],
+    hidden_when: None,
+    hidden_when_set: None,
+};
+
 pub const ALL_ENTRIES: &[CatalogEntry] = &[
     JOURNAL_ENTRY,
     NOTE,
@@ -729,6 +765,7 @@ pub const ALL_ENTRIES: &[CatalogEntry] = &[
     TASK,
     PROJECT,
     HUB_TASK,
+    DEADLINE,
 ];
 
 /// The entries visible under this config.

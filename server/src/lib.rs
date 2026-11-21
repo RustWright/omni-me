@@ -427,6 +427,51 @@ pub async fn run(cfg: RunConfig) {
             }
         });
     }
+    // Repeating obligations: the next occurrence once the latest is closed or due. Ruling 131.
+    {
+        let (db, writer) = ((*state.db).clone(), enrich_writer.clone());
+        tokio::spawn(async move {
+            use omni_me_core::tasks::repeats;
+            let mut tick = tokio::time::interval(repeats::TICK);
+            loop {
+                tick.tick().await;
+                let today = match repeats::today(&db).await {
+                    Ok(d) => d,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "repeating tasks: no zone; skipped");
+                        continue;
+                    }
+                };
+                match repeats::run(&db, &writer, today).await {
+                    Ok(0) => {}
+                    Ok(n) => tracing::info!(created = n, "repeating tasks: next occurrences made"),
+                    Err(e) => tracing::warn!(error = %e, "repeating tasks: run failed"),
+                }
+            }
+        });
+    }
+    // Coursework deadlines from the LEARN feed, when its address is configured. Ruling 122.
+    if let Some(url) = state.secrets.get("learn_feed_url").cloned() {
+        let (db, writer) = ((*state.db).clone(), enrich_writer.clone());
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(6 * 3600));
+            loop {
+                tick.tick().await;
+                match omni_me_core::tasks::queries::poll_learn(&db, &writer, &url).await {
+                    Ok((feed, recorded, moved)) => tracing::info!(
+                        deadlines = feed.deadlines.len(),
+                        unclassified = feed.problems.len(),
+                        recorded,
+                        tasks_moved = moved,
+                        "learn feed read"
+                    ),
+                    Err(e) => tracing::warn!(error = %e, "learn feed: read failed"),
+                }
+            }
+        });
+    } else {
+        tracing::info!("learn_feed_url not in secrets; the LEARN deadline feed is off");
+    }
     enrichment_scheduler::spawn(
         (*state.db).clone(),
         enrich_writer,

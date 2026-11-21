@@ -3,8 +3,10 @@
 //! Rulings 90-93 and 121-131 (RULINGS.md). The events live in `events::types`, the tables in
 //! `events::tasks_projection`; this module holds the pure rules both share.
 
+pub mod deadlines;
 pub mod hub;
 pub mod queries;
+pub mod repeats;
 
 use chrono::{Datelike, Duration, Months, NaiveDate, NaiveTime, Weekday};
 use serde::{Deserialize, Serialize};

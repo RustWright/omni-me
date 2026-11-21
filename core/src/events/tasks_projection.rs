@@ -9,8 +9,8 @@ use crate::tasks::{TaskField, TaskStatus, parse_due};
 use super::projection::Projection;
 use super::store::{Event, EventError};
 use super::types::{
-    HubIndexReceivedPayload, TaskCreatedPayload, TaskModifiedPayload, TaskProjectClosedPayload,
-    TaskProjectCreatedPayload, TaskStatusSetPayload, TaskTimerPayload,
+    DeadlineFeedReceivedPayload, HubIndexReceivedPayload, TaskCreatedPayload, TaskModifiedPayload,
+    TaskProjectClosedPayload, TaskProjectCreatedPayload, TaskStatusSetPayload, TaskTimerPayload,
 };
 
 /// Projection over task events.
@@ -46,6 +46,7 @@ impl Projection for TasksProjection {
              DEFINE FIELD IF NOT EXISTS repeat_rule ON tasks TYPE option<string>;
              DEFINE FIELD IF NOT EXISTS series_id ON tasks TYPE option<string>;
              DEFINE FIELD IF NOT EXISTS hub_id ON tasks TYPE option<string>;
+             DEFINE FIELD IF NOT EXISTS deadline_uid ON tasks TYPE option<string>;
              DEFINE FIELD IF NOT EXISTS note ON tasks TYPE option<string>;
              DEFINE FIELD IF NOT EXISTS status ON tasks TYPE string;
              DEFINE FIELD IF NOT EXISTS actual_min ON tasks TYPE option<int>;
@@ -99,7 +100,25 @@ impl Projection for TasksProjection {
              DEFINE FIELD IF NOT EXISTS needs_you ON hub_tasks TYPE bool;
              DEFINE FIELD IF NOT EXISTS is_open ON hub_tasks TYPE bool;
              DEFINE INDEX IF NOT EXISTS idx_hub_task_title_fts ON hub_tasks
-                 FIELDS title FULLTEXT ANALYZER omni_text BM25 HIGHLIGHTS;",
+                 FIELDS title FULLTEXT ANALYZER omni_text BM25 HIGHLIGHTS;
+
+             -- The last read of each deadline feed, replaced whole per read like hub_tasks.
+             DEFINE TABLE IF NOT EXISTS feed_deadlines SCHEMAFULL;
+             DEFINE FIELD IF NOT EXISTS uid ON feed_deadlines TYPE string;
+             DEFINE FIELD IF NOT EXISTS source ON feed_deadlines TYPE string;
+             DEFINE FIELD IF NOT EXISTS course ON feed_deadlines TYPE string;
+             DEFINE FIELD IF NOT EXISTS term ON feed_deadlines TYPE string;
+             DEFINE FIELD IF NOT EXISTS title ON feed_deadlines TYPE string;
+             DEFINE FIELD IF NOT EXISTS due_date ON feed_deadlines TYPE string;
+             DEFINE FIELD IF NOT EXISTS due_time ON feed_deadlines TYPE option<string>;
+             DEFINE INDEX IF NOT EXISTS idx_feed_deadline_title_fts ON feed_deadlines
+                 FIELDS title FULLTEXT ANALYZER omni_text BM25 HIGHLIGHTS;
+
+             DEFINE TABLE IF NOT EXISTS deadline_feeds SCHEMAFULL;
+             DEFINE FIELD IF NOT EXISTS source ON deadline_feeds TYPE string;
+             DEFINE FIELD IF NOT EXISTS content_hash ON deadline_feeds TYPE string;
+             DEFINE FIELD IF NOT EXISTS received_at ON deadline_feeds TYPE datetime;
+             DEFINE FIELD IF NOT EXISTS problems ON deadline_feeds TYPE array<string>;",
         )
         .await?
         .check()?;
@@ -111,7 +130,9 @@ impl Projection for TasksProjection {
             "DELETE FROM tasks;
              DELETE FROM task_projects;
              DELETE FROM hub_indexes;
-             DELETE FROM hub_tasks;",
+             DELETE FROM hub_tasks;
+             DELETE FROM feed_deadlines;
+             DELETE FROM deadline_feeds;",
         )
         .await?
         .check()?;
@@ -157,6 +178,10 @@ impl Projection for TasksProjection {
             },
             "hub_index_received" => match payload::<HubIndexReceivedPayload>(event) {
                 Some(p) => on_hub_index(&p, event, db).await,
+                None => Ok(()),
+            },
+            "deadline_feed_received" => match payload::<DeadlineFeedReceivedPayload>(event) {
+                Some(p) => on_deadline_feed(&p, event, db).await,
                 None => Ok(()),
             },
             _ => Ok(()),
@@ -208,6 +233,7 @@ async fn on_created(
             repeat_rule = $repeat,
             series_id = $series_id,
             hub_id = $hub_id,
+            deadline_uid = $deadline_uid,
             note = $note,
             status = status ?? 'todo',
             timer_active_secs = timer_active_secs ?? 0,
@@ -229,6 +255,7 @@ async fn on_created(
     .bind(("repeat", p.repeat.clone()))
     .bind(("series_id", p.series_id.clone()))
     .bind(("hub_id", p.hub_id.clone()))
+    .bind(("deadline_uid", p.deadline_uid.clone()))
     .bind(("note", p.note.clone()))
     .bind(("ts", event.timestamp.to_rfc3339()))
     .await?
@@ -522,6 +549,51 @@ async fn on_hub_index(
         .bind(("blocked_by", t.blocked_by.clone()))
         .bind(("needs_you", t.needs_you()))
         .bind(("open", t.is_open()))
+        .await?
+        .check()?;
+    }
+    Ok(())
+}
+
+/// Replace the source's deadline rows with this read.
+async fn on_deadline_feed(
+    p: &DeadlineFeedReceivedPayload,
+    event: &Event,
+    db: &Database,
+) -> Result<(), EventError> {
+    db.query(
+        "UPSERT type::record('deadline_feeds', $source) SET
+            source = $source,
+            content_hash = $hash,
+            received_at = type::datetime($ts),
+            problems = $problems;
+         DELETE feed_deadlines WHERE source = $source;",
+    )
+    .bind(("source", p.source.clone()))
+    .bind(("hash", p.content_hash.clone()))
+    .bind(("ts", event.timestamp.to_rfc3339()))
+    .bind(("problems", p.problems.clone()))
+    .await?
+    .check()?;
+    for d in &p.deadlines {
+        let (due_date, due_time) = due_columns(Some(&d.due));
+        db.query(
+            "UPSERT type::record('feed_deadlines', $uid) SET
+                uid = $uid,
+                source = $source,
+                course = $course,
+                term = $term,
+                title = $title,
+                due_date = $due_date,
+                due_time = $due_time",
+        )
+        .bind(("uid", d.uid.clone()))
+        .bind(("source", p.source.clone()))
+        .bind(("course", d.course.clone()))
+        .bind(("term", d.term.clone()))
+        .bind(("title", d.title.clone()))
+        .bind(("due_date", due_date.unwrap_or_default()))
+        .bind(("due_time", due_time))
         .await?
         .check()?;
     }

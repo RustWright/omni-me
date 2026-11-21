@@ -4,9 +4,10 @@ use chrono::{Duration, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use surrealdb::types::SurrealValue;
 
+use super::deadlines::{DeadlineFeed, parse_feed};
 use super::hub::{HubIndex, HubIndexError, parse_index};
 use crate::db::Database;
-use crate::events::{EventError, EventType, EventWriter, NewEvent};
+use crate::events::{EventError, EventType, EventWriter, NewEvent, TaskModifiedPayload};
 
 /// An index unchanged this long shows as one "still current?" line instead of its items:
 /// ruling 92 (RULINGS.md), which makes it a setting.
@@ -128,6 +129,132 @@ pub async fn stale_indexes(
         .collect())
 }
 
+/// How far back a feed read keeps deadlines, so a recently missed one still shows.
+pub const DEADLINE_LOOKBACK_DAYS: i64 = 14;
+
+/// Record a feed read unless its deadlines match the last one, then carry any moved due date
+/// onto the open tasks attached to it. Returns whether it was recorded and how many tasks moved.
+pub async fn ingest_deadlines(
+    db: &Database,
+    writer: &EventWriter,
+    feed: &DeadlineFeed,
+) -> Result<(bool, usize), String> {
+    let mut resp = db
+        .query("SELECT VALUE content_hash FROM type::record('deadline_feeds', $s)")
+        .bind(("s", feed.source.clone()))
+        .await
+        .map_err(|e| e.to_string())?;
+    let last: Vec<String> = resp.take(0).map_err(|e| e.to_string())?;
+    if last.first() == Some(&feed.content_hash) {
+        return Ok((false, 0));
+    }
+    append(
+        writer,
+        EventType::DeadlineFeedReceived,
+        feed.source.clone(),
+        serde_json::to_value(feed).map_err(|e| e.to_string())?,
+    )
+    .await?;
+
+    #[derive(SurrealValue)]
+    struct Attached {
+        task_id: String,
+        deadline_uid: String,
+        due_date: Option<String>,
+        due_time: Option<String>,
+    }
+    let mut resp = db
+        .query(
+            "SELECT task_id, deadline_uid, due_date, due_time FROM tasks
+             WHERE deadline_uid != NONE AND status = 'todo'",
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let attached: Vec<Attached> = resp.take(0).map_err(|e| e.to_string())?;
+    let mut moved = 0;
+    for task in attached {
+        let Some(d) = feed.deadlines.iter().find(|d| d.uid == task.deadline_uid) else {
+            continue;
+        };
+        let current = match (&task.due_date, &task.due_time) {
+            (Some(date), Some(time)) => format!("{date} {time}"),
+            (Some(date), None) => date.clone(),
+            _ => String::new(),
+        };
+        if current == d.due {
+            continue;
+        }
+        let payload = TaskModifiedPayload {
+            task_id: task.task_id.clone(),
+            due: Some(d.due.clone()),
+            ..Default::default()
+        };
+        append(
+            writer,
+            EventType::TaskModified,
+            task.task_id,
+            serde_json::to_value(&payload).map_err(|e| e.to_string())?,
+        )
+        .await?;
+        moved += 1;
+    }
+    Ok((true, moved))
+}
+
+async fn append(
+    writer: &EventWriter,
+    kind: EventType,
+    aggregate_id: String,
+    payload: serde_json::Value,
+) -> Result<(), String> {
+    writer
+        .append_new(NewEvent {
+            id: None,
+            event_type: kind.to_string(),
+            aggregate_id,
+            timestamp: Utc::now(),
+            device_id: writer.device_id().to_string(),
+            payload,
+        })
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Fetch a feed's text. The address is a credential: never logged.
+pub async fn fetch_feed(url: &str) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("feed unreachable: {}", e.without_url()))?;
+    let resp = resp
+        .error_for_status()
+        .map_err(|e| format!("feed refused: {}", e.without_url()))?;
+    resp.text().await.map_err(|e| e.without_url().to_string())
+}
+
+/// One poll of the LEARN feed: fetch, read in the user's zone, record.
+pub async fn poll_learn(
+    db: &Database,
+    writer: &EventWriter,
+    url: &str,
+) -> Result<(DeadlineFeed, bool, usize), String> {
+    let text = fetch_feed(url).await?;
+    let config = crate::events::load_shared(db)
+        .await
+        .map_err(|e| e.to_string())?;
+    let tz = crate::assistant::scheduled::user_timezone(&config);
+    let today = Utc::now().with_timezone(&tz).date_naive();
+    let feed = parse_feed(&text, tz, today - Duration::days(DEADLINE_LOOKBACK_DAYS));
+    let (recorded, moved) = ingest_deadlines(db, writer, &feed).await?;
+    Ok((feed, recorded, moved))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -213,6 +340,63 @@ size = "USER"
         let cut = INDEX.replacen("status = \"todo\"", "status = \"cut\"", 1);
         ingest(&db, &writer, &cut).await.unwrap();
         assert!(taken_over(&db, None).await.unwrap().is_empty());
+    }
+
+    /// A deadline the instructor moves moves the task attached to it; an unchanged read is
+    /// not recorded again.
+    #[tokio::test]
+    async fn a_moved_deadline_moves_its_task() {
+        use super::super::deadlines::Deadline;
+        let (db, writer) = harness().await;
+        let feed = |due: &str| {
+            let deadlines = vec![Deadline {
+                uid: "quiz-3@learn".into(),
+                course: "ME 744".into(),
+                term: "Fall 2026".into(),
+                title: "Quiz 3".into(),
+                due: due.into(),
+            }];
+            let hash = super::super::hub::content_hash(due);
+            DeadlineFeed {
+                source: "learn".into(),
+                deadlines,
+                problems: vec![],
+                content_hash: hash,
+            }
+        };
+        assert_eq!(
+            ingest_deadlines(&db, &writer, &feed("2026-11-30 23:59"))
+                .await
+                .unwrap(),
+            (true, 0)
+        );
+        append(
+            &writer,
+            EventType::TaskCreated,
+            "01Q3".into(),
+            serde_json::json!({"task_id": "01Q3", "title": "Quiz 3",
+                               "due": "2026-11-30 23:59", "deadline_uid": "quiz-3@learn"}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            ingest_deadlines(&db, &writer, &feed("2026-11-30 23:59"))
+                .await
+                .unwrap(),
+            (false, 0)
+        );
+        assert_eq!(
+            ingest_deadlines(&db, &writer, &feed("2026-12-02 23:59"))
+                .await
+                .unwrap(),
+            (true, 1)
+        );
+        let mut resp = db
+            .query("SELECT VALUE due_date FROM type::record('tasks', '01Q3')")
+            .await
+            .unwrap();
+        let due: Vec<String> = resp.take(0).unwrap();
+        assert_eq!(due, ["2026-12-02"]);
     }
 
     #[tokio::test]

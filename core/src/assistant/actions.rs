@@ -1116,6 +1116,13 @@ const TASK_CREATE: ActionType = ActionType {
             64,
         )
         .optional(),
+        ActionParam::text(
+            "deadline_uid",
+            "When the task is for a deadline record, that deadline's identity; its due date \
+             then follows the feed.",
+            200,
+        )
+        .optional(),
     ],
     produces: &[EventType::TaskCreated],
     reversible: true,
@@ -1859,6 +1866,7 @@ pub fn build_events(
                 repeat: text_arg(&args, "repeat"),
                 series_id: None,
                 hub_id: text_arg(&args, "hub_id"),
+                deadline_uid: text_arg(&args, "deadline_uid"),
                 note: text_arg(&args, "note"),
             };
             task_event(EventType::TaskCreated, task_id, device_id, &payload)
