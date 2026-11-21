@@ -366,3 +366,8 @@ edit site carries their reasoning. These are settled. Do not re-open one without
 - **125.** Every timed calendar event is busy, whatever "Show me as" says, extending 111's
   distrust of that field: in his calendars all 40 timed events marked Available are bookings
   added from email (flights, tours), which are real commitments and recur with every trip.
+- **126.** Places start as Home and Campus, every campus building mapping to Campus, about 45 min
+  apart (30–60, his estimate). An event's location maps to a place when it has one; a recurring
+  series without one is asked about once (Campus first, then Home, Elsewhere), and the answer
+  holds for the series. A one-off without a location gets no travel buffer. His calendar events
+  are mostly on campus, and he focuses better there when nothing keeps him home.
