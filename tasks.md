@@ -18,7 +18,7 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 
 ## Cycle 6: [0074] tasks, planning, people
 
-Rulings 90–129, the UI ruled in `design/0102/`, the preps in overlay `*_PREP.md`;
+Rulings 90–131, the UI ruled in `design/0102/`, the preps in overlay `*_PREP.md`;
 evidence in `PUSH_0074_RESEARCH.md`. In dependency order. Prep and design sessions need him;
 builds follow them.
 - [0106] **`CheckInPolicy` into named scheduled prompts**, each with its own tier, due-check and
@@ -26,8 +26,8 @@ builds follow them.
 - [0107] **Task records and hub intake:** native tasks and projects, estimates and actuals (93),
   staleness and the hub trial (92), and the hook push of each changed index (91). Plus the
   `~/life` hand-over and the SessionStart receipt (121; contract text then), the LEARN deadline
-  feed and course projects (122, 123), the seed import (re-confirm the list with him first),
-  with him: scheduled date, recurrence, external-only deadlines (research §4.1); and an intake that
+  feed and course projects (122, 123), due and scheduled dates (130), repeating obligations
+  (131), the seed import (list confirmed 2026-11-21, overlay `TASKS_PREP.md`); and an intake that
   reports unknown index values, never drops them (overlay `TASKS_PREP.md`). [L]
 - [0114] **Routines:** his routines are seeded on live (overlay `CALENDAR_PREP.md`). Left: tick
   items from journal lines with the evening gap line (127), and learn the morning routine's

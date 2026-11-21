@@ -383,3 +383,9 @@ edit site carries their reasoning. These are settled. Do not re-open one without
 - **129.** People serves recall before talking first, with the professional network as part of it:
   who someone is, where he met them, what they do. The person view leads with identifying
   details. Keeping in touch waits for its cadence (120); admin counterparts need little new.
+- **130.** A task can carry two dates. Due is only for a real external deadline (LEARN, a bill, an
+  index `due`, or one he states). Scheduled is the day he intends to do it, and it never rolls
+  forward silently: a passed scheduled day comes back to him in the next plan or review.
+- **131.** A repeating obligation (rent, renewals) is a task with a repeat rule, and each
+  occurrence is its own task with its own due date, so one slipping never moves the next and the
+  record shows which were late. Not routines, which are habits (`Frequency::Custom` is [2,31]).
