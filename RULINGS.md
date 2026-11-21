@@ -375,3 +375,8 @@ edit site carries their reasoning. These are settled. Do not re-open one without
   line's time, marked inferred and undoable, and the journal itself is never touched. The evening
   shutdown (98) asks one line about items with no evidence that day, so an unjournaled day is not
   read as skipped. No reminder pushes: a ticking habit is what he could not start.
+- **128.** A person fact (102) is: the person, a kind (relationship, work or school, life event,
+  identifying detail, where they live or can be found), one line in his words, the date it was
+  true as of, the line it cites, and his confirmation. Interactions are pointers in the mention
+  index, not facts. Sensitive kinds (health, an address, money) are never proposed: recorded only
+  when he asks in chat. His own deliberate note lines ("Eric, tall, glasses") are the first source.
