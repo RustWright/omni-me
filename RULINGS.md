@@ -380,3 +380,6 @@ edit site carries their reasoning. These are settled. Do not re-open one without
   true as of, the line it cites, and his confirmation. Interactions are pointers in the mention
   index, not facts. Sensitive kinds (health, an address, money) are never proposed: recorded only
   when he asks in chat. His own deliberate note lines ("Eric, tall, glasses") are the first source.
+- **129.** People serves recall before talking first, with the professional network as part of it:
+  who someone is, where he met them, what they do. The person view leads with identifying
+  details. Keeping in touch waits for its cadence (120); admin counterparts need little new.
