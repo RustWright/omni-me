@@ -580,7 +580,9 @@ const TASK: CatalogEntry = CatalogEntry {
     feature: Feature::Tasks,
     description: "Something the user means to do, kept in omni-me: its status, the project \
                   it belongs to, a due date (only ever a real external deadline), the day it \
-                  is scheduled for, the user's estimate, and what it actually took.",
+                  is scheduled for, the user's estimate, and what it actually took. A \
+                  repeating obligation is one task per occurrence, sharing a `series_id`; there \
+                  is no template, so an open occurrence past its due date is overdue.",
     identity: IdentityKind::Opaque,
     handle: "title",
     text_fields: &["title"],
