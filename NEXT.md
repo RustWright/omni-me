@@ -5,8 +5,8 @@ live in `RULINGS.md`, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`
 `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
 ## ▶ NEXT ACTION — his pick of the next Cycle 6 item (asked 2026-11-21)
-[0112] is done (125–127, 114 revised; overlay `CALENDAR_PREP.md`); his routines are seeded on
-live, [0114] keeps the journal ticks. Read other repos from their remote: `~/life` here lagged 119 commits.
+Every prep is done: [0112] (125–127, 114 revised; overlay `CALENDAR_PREP.md`, routines seeded on
+live) and [0108] (128–129; overlay `PEOPLE_PREP.md`). What is left is builds. Read other repos from their remote: `~/life` here lagged 119 commits.
 [0101]'s judgment calls are in overlay `DECISION_LOG_2026-11-20.md`, worth a skim.
 
 ⛔ Live is the pause: every live step waits for his go, one at a time.

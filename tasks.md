@@ -18,7 +18,7 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 
 ## Cycle 6: [0074] tasks, planning, people
 
-Rulings 90–127, the UI ruled in `design/0102/`, the task prep in overlay `TASKS_PREP.md`;
+Rulings 90–129, the UI ruled in `design/0102/`, the preps in overlay `*_PREP.md`;
 evidence in `PUSH_0074_RESEARCH.md`. In dependency order. Prep and design sessions need him;
 builds follow them.
 - [0106] **`CheckInPolicy` into named scheduled prompts**, each with its own tier, due-check and
@@ -29,9 +29,6 @@ builds follow them.
   feed and course projects (122, 123), the seed import (re-confirm the list with him first),
   with him: scheduled date, recurrence, external-only deadlines (research §4.1); and an intake that
   reports unknown index values, never drops them (overlay `TASKS_PREP.md`). [L]
-- [0108] **People data prep, offline** (105), beside [0107]: journal mentions, email senders, one
-  vCard export; check To/Cc and whether `watched_label` holds sent mail. Settles the fact shape
-  (102) and which people purpose comes first. [USER, L]
 - [0114] **Routines:** his routines are seeded on live (overlay `CALENDAR_PREP.md`). Left: tick
   items from journal lines with the evening gap line (127), and learn the morning routine's
   length from those ticks for the day start (114). Before [0109]. [M]
@@ -42,8 +39,8 @@ builds follow them.
   from the launch intent so it works on a closed app (his call), handed over like the deep link. [L]
 - [0110] **People build:** mentions, facts, resolution, pickers and group cards (102–104), merge
   and unmerge reversible for every attached record from the first event, the person view and the
-  People tab with model-free search (118–120), per `design/0102/`; task text as a source (124).
-  Needs [0108]. [L]
+  People tab with model-free search (118–120), per `design/0102/`; task text as a source (124);
+  the fact shape (128), recall first (129). Seed and evidence: overlay `PEOPLE_PREP.md`. [L]
 
 ## Waiting on his decision
 

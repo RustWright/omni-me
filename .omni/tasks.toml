@@ -775,7 +775,7 @@ blocked_by = ["omni-me-0103"]
 [[task]]
 id     = "omni-me-0108"
 title  = "People data prep, offline"
-status = "todo"
+status = "done"
 size   = "USER"
 ref    = "tasks.md § Cycle 6"
 
