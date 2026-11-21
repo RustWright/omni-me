@@ -360,6 +360,13 @@ switch the check-in on or change its hour, the app also records your time zone, 
 "6" means 6 in the morning where you are. "Today" is your calendar day too. Changes to
 the schedule reach the agent within a minute; it does not need restarting.
 
+**The check-in is the first of several scheduled prompts.** Each one writes its name on every
+question it raises and has its own cadence (daily, weekly or monthly), hour, notification tier
+and keep window. It reads only its own history, so a morning plan raised at 7 never makes the
+check-in think it already ran, and the check-in's tidying never archives the morning plan. A
+scheduled question from before prompts had names counts as the check-in.
+(`core/src/assistant/scheduled.rs`)
+
 **The chat list stays short on its own.** Each new check-in archives the previous one,
 and a check-in is deleted after two weeks. Any chat untouched for 30 days is archived,
 and one that has sat in the archive for 90 days is deleted; both windows are settings.

@@ -28,12 +28,13 @@ impl Projection for AssistantProjection {
     }
 
     /// 2 added `assistant_proposals`; 3 added `assistant_messages.scheduled`;
-    /// 4 adds `assistant_autonomy`; 5 adds `assistant_thread_state`.
+    /// 4 adds `assistant_autonomy`; 5 adds `assistant_thread_state`; 6 adds
+    /// `assistant_messages.prompt_name`.
     /// The bump is what replays the log into the new shape — see
     /// `ProjectionRunner::init_all`, where a changed version rebuilds rather than
     /// merely recording a number.
     fn version(&self) -> u32 {
-        5
+        6
     }
 
     async fn init_schema(&self, db: &Database) -> Result<(), EventError> {
@@ -59,6 +60,8 @@ impl Projection for AssistantProjection {
              -- rather than from a state file that a restart or a second agent
              -- could disagree with.
              DEFINE FIELD IF NOT EXISTS scheduled ON assistant_messages TYPE option<bool>;
+             -- Which scheduled prompt raised it, so each prompt reads only its own runs.
+             DEFINE FIELD IF NOT EXISTS prompt_name ON assistant_messages TYPE option<string>;
              DEFINE FIELD IF NOT EXISTS stopped ON assistant_messages TYPE option<string>;
              DEFINE FIELD IF NOT EXISTS detail ON assistant_messages TYPE option<string>;
              DEFINE FIELD IF NOT EXISTS model ON assistant_messages TYPE option<string>;
@@ -260,9 +263,9 @@ impl AssistantProjection {
             Some(&parsed.text),
             event,
             None,
-            // Only written for a question, and only when true: an answer has no
-            // opinion about how the question that prompted it was raised.
-            parsed.scheduled.then_some(true),
+            // Only written for a question: an answer has no opinion about how the
+            // question that prompted it was raised.
+            parsed.prompt(),
         )
         .await?;
 
@@ -448,7 +451,7 @@ impl AssistantProjection {
         text: Option<&str>,
         event: &Event,
         answer: Option<&AssistantAnswerGivenPayload>,
-        scheduled: Option<bool>,
+        prompt: Option<&str>,
     ) -> Result<(), EventError> {
         let usage = match answer {
             Some(a) => Some(serde_json::to_value(&a.usage).map_err(|e| {
@@ -479,7 +482,8 @@ impl AssistantProjection {
                 elapsed_ms = $elapsed_ms,
                 verbs = $verbs,
                 records_read = $records_read,
-                scheduled = $scheduled",
+                scheduled = $scheduled,
+                prompt_name = $prompt_name",
         )
         .bind(("id", message_id.to_string()))
         .bind(("thread_id", thread_id.to_string()))
@@ -495,7 +499,8 @@ impl AssistantProjection {
         .bind(("elapsed_ms", answer.map(|a| a.elapsed_ms as i64)))
         .bind(("verbs", answer.map(|a| a.verbs.clone())))
         .bind(("records_read", records_read))
-        .bind(("scheduled", scheduled))
+        .bind(("scheduled", prompt.is_some().then_some(true)))
+        .bind(("prompt_name", prompt.map(str::to_string)))
         .await?
         // `.check()` is load-bearing, not belt-and-braces. `Surreal::query`
         // resolves to `Ok` for a statement that *failed* — the error rides in the
@@ -611,6 +616,7 @@ mod tests {
             text: text.into(),
             title: title.map(str::to_string),
             scheduled: false,
+            prompt_name: None,
         };
         let new = NewEvent::assistant_question_asked("phone", &payload).unwrap();
         Event {
@@ -929,6 +935,7 @@ mod tests {
             text: "how many gym days in July?".into(),
             title: Some("gym July".into()),
             scheduled: false,
+            prompt_name: None,
         };
         let stored = store
             .append(NewEvent::assistant_question_asked("phone", &payload).unwrap())

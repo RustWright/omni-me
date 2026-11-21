@@ -181,7 +181,7 @@ async fn ids(db: &Database, sql: &str) -> Result<BTreeSet<String>, String> {
 }
 
 /// The day the summary is due and whether `now` has reached its hour. Compared by
-/// local hour, as `check_in::is_due` does: building the local instant instead
+/// local hour, as `scheduled::is_due` does: building the local instant instead
 /// finds nothing on a day DST skips that hour, and the summary would not run.
 pub fn due(now: DateTime<Utc>, tz: Tz, hour: u32) -> Option<NaiveDate> {
     let local = now.with_timezone(&tz);

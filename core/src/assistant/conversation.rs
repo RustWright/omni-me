@@ -174,6 +174,7 @@ pub async fn pending_questions(db: &Database) -> Result<Vec<PendingQuestion>, Ev
                     // the message row carry — the answer does not restate it.
                     title: None,
                     scheduled: false,
+                    prompt_name: None,
                 },
                 asked_at: row.created_at,
                 history: turns(&rows[..i]),
@@ -391,6 +392,7 @@ mod tests {
             text: text.into(),
             title: Some(text.into()),
             scheduled: false,
+            prompt_name: None,
         };
         let ev = envelope(
             NewEvent::assistant_question_asked("phone", &payload).unwrap(),
@@ -758,6 +760,7 @@ mod tests {
             text: "Review what is due.".into(),
             title: Some("Daily check-in".into()),
             scheduled: true,
+            prompt_name: Some(crate::assistant::scheduled::CHECK_IN.into()),
         };
         let ev = envelope(
             NewEvent::assistant_question_asked("agent", &payload).unwrap(),
@@ -770,9 +773,10 @@ mod tests {
         assert_eq!(view.messages[0].scheduled, Some(true));
 
         // And the scheduler reads its own last run from exactly this row.
-        let last = crate::assistant::check_in::last_check_in(&db)
-            .await
-            .unwrap();
+        let last =
+            crate::assistant::scheduled::last_run(&db, crate::assistant::scheduled::CHECK_IN)
+                .await
+                .unwrap();
         assert!(
             last.is_some(),
             "the check-in must be findable as its own record"
@@ -790,7 +794,7 @@ mod tests {
         let view = read_thread(&db, "t1").await.unwrap();
         assert_ne!(view.messages[0].scheduled, Some(true));
         assert!(
-            crate::assistant::check_in::last_check_in(&db)
+            crate::assistant::scheduled::last_run(&db, crate::assistant::scheduled::CHECK_IN)
                 .await
                 .unwrap()
                 .is_none(),

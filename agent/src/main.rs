@@ -1166,6 +1166,7 @@ async fn ask_event_once(
         // `--ask` is a person at a terminal, which is the opposite of scheduled
         // however headless the binary is.
         scheduled: false,
+        prompt_name: None,
     };
     let event = NewEvent::assistant_question_asked(writer.device_id(), &payload)
         .map_err(|e| format!("could not build the question event: {e}"))?;

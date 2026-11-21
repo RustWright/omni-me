@@ -291,6 +291,7 @@ mod tests {
                 text: "What did I buy?".into(),
                 title: None,
                 scheduled: false,
+                prompt_name: None,
             };
             apply(NewEvent::assistant_question_asked("phone", &p).unwrap()).await;
         }

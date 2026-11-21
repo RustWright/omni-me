@@ -10,8 +10,6 @@ pub mod answer;
 pub mod catalog;
 /// Archiving idle chats and deleting long-archived ones.
 pub mod chat_tidy;
-/// The scheduled check-in: the assistant asking on the user's behalf.
-pub mod check_in;
 pub mod chunk;
 /// Telling a reply that reports a change from one that proposes it.
 pub mod claims;
@@ -39,6 +37,8 @@ pub mod rerank;
 pub mod retrieval;
 /// Resolving an anchored mid-note edit against the note's live body.
 pub mod revise;
+/// Named prompts the assistant raises on the user's behalf, on a schedule.
+pub mod scheduled;
 pub mod session;
 /// Routing a request to the instructions of its domain.
 pub mod specialist;

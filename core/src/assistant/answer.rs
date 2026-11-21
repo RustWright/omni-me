@@ -216,6 +216,7 @@ mod tests {
             text: "what did I write about rent?".into(),
             title: Some("rent".into()),
             scheduled: false,
+            prompt_name: None,
         }
     }
 

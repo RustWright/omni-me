@@ -1194,6 +1194,25 @@ pub struct AssistantQuestionAskedPayload {
     /// Defaults false, so older questions read as user-asked.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub scheduled: bool,
+    /// Which scheduled prompt raised it; each prompt's due-check and housekeeping read only their
+    /// own. Absent on a scheduled question from before prompts were named: see [`Self::prompt`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_name: Option<String>,
+}
+
+/// The name a scheduled question carries when it predates named prompts: the check-in was the
+/// only one.
+pub const LEGACY_SCHEDULED_PROMPT: &str = "check_in";
+
+impl AssistantQuestionAskedPayload {
+    /// The scheduled prompt this question belongs to, or `None` for one the user asked.
+    pub fn prompt(&self) -> Option<&str> {
+        match (&self.prompt_name, self.scheduled) {
+            (Some(name), _) => Some(name.as_str()),
+            (None, true) => Some(LEGACY_SCHEDULED_PROMPT),
+            (None, false) => None,
+        }
+    }
 }
 
 /// Why an answer stopped, at the write site.

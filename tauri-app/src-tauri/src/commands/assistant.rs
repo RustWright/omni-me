@@ -72,6 +72,7 @@ pub async fn ask_assistant(
         // This command exists because a person typed something. A scheduled
         // question comes from the agent's own loop and never from here.
         scheduled: false,
+        prompt_name: None,
     };
 
     tracing::info!(
