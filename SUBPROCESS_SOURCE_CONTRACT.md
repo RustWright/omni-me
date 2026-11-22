@@ -163,6 +163,14 @@ balanced whole with its own `external_id`, `parts` are the rows as standalone dr
 proposes `draft` only when neither it nor any part was proposed before; otherwise it proposes just the
 unseen parts, so a row is never booked twice or lost. Each part counts as one fetched row.
 
+## `unjoined` — a row whose join could not be completed (optional)
+
+`[{"joined_id": "<external_id of the whole>", "draft": <draft>}]`. Use it for a row the helper would
+have joined but could not this pull, e.g. a transfer half whose partner has left the upstream's
+window. A whole proposed earlier never recorded its parts' ids, so without this the lone row looks new
+and is booked twice. The engine drops it when `joined_id` was proposed before; otherwise it treats
+`draft` exactly like an entry in `drafts`. Each counts as one fetched row.
+
 ## `dedup_key` — idempotency token
 
 The per-tick idempotency key for the whole batch. **Optional**: if the helper omits it, the engine

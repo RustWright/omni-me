@@ -117,6 +117,9 @@ pub struct HelperResponse {
     /// [`JoinedDraft`].
     #[serde(default)]
     pub joined: Vec<JoinedDraft>,
+    /// Rows from a join the helper could not complete this pull. See [`UnjoinedPart`].
+    #[serde(default)]
+    pub unjoined: Vec<UnjoinedPart>,
     /// Per-batch idempotency token. When `None`, the engine derives one from
     /// the drafts' `external_id`s.
     #[serde(default)]
@@ -147,6 +150,16 @@ pub struct JoinedDraft {
     pub parts: Vec<DraftTransaction>,
 }
 
+/// One row of a join the helper could not complete this pull, such as a transfer half whose
+/// partner has left the upstream's window. `joined_id` is the `external_id` the whole would carry.
+/// A whole proposed earlier never recorded its parts' ids, so this is the only way to know the
+/// row is already booked.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnjoinedPart {
+    pub joined_id: String,
+    pub draft: DraftTransaction,
+}
+
 /// Drop what this source already proposed, and return what is left with the
 /// number of upstream rows it covers. A joined draft goes out whole only when
 /// none of its parts went out before; otherwise only its unseen parts do, and
@@ -154,6 +167,7 @@ pub struct JoinedDraft {
 fn select_unproposed(
     drafts: Vec<DraftTransaction>,
     joined: Vec<JoinedDraft>,
+    unjoined: Vec<UnjoinedPart>,
     known: &HashSet<String>,
     tally: &mut ImportTally,
 ) -> (Vec<DraftTransaction>, usize) {
@@ -161,6 +175,13 @@ fn select_unproposed(
     let mut out = Vec::new();
     let mut rows = 0;
     let mut singles = drafts;
+    for u in unjoined {
+        if known.contains(u.joined_id.trim()) {
+            tally.dropped(u.draft.external_id, DropReason::Deduped);
+        } else {
+            singles.push(u.draft);
+        }
+    }
     for j in joined {
         if seen(&j.draft) {
             // Proposed whole before, so its parts' own ids were never recorded.
@@ -410,8 +431,13 @@ impl SubprocessSource {
                 HashSet::new()
             }
         };
-        let (drafts, rows) =
-            select_unproposed(response.drafts, response.joined, &known, &mut tally);
+        let (drafts, rows) = select_unproposed(
+            response.drafts,
+            response.joined,
+            response.unjoined,
+            &known,
+            &mut tally,
+        );
 
         if drafts.is_empty() {
             // Still finishes the tally: "no drafts" must prove it accounted for
@@ -695,14 +721,20 @@ mod tests {
     fn select(known: &[&str]) -> (Vec<String>, usize) {
         let known = known.iter().map(|s| s.to_string()).collect();
         let mut tally = ImportTally::new(2);
-        let (out, rows) = select_unproposed(vec![], vec![transfer()], &known, &mut tally);
+        let (out, rows) = select_unproposed(vec![], vec![transfer()], vec![], &known, &mut tally);
         (out.into_iter().map(|d| d.external_id).collect(), rows)
     }
 
     #[test]
     fn a_fresh_transfer_goes_out_joined_and_counts_both_rows() {
         let mut tally = ImportTally::new(2);
-        let (out, rows) = select_unproposed(vec![], vec![transfer()], &HashSet::new(), &mut tally);
+        let (out, rows) = select_unproposed(
+            vec![],
+            vec![transfer()],
+            vec![],
+            &HashSet::new(),
+            &mut tally,
+        );
         assert_eq!(
             out.iter()
                 .map(|d| d.external_id.as_str())
@@ -716,7 +748,7 @@ mod tests {
     fn a_transfer_whose_halves_were_both_proposed_goes_nowhere() {
         let mut tally = ImportTally::new(2);
         let known = ["t-out", "t-in"].iter().map(|s| s.to_string()).collect();
-        let (out, rows) = select_unproposed(vec![], vec![transfer()], &known, &mut tally);
+        let (out, rows) = select_unproposed(vec![], vec![transfer()], vec![], &known, &mut tally);
         assert!(out.is_empty());
         assert_eq!(rows, 0);
         tally.appended(rows);
@@ -729,7 +761,7 @@ mod tests {
     fn a_transfer_proposed_joined_before_goes_nowhere() {
         let mut tally = ImportTally::new(2);
         let known = ["t"].iter().map(|s| s.to_string()).collect();
-        let (out, rows) = select_unproposed(vec![], vec![transfer()], &known, &mut tally);
+        let (out, rows) = select_unproposed(vec![], vec![transfer()], vec![], &known, &mut tally);
         assert!(
             out.is_empty(),
             "{:?}",
@@ -747,6 +779,62 @@ mod tests {
         let (ids, rows) = select(&["t-out"]);
         assert_eq!(ids, ["t-in"]);
         assert_eq!(rows, 1);
+    }
+
+    fn lone_half() -> UnjoinedPart {
+        UnjoinedPart {
+            joined_id: "t".into(),
+            draft: bare("t-in"),
+        }
+    }
+
+    /// The live incident: the transfer was booked whole, then the busier account's half left the
+    /// upstream's window and the other half came back alone. It must not be booked again.
+    #[test]
+    fn a_lone_half_of_a_transfer_booked_whole_goes_nowhere() {
+        let mut tally = ImportTally::new(1);
+        let known = ["t"].iter().map(|s| s.to_string()).collect();
+        let (out, rows) = select_unproposed(vec![], vec![], vec![lone_half()], &known, &mut tally);
+        assert!(out.is_empty());
+        assert_eq!(rows, 0);
+        tally.appended(rows);
+        assert_eq!(tally.finish().unwrap().deduped, 1);
+    }
+
+    #[test]
+    fn a_lone_half_never_booked_goes_out_on_its_own() {
+        let mut tally = ImportTally::new(1);
+        let (out, rows) = select_unproposed(
+            vec![],
+            vec![],
+            vec![lone_half()],
+            &HashSet::new(),
+            &mut tally,
+        );
+        assert_eq!(
+            out.iter()
+                .map(|d| d.external_id.as_str())
+                .collect::<Vec<_>>(),
+            ["t-in"]
+        );
+        assert_eq!(rows, 1);
+    }
+
+    #[test]
+    fn a_lone_half_already_booked_on_its_own_goes_nowhere() {
+        let mut tally = ImportTally::new(1);
+        let known = ["t-in"].iter().map(|s| s.to_string()).collect();
+        let (out, rows) = select_unproposed(vec![], vec![], vec![lone_half()], &known, &mut tally);
+        assert!(out.is_empty());
+        assert_eq!(rows, 0);
+    }
+
+    /// A helper that predates the field still parses.
+    #[test]
+    fn a_response_without_unjoined_parses() {
+        let r: HelperResponse =
+            serde_json::from_str(r#"{"status":"ok","disposition":{"fetched":0}}"#).unwrap();
+        assert!(r.unjoined.is_empty());
     }
 
     /// A second tick while the first batch is still pending re-sends the same
