@@ -43,7 +43,7 @@ byte for byte, and three random blobs are restored and must hash to their own na
   stolen token or a bug cannot touch anything recent. The cost is that a purged blob lingers until its
   lock expires.
 - **The token is the narrowest level that works:** Object Read & Write on this one bucket. It cannot
-  edit bucket configuration, so it cannot lift a lock (inferred from the docs; tested at build).
+  edit bucket configuration, so it cannot lift a lock (inferred from Cloudflare's docs, not tested).
 
 rclone beat restic: restic's prune rewrites and deletes its own pack files, which fights a lock,
 and its snapshots add little when every blob is immutable. It beat custom code by being the

@@ -80,9 +80,9 @@ builds follow them.
 
 ## Off-box backup
 
-- [0006] **Build the R2 backup job** per `docs/src/backup.md`: bucket, locks and token exist (his,
-  11-22; values in his password manager only). Needs his go to add rclone to the image, then his `!`
-  command to put the token and key on live. Blobs have one copy until it runs. [M]
+- [0006] **Off-box backup: built, proven on dev** (upload, export round trip, restore check, purge
+  delete, lost-blob alert), on PR 9's branches. Live needs his `backup_secrets.py live` and the PR 9
+  release. Blobs have one copy until then. [S]
 
 ## Bugs
 
