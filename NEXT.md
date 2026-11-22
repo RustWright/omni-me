@@ -4,11 +4,11 @@
 live in `RULINGS.md`, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`), rationale in
 `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
-## ▶ NEXT ACTION — confirm [0118]'s CI, then the OpenRouter privacy check ([0010])
-[0118] (his live report: WS transfer halves booked twice) is fixed on PR 9's branches, public and
-overlay, pending CI. Dev has no WS source, so its proof is the tests, then a probe of live after release
-(`~/omni-dev-tools/ws_transfer_dupes_probe.py`). He chose to take [0010] after it, then R2 ([0006]).
-[0106], [0107] and [0114] are built and proven on dev. The next build is his to pick; [0109] leads.
+## ▶ NEXT ACTION — R2 ([0006]), then ask which build is next
+[0010] is done (account ZDR-only, recorded in `MODEL_BENCH.md` R27). [0118] (WS transfer halves booked
+twice) is fixed and green on PR 9's branches; dev has no WS source, so after release probe live with
+`~/omni-dev-tools/ws_transfer_dupes_probe.py`. He agreed to take R2 next. [0106], [0107], [0114] are
+proven on dev. The next build is his to pick; [0109] leads.
 
 ⛔ Live is the pause: every live step waits for his go, one at a time. None of the three builds is on
 live: live deploy, app release and the task seed import each wait for his go.
@@ -20,7 +20,7 @@ between uses (ruling 45), `docker start omni-me-agent-dev` resumes it against de
 
 ## ⛔ Waiting on him
 - **[0118] until the fix ships:** skip lone "Money transfer: from…" rows in Reconcile.
-- **[0006] R2 account and [0010] OpenRouter privacy setting** (10 gates OpenRouter's next use, 107).
+- **[0006] R2 account:** his Cloudflare account, a bucket and a scoped token.
 - **[0115]:** go for the task seed import, hook wiring, and the LEARN feed address.
 - **Live's role D seat:** confirm it is zero-retention before the journal-tick job goes to live (107).
 - **Calendar leftover (his, in Google):** delete the biweekly bookkeeping series in

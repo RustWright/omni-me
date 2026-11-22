@@ -44,10 +44,6 @@ builds follow them.
 - [0006] **R2 for the off-box blob copy:** his Cloudflare account, a bucket and a scoped
   API token. I build the backup job after that. Blobs have exactly one copy today. Offered as
   a live walkthrough 11-16; he chose later. [USER, then S]
-- [0010] **R27's account side, ruled 11-16:** in OpenRouter he notes the current privacy
-  setting (settles the look-back), then turns on account-wide deny data collection + ZDR-only.
-  A model that loses its only route then fails loudly, not silently. Gates OpenRouter's next
-  use, for anything (ruling 107). [USER]
 - [0013] (Parked 11-16 until a real blank delivery item appears; ask with it on screen.)
   **When the authoritative receipt fails to price**, should review offer the
   confirmation's estimate as a fallback? Ask before building. [S]

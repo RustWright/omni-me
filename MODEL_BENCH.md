@@ -161,6 +161,13 @@ without the per-request `zdr` / `data_collection: "deny"` terms the harness was 
 send. Whether the account's own settings covered that is not something this repo can answer —
 it is in `tasks.md` as a question for the account holder, not a code item.
 
+**The account side, read 2026-11-22 before any change** (OpenRouter keeps no settings history, so this
+is the best evidence for the earlier runs): ZDR off for every model group, paid endpoints that train
+off, free endpoints that train on, free endpoints that publish off. So those runs could be *retained*
+by a provider (Safety Retention), not trained on, unless a `:free` model was used; none appears in this
+repo or the session logs. The account was then set to ZDR-only for all five model groups with every
+training and publishing toggle off (ruling 107); eligible models fell from 703 to 338.
+
 ⚠️ **Watch for a loud failure on the next C slate, and read it as the fix working.**
 `require_parameters` now reaches role C, so a pinned tag that does not advertise
 `structured_outputs` will produce a routing error where it previously returned a 200 whose

@@ -79,7 +79,7 @@ note   = "Shelved 11-16: no mis-taps in real use. Trigger: he reports one, or th
 [[task]]
 id     = "omni-me-0010"
 title  = "Note OpenRouter's privacy setting, then enforce deny + ZDR-only account-wide"
-status = "blocked"
+status = "done"
 size   = "USER"
 ref    = "tasks.md § Waiting on his decision"
 
