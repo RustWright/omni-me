@@ -120,6 +120,50 @@ async fn alert_engine(
     Some(engine)
 }
 
+/// The off-box backup, when the `backup_*` secrets are set. Design: `docs/src/backup.md`.
+fn spawn_backup(
+    db: &Arc<Database>,
+    secrets: &HashMap<String, String>,
+    runs: Arc<dyn RunStore>,
+    alerts: Option<Arc<AlertEngine>>,
+) {
+    use omni_me_core::backup::{BackupConfig, BackupJob, BackupPaths};
+    let cfg = match BackupConfig::from_secrets(secrets) {
+        Ok(Some(cfg)) => cfg,
+        Ok(None) => {
+            tracing::warn!("backup_* secrets unset; the off-box backup is off");
+            return;
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "the off-box backup is off");
+            return;
+        }
+    };
+    let config = [
+        omni_me_core::paths::config_dir(),
+        omni_me_core::paths::state_dir(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let observers: Vec<Arc<dyn omni_me_core::jobs::runs::RunObserver>> = alerts
+        .into_iter()
+        .map(|e| e as Arc<dyn omni_me_core::jobs::runs::RunObserver>)
+        .collect();
+    BackupJob {
+        cfg,
+        db: (**db).clone(),
+        paths: BackupPaths {
+            blob_dir: blob_dir_from_env(),
+            staging: data_root().join("backup-staging"),
+            config,
+        },
+        runs,
+        observers,
+    }
+    .spawn();
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub db: Arc<Database>,
@@ -297,7 +341,9 @@ pub async fn run(cfg: RunConfig) {
     // /auto_import/status + /auto_import/tick route handlers via AppState.
     let runs = run_store(&db_arc).await;
     let auto_import_registry = SourceRegistry::new().with_run_store(runs.clone());
-    let auto_import_registry = match alert_engine(&db_arc, runs, &creds.secrets).await {
+    let alerts = alert_engine(&db_arc, runs.clone(), &creds.secrets).await;
+    spawn_backup(&db_arc, &creds.secrets, runs, alerts.clone());
+    let auto_import_registry = match alerts {
         Some(engine) => {
             let charges = LargeChargeDetector::new((*db_arc).clone(), engine.clone());
             auto_import_registry

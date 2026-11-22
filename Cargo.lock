@@ -4419,6 +4419,7 @@ dependencies = [
  "chrono-tz",
  "csv",
  "fastembed",
+ "flate2",
  "futures-util",
  "glob",
  "image",

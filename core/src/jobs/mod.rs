@@ -21,6 +21,7 @@ use crate::events::{
 pub const MAIL_IMPORT: &str = "mail_import";
 pub const MAIL_BACKFILL: &str = "mail_backfill";
 pub const BANK_IMPORT: &str = "bank_import";
+pub const BACKUP: &str = "backup";
 
 /// Who chooses the next step. `docs/src/agents.md` § Agent, workflow, or plain code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -215,6 +216,26 @@ pub const REGISTRY: &[JobSpec] = &[
             DocumentsProjection::NAME,
             RetentionProjection::NAME,
         ],
+    },
+    JobSpec {
+        name: BACKUP,
+        title: "Off-box backup",
+        shape: Shape::PlainCode,
+        trigger: Trigger::Poll("hourly for blobs; the database and config once a UTC day"),
+        host: Host::Server,
+        off_switch: "remove the backup_* secrets",
+        failure: FailurePolicy {
+            retry: "the next hourly tick; a failed nightly pass reruns until one succeeds that day",
+            alert_needs_user: true,
+            alert_failing_hours: Some(24),
+        },
+        output: Output {
+            lands_in: "the encrypted bucket; counts in /jobs",
+            tier: Tier::Ambient,
+        },
+        model: None,
+        // Purge records decide which blobs may leave the backup.
+        reads: &[DocumentsProjection::NAME],
     },
 ];
 

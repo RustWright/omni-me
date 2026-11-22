@@ -24,7 +24,7 @@ cannot be known in advance. Sorted that way, omni-me's jobs are:
 |---|---|---|---|
 | Agent | | | answering a question; the daily check-in |
 | Workflow | | mail import (C0 triage, then C1 extraction); old-mail backfill (one screening call); document enrichment (C2 reader, or C3 transcriber for scans); note structuring (D) | |
-| Plain code | recurring detection; journal auto-close; retention candidates | bank import | chat tidying; search-index refresh |
+| Plain code | recurring detection; journal auto-close; retention candidates | bank import; off-box backup | chat tidying; search-index refresh |
 | Inline | duplicate and reconciliation flags, computed on import or on read | | |
 
 The daily check-in is not a job of its own shape. On the hour it writes a question event with
