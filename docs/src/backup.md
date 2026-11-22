@@ -19,7 +19,9 @@ when it comes out under half the previous night's size.
 The job is `core/src/backup.rs` (feature `backup`, enabled by the server), configured by secrets:
 `backup_endpoint` (https only), `backup_access_key_id`, `backup_secret_access_key`, `backup_bucket`,
 `backup_key`, and `backup_prefix` (`dev/` on dev, which keeps its objects outside the lock rules).
-None set turns the job off; some set is an error naming the rest. Its runs are in `/jobs`.
+None set turns the job off; some set is an error naming the rest. Its runs are in `/jobs`. Dev
+carries the secrets only while the job itself is being tested, then they come out and `dev/` is
+emptied.
 
 Each night it also proves the backup readable: tonight's export is downloaded back and compared
 byte for byte, and three random blobs are restored and must hash to their own names.
