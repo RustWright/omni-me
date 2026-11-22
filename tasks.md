@@ -41,9 +41,6 @@ builds follow them.
 
 ## Waiting on his decision
 
-- [0006] **R2 for the off-box blob copy:** his Cloudflare account, a bucket and a scoped
-  API token. I build the backup job after that. Blobs have exactly one copy today. Offered as
-  a live walkthrough 11-16; he chose later. [USER, then S]
 - [0013] (Parked 11-16 until a real blank delivery item appears; ask with it on screen.)
   **When the authoritative receipt fails to price**, should review offer the
   confirmation's estimate as a fallback? Ask before building. [S]
@@ -80,6 +77,12 @@ builds follow them.
   Adding one means an index change and a projection bump. [M]
 - [0026] **`budget.set` needs a catalogued `budget` type**, which means a `category` column
   and a `BudgetProjection` bump. Without the type, the action is undiscoverable. [M]
+
+## Off-box backup
+
+- [0006] **Build the R2 backup job** per `docs/src/backup.md`: bucket, locks and token exist (his,
+  11-22; values in his password manager only). Needs his go to add rclone to the image, then his `!`
+  command to put the token and key on live. Blobs have one copy until it runs. [M]
 
 ## Bugs
 
