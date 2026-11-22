@@ -49,7 +49,7 @@ ref    = "project.md § Decisions in force"
 [[task]]
 id     = "omni-me-0006"
 title  = "Build the encrypted R2 backup job (blobs, event log, config)"
-status = "todo"
+status = "done"
 size   = "M"
 ref    = "tasks.md § Off-box backup"
 
