@@ -87,6 +87,9 @@ builds follow them.
 
 ## Bugs
 
+- [0118] **A WS transfer half came back alone and was booked twice** (3 on live, from his report):
+  the driver fetches each account's newest 50, so the busier half ages out first. Fixed (`unjoined`
+  in the subprocess contract); ships with PR 9, then probe live for repeats. Duplicates deleted. [S]
 - [0097] **A photo-only email fails the receipt handler** ("produced no extractable text": it
   reads the body and PDF text only), though the archive still files and reads the photo. Whether
   a receipt draft results is unverified (his test mail, dev uid 15062, 2026-11-16). [S]
