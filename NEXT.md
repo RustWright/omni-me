@@ -23,7 +23,6 @@ between uses (ruling 45), `docker start omni-me-agent-dev` resumes it against de
 - **[0006] on live:** he runs `python3 ~/omni-dev-tools/backup_secrets.py live` in his own terminal
   (hidden prompts; prints key names only), then the PR 9 release.
 - **[0115]:** go for the task seed import, hook wiring, and the LEARN feed address.
-- **Live's role D seat:** confirm it is zero-retention before the journal-tick job goes to live (107).
 - **Calendar leftover (his, in Google):** delete the biweekly bookkeeping series in
   `efeogheneerhie.o` (didn't stick). Tim Sarvis's 2027 double: his call, not an issue.
 - [0013] is parked until a real blank delivery item appears in review; ask with it on screen.

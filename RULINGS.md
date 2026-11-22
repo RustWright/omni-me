@@ -296,7 +296,8 @@ edit site carries their reasoning. These are settled. Do not re-open one without
   pointer only (mine, uncontested).
 - **107.** Other people's data goes to ZDR seats only. Benches use synthetic people data to start,
   reconsidered if quality disappoints. The OpenRouter privacy setting ([0010]) is confirmed before
-  OpenRouter's next use, for anything.
+  OpenRouter's next use, for anything. Done, and live's role D (an open-weights model on DeepInfra,
+  called directly) confirmed zero-retention by the user from DeepInfra's data-privacy page.
 - **108.** A confirmed fact outlives its source email under retention, keeping the quoted sentence
   and the sender, date and subject, marked "source expired".
 - **109.** Order: tasks, planning, people, with the people data prep beside the task build. The UI
