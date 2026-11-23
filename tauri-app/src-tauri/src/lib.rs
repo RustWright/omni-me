@@ -825,6 +825,7 @@ pub fn run() {
             // Budget — transactions
             commands::budget::record_transaction,
             commands::budget::update_transaction,
+            commands::budget::preview_postings,
             commands::budget::categorize_transaction,
             commands::budget::tag_transaction,
             commands::budget::delete_transaction,

@@ -4,7 +4,7 @@
 live in `RULINGS.md`, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`), rationale in
 `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
-## ▶ NEXT ACTION — ask which build is next; [0109] leads the [0074] chain
+## ▶ NEXT ACTION — [0120] editor rate field (his pick), then [0109]
 v1.2.8 is fully out: live server `sha-fb67e96`, agent `dev-acc868b`, app published to the updater
 (he updates his daily phone himself). The backup ([0006]) ran its first live pass. Still to watch:
 [0118] when the next joined transfer's busy leg ages out (`~/omni-dev-tools/ws_transfer_dupes_probe.py`).
@@ -21,7 +21,8 @@ between uses (ruling 45), `docker start omni-me-agent-dev` resumes it against de
 
 ## ⛔ Waiting on him
 - **R2 `dev/` folder:** delete it in the dashboard (dev's test run; dev's backup is off).
-- **[0115]:** go for the task seed import, hook wiring, and the LEARN feed address.
+- **[0115]:** held until [0109] lands (his call: planning may revise task decisions); then his go for
+  the seed import, hook wiring, and the LEARN feed address.
 - **Calendar leftover (his, in Google):** delete the biweekly bookkeeping series in
   `efeogheneerhie.o` (didn't stick). Tim Sarvis's 2027 double: his call, not an issue.
 - [0013] is parked until a real blank delivery item appears in review; ask with it on screen.

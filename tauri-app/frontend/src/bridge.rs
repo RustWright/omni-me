@@ -2410,6 +2410,26 @@ pub async fn invoke_update_transaction(
     }
 }
 
+/// What saving these postings would price (ruling 132, RULINGS.md): `Some` sentence when a
+/// two-currency entry gets an inferred rate, `None` when nothing would be priced.
+pub async fn invoke_preview_postings(
+    postings: Vec<serde_json::Value>,
+) -> Result<Option<String>, String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = postings;
+        Ok(None)
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {
+            postings: Vec<serde_json::Value>,
+        }
+        invoke("preview_postings", &Args { postings }).await
+    }
+}
+
 /// Soft-delete a committed transaction. The `TransactionDeleted` event marks the
 /// projection row `removed` and drops the entry from `budget.journal`.
 pub async fn invoke_delete_transaction(txn_id: &str) -> Result<(), String> {

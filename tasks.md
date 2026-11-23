@@ -21,7 +21,7 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 Rulings 90–131, the UI ruled in `design/0102/`, the preps in overlay `*_PREP.md`;
 evidence in `PUSH_0074_RESEARCH.md`. In dependency order. Prep and design sessions need him;
 builds follow them.
-- [0115] **Task inputs only he can give:** go for the seed import (overlay `TASKS_PREP.md`); wiring
+- [0115] **Held until [0109] lands** (his call, 11-22: planning may revise task decisions). **Task inputs only he can give:** go for the seed import (overlay `TASKS_PREP.md`); wiring
   `scripts/task-hub.sh` into the shared session hooks (push and SessionStart receipt, 91, 121);
   the LEARN feed address as `learn_feed_url` in dev and live secrets (122). [USER]
 - [0116] **Task surfaces, with [0109]:** unattached deadlines and `USER` hub items reach him in a

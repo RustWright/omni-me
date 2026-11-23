@@ -123,6 +123,9 @@ edit site carries their reasoning. These are settled. Do not re-open one without
   empty, pointing at its archived copy.
 - **89.** A batch may be committed from the list without opening it only when the sender
   authenticated, the line items summed to a stated total, and nothing raised a warning.
+- **132.** A two-currency entry that does not balance is priced to balance on save, as hledger
+  infers a conversion, and the form shows the rate before saving ([0120]). The non-base currency
+  is priced in the base; with no base among them, the received side in the given side.
 
 ## Data and operations
 - **42.** Live is the pause. Every live step waits for the user's go, one at a time. Dev is mine.
