@@ -5,8 +5,8 @@ live in `RULINGS.md`, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`
 `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
 ## ▶ NEXT ACTION — [0109], the planning build, as slices [0121]–[0127] ([0115] waits for it)
-[0121]–[0123] and [0126] are built (design in `docs/src/planning.md`). [0126], the plan card and
-the Plan view, was checked in the mock only; confirm CI on its push before anything builds on it.
+[0121]–[0123] and [0126] are built, CI green on `ae10c32` (design in `docs/src/planning.md`).
+[0126], the plan card and the Plan view, has been seen in the mock only, never on a device.
 `e152a79` (brief: no lookups of `plan`) is unchecked until the next dev agent image.
 **Next: his pick among [0124], [0125], [0127]** (no dependency orders them; [0127] needs his
 Google setup, live). [0126]'s leftovers (tap-to-chat, S9 look) ride [0125]'s dev APK.
