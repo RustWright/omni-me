@@ -1517,6 +1517,130 @@ pub struct AssistantAsked {
     pub message_id: String,
 }
 
+/// Where a day plan stands (rulings 98, 117). `Other` is a state a newer build added.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanStatus {
+    Proposed,
+    Accepted,
+    Superseded,
+    Skipped,
+    Lapsed,
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SlotKind {
+    Block,
+    Event,
+    Travel,
+    #[serde(other)]
+    Other,
+}
+
+/// One row of a day's timeline; times are local `HH:MM`, formatted by core.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlanSlot {
+    pub kind: SlotKind,
+    pub from: String,
+    pub to: String,
+    pub title: String,
+    #[serde(default)]
+    pub place: Option<String>,
+    #[serde(default)]
+    pub moved: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FitLine {
+    pub text: String,
+    pub over: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DueItem {
+    pub title: String,
+    pub when: String,
+    pub overdue: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UntimedItem {
+    pub title: String,
+    pub minutes: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DayHead {
+    pub date: String,
+    pub weekday: String,
+    pub label: String,
+    #[serde(default)]
+    pub window: Option<String>,
+    #[serde(default)]
+    pub all_day: Vec<String>,
+    #[serde(default)]
+    pub notices: Vec<String>,
+}
+
+/// What the chat shows for one `plan.set` proposal (ruling 117).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlanCard {
+    pub proposal_id: String,
+    pub status: PlanStatus,
+    pub drafted: String,
+    #[serde(default)]
+    pub until: Option<String>,
+    #[serde(default)]
+    pub replaced_at: Option<String>,
+    pub day: DayHead,
+    pub slots: Vec<PlanSlot>,
+    pub untimed: Vec<UntimedItem>,
+    #[serde(default)]
+    pub fit: Option<FitLine>,
+    pub coming_due: Vec<DueItem>,
+    #[serde(default)]
+    pub unread: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TodayView {
+    pub day: DayHead,
+    pub now: String,
+    pub slots: Vec<PlanSlot>,
+    pub now_at: usize,
+    pub blocks_done: usize,
+    pub untimed: Vec<UntimedItem>,
+    #[serde(default)]
+    pub fit: Option<FitLine>,
+    #[serde(default)]
+    pub free: Option<String>,
+    pub pending: bool,
+    pub due: Vec<DueItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WeekRow {
+    pub date: String,
+    pub day: String,
+    pub free_min: i64,
+    #[serde(default)]
+    pub planned_min: Option<i64>,
+    pub hours: String,
+    pub all_day: Vec<String>,
+    pub due: Vec<String>,
+}
+
+/// The read-only view beside chat (ruling 110).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlanView {
+    pub today: TodayView,
+    pub week_title: String,
+    pub week: Vec<WeekRow>,
+}
+
 /// Something the assistant has offered to do, waiting on the user.
 ///
 /// Nothing has happened when one of these exists. The assistant has no write

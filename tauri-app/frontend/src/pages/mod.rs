@@ -5,5 +5,6 @@ pub mod import_export;
 pub mod jobs;
 pub mod journal;
 pub mod notes;
+pub mod plan;
 pub mod routines;
 pub mod settings;

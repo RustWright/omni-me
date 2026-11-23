@@ -13,13 +13,23 @@ use crate::components::primitives::{Button, ButtonSize, ButtonVariant};
 use crate::sync_refresh::{bump_sync_epoch, use_sync_epoch};
 use crate::types::AssistantProposal;
 
+/// One proposal. A day plan gets its own card (ruling 117); everything else the generic one.
+#[component]
+pub fn ProposalCard(proposal: AssistantProposal, on_decided: EventHandler<()>) -> Element {
+    if proposal.action == "plan.set" {
+        rsx! { crate::components::plan_card::PlanProposalCard { proposal, on_decided } }
+    } else {
+        rsx! { GenericProposalCard { proposal, on_decided } }
+    }
+}
+
 /// One proposal, with the two buttons that settle it.
 ///
 /// Both buttons disable while the decision is in flight. Approving twice is
 /// refused by `core` — but the refusal arrives as an error the user did not
 /// cause, and a double-tap on a phone is the ordinary way to produce one.
 #[component]
-pub fn ProposalCard(proposal: AssistantProposal, on_decided: EventHandler<()>) -> Element {
+pub fn GenericProposalCard(proposal: AssistantProposal, on_decided: EventHandler<()>) -> Element {
     let busy = use_signal(|| false);
     let error_msg = use_signal(|| None::<String>);
 

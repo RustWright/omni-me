@@ -92,7 +92,7 @@ const ACTIVITY_KINDS: &[&str] = &["journal_entry_created", "routine_item_complet
 
 /// Activity before this local hour belongs to the night before: a 01:00 journal line is a late
 /// night, not an early start.
-const NIGHT_ENDS_HOUR: i64 = 4;
+pub(crate) const NIGHT_ENDS_HOUR: i64 = 4;
 
 /// His first activity on local `day`, read from the log, which every host holds.
 pub async fn first_activity(

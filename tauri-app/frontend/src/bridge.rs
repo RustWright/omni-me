@@ -5112,6 +5112,36 @@ pub async fn invoke_read_thread_proposals(
     }
 }
 
+/// The card for one `plan.set` proposal; `None` until its detail has synced.
+pub async fn invoke_plan_card(proposal_id: &str) -> Result<Option<crate::types::PlanCard>, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(mock_assistant::plan_card(proposal_id))
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            proposal_id: &'a str,
+        }
+        invoke("plan_card", &Args { proposal_id }).await
+    }
+}
+
+/// What is left of today and the rest of the week.
+pub async fn invoke_plan_view() -> Result<crate::types::PlanView, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(mock_assistant::plan_view())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("plan_view", &Args {}).await
+    }
+}
+
 /// Accept or decline one proposal. Accepting is what authors the change.
 pub async fn invoke_decide_assistant_proposal(
     proposal_id: &str,
@@ -5460,8 +5490,16 @@ mod mock_assistant {
                 let lower = asked.to_lowercase();
                 let demo = cfg!(feature = "demo");
                 let refuses = demo && lower.contains("journal");
-                let proposes =
-                    !refuses && (lower.contains("note") || (demo && lower.contains("remind")));
+                // "plan" proposes a day plan; asking again re-plans, swapping the first two
+                // blocks, so the superseded card and the moved marks are reachable.
+                let plans = !refuses && !demo && lower.contains("plan");
+                let proposes = !refuses
+                    && !plans
+                    && (lower.contains("note") || (demo && lower.contains("remind")));
+                if plans {
+                    let p = plan_proposal(&q.thread_id, &answer_id);
+                    PROPOSALS.with(|list| list.borrow_mut().push(p));
+                }
                 if proposes {
                     let title = if demo { asked.trim() } else { "Renew passport" };
                     let p = note_proposal(&q.thread_id, &answer_id, title, now());
@@ -5688,6 +5726,263 @@ mod mock_assistant {
             found.decision = Some(if approve { "approved" } else { "rejected" }.to_string());
             Ok(found.clone())
         })
+    }
+
+    const PLAN_BLOCKS: [&str; 3] = [
+        "11:00-12:10 Thesis ch. 2: methods draft",
+        "14:15-15:45 omni-me: reminder spike",
+        "16:45-17:45 Write the masters reference request",
+    ];
+    const PLAN_UNTIMED: [&str; 4] = [
+        "Reply to landlord about the lease (10 min)",
+        "Pay the hydro bill (5 min)",
+        "Book the dentist (5 min)",
+        "Return library books (15 min)",
+    ];
+
+    fn plans() -> Vec<AssistantProposal> {
+        PROPOSALS.with(|p| {
+            p.borrow()
+                .iter()
+                .filter(|p| p.action == "plan.set")
+                .cloned()
+                .collect()
+        })
+    }
+
+    /// The first plan, or a re-plan of the last one with its first two blocks swapped and the
+    /// last small thing dropped.
+    fn plan_proposal(thread_id: &str, message_id: &str) -> AssistantProposal {
+        let replan = !plans().is_empty();
+        let mut blocks: Vec<String> = PLAN_BLOCKS.iter().map(|b| b.to_string()).collect();
+        let mut untimed: Vec<&str> = PLAN_UNTIMED.to_vec();
+        if replan {
+            let (a, b) = (blocks[0].split_at(12), blocks[1].split_at(12));
+            blocks = vec![
+                format!("{}{}", a.0, b.1),
+                format!("{}{}", b.0, a.1),
+                blocks[2].clone(),
+            ];
+            untimed.pop();
+        }
+        AssistantProposal {
+            proposal_id: next_id("mock-plan"),
+            thread_id: thread_id.to_string(),
+            message_id: message_id.to_string(),
+            action: "plan.set".into(),
+            args: serde_json::json!({
+                "date": chrono::Utc::now().date_naive().to_string(),
+                "blocks": blocks,
+                "untimed": untimed,
+            }),
+            rationale: "It's tight: the reference email is the thing I'd protect.".into(),
+            reversible: true,
+            created_at: now(),
+            decision: None,
+        }
+    }
+
+    fn texts(p: &AssistantProposal, key: &str) -> Vec<String> {
+        p.args
+            .get(key)
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn day_head() -> crate::types::DayHead {
+        let today = chrono::Utc::now().date_naive();
+        crate::types::DayHead {
+            date: today.to_string(),
+            weekday: today.format("%A").to_string(),
+            label: today.format("%a %-d %b").to_string(),
+            window: Some(
+                "From 11:00 (up 09:40, morning routine 1 h 20) to 22:30 \
+                 (bed 23:30, less evening routine 1 h)"
+                    .into(),
+            ),
+            all_day: vec!["Mum's birthday".into()],
+            notices: vec![],
+        }
+    }
+
+    /// Blocks parsed from `blocks`, among the fixture's calendar events and trip.
+    fn mock_slots(blocks: &[String], before: &[String]) -> Vec<crate::types::PlanSlot> {
+        use crate::types::{PlanSlot, SlotKind};
+        let fixed = |kind, from: &str, to: &str, title: &str, place: Option<&str>| PlanSlot {
+            kind,
+            from: from.into(),
+            to: to.into(),
+            title: title.into(),
+            place: place.map(str::to_string),
+            moved: false,
+        };
+        let mut out = vec![
+            fixed(SlotKind::Travel, "12:15", "13:00", "Travel to Campus", None),
+            fixed(
+                SlotKind::Event,
+                "13:00",
+                "14:00",
+                "Lab meeting",
+                Some("Campus"),
+            ),
+            fixed(SlotKind::Event, "16:00", "16:30", "Call with Dr. Lee", None),
+        ];
+        for b in blocks {
+            let (time, title) = b.split_at(12);
+            let moved = before
+                .iter()
+                .any(|o| o.ends_with(title) && !o.starts_with(time));
+            out.push(PlanSlot {
+                kind: SlotKind::Block,
+                from: time[..5].into(),
+                to: time[6..11].into(),
+                title: title.trim().into(),
+                place: None,
+                moved,
+            });
+        }
+        out.sort_by(|a, b| a.from.cmp(&b.from));
+        out
+    }
+
+    fn untimed_items(texts: &[String]) -> Vec<crate::types::UntimedItem> {
+        texts
+            .iter()
+            .filter_map(|t| {
+                let (title, rest) = t.rsplit_once(" (")?;
+                let minutes = rest.trim_end_matches(" min)").parse().ok()?;
+                Some(crate::types::UntimedItem {
+                    title: title.into(),
+                    minutes,
+                })
+            })
+            .collect()
+    }
+
+    pub fn plan_card(proposal_id: &str) -> Option<crate::types::PlanCard> {
+        use crate::types::{DueItem, FitLine, PlanCard, PlanStatus};
+        let all = plans();
+        let i = all.iter().position(|p| p.proposal_id == proposal_id)?;
+        let p = &all[i];
+        let newer = all.get(i + 1);
+        // As core's `plan::status`: an accepted plan stays in force until a later one is accepted.
+        let later_accepted = all[i + 1..]
+            .iter()
+            .any(|n| n.decision.as_deref() == Some("approved"));
+        let status = match (p.decision.as_deref(), newer) {
+            (Some("approved"), _) if later_accepted => PlanStatus::Superseded,
+            (Some("approved"), _) => PlanStatus::Accepted,
+            (Some(_), _) => PlanStatus::Skipped,
+            (None, Some(_)) => PlanStatus::Superseded,
+            (None, None) => PlanStatus::Proposed,
+        };
+        let before = i
+            .checked_sub(1)
+            .map(|j| texts(&all[j], "blocks"))
+            .unwrap_or_default();
+        let blocks = texts(p, "blocks");
+        let hm = |t: &str| {
+            chrono::DateTime::parse_from_rfc3339(t)
+                .map(|d| d.format("%H:%M").to_string())
+                .unwrap_or_default()
+        };
+        Some(PlanCard {
+            proposal_id: p.proposal_id.clone(),
+            status,
+            drafted: hm(&p.created_at),
+            until: (status == PlanStatus::Proposed).then(|| "11:00".to_string()),
+            replaced_at: newer
+                .filter(|_| status == PlanStatus::Superseded)
+                .map(|n| hm(&n.created_at)),
+            day: day_head(),
+            slots: mock_slots(&blocks, &before),
+            untimed: untimed_items(&texts(p, "untimed")),
+            fit: Some(FitLine {
+                text: "About 5 h 50 of work in 5 h 15 free.".into(),
+                over: true,
+            }),
+            coming_due: vec![
+                DueItem {
+                    title: "Hydro bill, $84.20".into(),
+                    when: "Fri".into(),
+                    overdue: false,
+                },
+                DueItem {
+                    title: "Masters reference request".into(),
+                    when: "Mon".into(),
+                    overdue: false,
+                },
+            ],
+            unread: vec![],
+        })
+    }
+
+    /// Today from the accepted plan, if any, with the now line after the first two rows.
+    pub fn plan_view() -> crate::types::PlanView {
+        use crate::types::{DueItem, FitLine, PlanView, TodayView, WeekRow};
+        let all = plans();
+        let accepted = all
+            .iter()
+            .rev()
+            .find(|p| p.decision.as_deref() == Some("approved"));
+        let blocks = accepted.map(|p| texts(p, "blocks")).unwrap_or_default();
+        const NOW: &str = "15:07";
+        let mut slots = mock_slots(&blocks, &[]);
+        let blocks_done = slots
+            .iter()
+            .filter(|s| s.kind == crate::types::SlotKind::Block && s.to.as_str() <= NOW)
+            .count();
+        slots.retain(|s| s.to.as_str() > NOW);
+        let now_at = slots.iter().filter(|s| s.from.as_str() <= NOW).count();
+        let row = |day: &str, free: i64, planned: Option<i64>, due: &[&str], all_day: &[&str]| {
+            let hours = match planned {
+                Some(p) => format!("{} h / {} h", p / 60, free / 60),
+                None => format!("{} h free", free / 60),
+            };
+            WeekRow {
+                date: String::new(),
+                day: day.into(),
+                free_min: free,
+                planned_min: planned,
+                hours,
+                all_day: all_day.iter().map(|s| s.to_string()).collect(),
+                due: due.iter().map(|s| s.to_string()).collect(),
+            }
+        };
+        PlanView {
+            today: TodayView {
+                day: day_head(),
+                now: NOW.into(),
+                slots,
+                now_at,
+                blocks_done,
+                untimed: accepted
+                    .map(|p| untimed_items(&texts(p, "untimed")))
+                    .unwrap_or_default(),
+                fit: accepted.map(|_| FitLine {
+                    text: "5 h 35 in 5 h 15 free".into(),
+                    over: true,
+                }),
+                free: accepted.is_none().then(|| "3 h 10 free".to_string()),
+                pending: accepted.is_none() && all.iter().any(|p| p.decision.is_none()),
+                due: vec![DueItem {
+                    title: "Pay the hydro bill".into(),
+                    when: "today".into(),
+                    overdue: false,
+                }],
+            },
+            week_title: "Rest of the week".into(),
+            week: vec![
+                row("Fri", 360, Some(180), &["Hydro bill"], &[]),
+                row("Sat", 480, None, &[], &["Long run"]),
+                row("Sun", 420, None, &[], &[]),
+            ],
+        }
     }
 
     pub fn threads() -> Vec<AssistantThread> {

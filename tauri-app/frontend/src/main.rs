@@ -30,6 +30,7 @@ use pages::assistant::AssistantPage;
 use pages::finances::FinancesPage;
 use pages::journal::JournalPage;
 use pages::notes::NotesPage;
+use pages::plan::PlanPage;
 use pages::routines::RoutinesPage;
 use pages::settings::SettingsPage;
 use screen_context::{ScreenContext, ScreenReport};
@@ -41,6 +42,7 @@ pub enum Tab {
     Journal,
     Notes,
     Assistant,
+    Plan,
     Routines,
     Finances,
     Archive,
@@ -56,6 +58,7 @@ impl Tab {
             Tab::Journal => "journal",
             Tab::Notes => "notes",
             Tab::Assistant => "assistant",
+            Tab::Plan => "plan",
             Tab::Routines => "routines",
             Tab::Finances => "finances",
             Tab::Archive => "archive",
@@ -68,6 +71,7 @@ impl Tab {
             "journal" => Some(Tab::Journal),
             "notes" => Some(Tab::Notes),
             "assistant" => Some(Tab::Assistant),
+            "plan" => Some(Tab::Plan),
             "routines" => Some(Tab::Routines),
             "finances" => Some(Tab::Finances),
             "archive" => Some(Tab::Archive),
@@ -85,6 +89,7 @@ impl Tab {
             Tab::Journal => Some(types::Feature::Journal),
             Tab::Notes => Some(types::Feature::Notes),
             Tab::Assistant => Some(types::Feature::Llm),
+            Tab::Plan => Some(types::Feature::Planning),
             Tab::Routines => Some(types::Feature::Routines),
             Tab::Finances => Some(types::Feature::Finances),
             Tab::Archive => Some(types::Feature::Documents),
@@ -1044,6 +1049,7 @@ fn App() -> Element {
                             Tab::Finances => rsx! { FinancesPage {} },
                             Tab::Archive => rsx! { ArchivePage {} },
                             Tab::Assistant => rsx! { AssistantPage {} },
+                            Tab::Plan => rsx! { PlanPage {} },
                             Tab::Settings => rsx! { SettingsPage {} },
                         }
                     }

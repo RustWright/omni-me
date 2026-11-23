@@ -161,12 +161,14 @@ pub struct PlanProposal {
     pub created_at: DateTime<Utc>,
     /// Local block texts, as proposed.
     pub blocks: Vec<String>,
+    /// Untimed item texts, as proposed.
+    pub untimed: Vec<String>,
     pub decision: Option<String>,
     pub decided_reason: Option<String>,
 }
 
 impl PlanProposal {
-    fn is_newer_than(&self, other: &PlanProposal) -> bool {
+    pub(crate) fn is_newer_than(&self, other: &PlanProposal) -> bool {
         (self.created_at, &self.proposal_id) > (other.created_at, &other.proposal_id)
     }
 }
@@ -227,7 +229,16 @@ pub async fn pending(db: &Database) -> Result<Vec<PlanProposal>, String> {
     query_plans(db, "WHERE action = $action AND decision IS NONE", None).await
 }
 
-/// Read column by column, as `assistant::inbox` does, since `args` is a free-form object.
+/// One plan by its proposal id; `None` when it is not a plan, or its detail has not arrived.
+pub async fn by_id(db: &Database, proposal_id: &str) -> Result<Option<PlanProposal>, String> {
+    let sql = format!("{PLAN_COLUMNS} WHERE action = $action AND proposal_id = $id");
+    let query = db
+        .query(sql)
+        .bind(("action", PLAN_SET.to_string()))
+        .bind(("id", proposal_id.to_string()));
+    Ok(read_plans(query).await?.into_iter().next())
+}
+
 async fn query_plans(
     db: &Database,
     filter: &str,
@@ -239,6 +250,13 @@ async fn query_plans(
         Some(d) => query.bind(("date", d.to_string())),
         None => query,
     };
+    read_plans(query).await
+}
+
+/// Read column by column, as `assistant::inbox` does, since `args` is a free-form object.
+async fn read_plans(
+    query: surrealdb::method::Query<'_, surrealdb::engine::local::Db>,
+) -> Result<Vec<PlanProposal>, String> {
     let mut resp = query
         .await
         .map_err(|e| e.to_string())?
@@ -280,21 +298,23 @@ fn plan_proposal(
     let created_at = DateTime::parse_from_rfc3339(created_at.as_deref()?)
         .ok()?
         .with_timezone(&Utc);
-    let blocks = args
-        .get("blocks")
-        .and_then(|b| b.as_array())
-        .map(|b| {
-            b.iter()
-                .filter_map(|v| v.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default();
+    let texts = |key: &str| -> Vec<String> {
+        args.get(key)
+            .and_then(|b| b.as_array())
+            .map(|b| {
+                b.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
     Some(PlanProposal {
         proposal_id,
         thread_id: thread_id?,
         date,
         created_at,
-        blocks,
+        blocks: texts("blocks"),
+        untimed: texts("untimed"),
         decision,
         decided_reason,
     })
@@ -576,6 +596,7 @@ mod tests {
             date: "2026-11-23".parse().unwrap(),
             created_at: at(created),
             blocks: vec![],
+            untimed: vec![],
             decision: decision.map(str::to_string),
             decided_reason: reason.map(str::to_string),
         }

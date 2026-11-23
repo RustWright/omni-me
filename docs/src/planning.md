@@ -130,6 +130,30 @@ plan, and plans are almost always for today or tomorrow. Planning stays out of t
 catalogue, so the brief is also where the model learns `plan.set`'s name, and a test holds it
 to naming every planning action.
 
+## The card and the view
+
+A plan reaches you as a card in chat, and an accepted plan is shown in the Plan view beside
+chat. Both are read from `planning::view`, which does every sum and formats every time, so the
+app does no zone arithmetic and the two cannot disagree about a day.
+
+**The card shows the day the plan was checked against.** Calendar events and travel sit
+inline and greyed among the blocks, so the fit line can be read against the day. The fit is
+worked out against the free time as it stood when the plan was drafted, the same check
+`propose` ran. The fit line is the only coloured line: amber when over, green within, and it
+never blocks Accept.
+
+**A re-plan collapses the old card to one line** ("Plan for Thursday, 09:42 · replaced by
+10:05"), and each block that sits somewhere else than a same-titled block in the plan before
+it is marked "moved". "Skip today" declines with the reason `skip today`, which is what the
+status reads back as Skipped. A card that cannot be read falls back to the ordinary proposal
+card, so a plan is never left undecidable.
+
+**The view is one scroll** (ruling 110): what is left of today, with a line where now is, then
+the rest of the week as planned-against-free rows. On a Sunday the rows are the week ahead.
+Before 04:00 the view still shows the night before's day, as first activity does. The month's
+goals are the third part of the ruling; they join the view when the monthly review produces
+them ([0124]), since nothing records a goal yet.
+
 ## The morning ritual
 
 The morning plan is drafted when your day starts: at your first activity, or at the fallback

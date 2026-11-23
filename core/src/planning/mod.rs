@@ -7,3 +7,4 @@ pub mod fit;
 pub mod places;
 pub mod plan;
 pub mod ritual;
+pub mod view;

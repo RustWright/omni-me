@@ -76,7 +76,7 @@ impl FreeTime {
 
 /// The timed events he is going to: a clash he answered keeps only his choice, and an
 /// unanswered one keeps both, though travel follows the earlier (ruling 116).
-fn attended<'a>(day: &Day<'a>) -> (Vec<&'a CalendarEvent>, Vec<&'a str>) {
+pub(crate) fn attended<'a>(day: &Day<'a>) -> (Vec<&'a CalendarEvent>, Vec<&'a str>) {
     let mut dropped: Vec<&'a str> = Vec::new();
     let mut follow_skip: Vec<&'a str> = Vec::new();
     for clash in &day.clashes {

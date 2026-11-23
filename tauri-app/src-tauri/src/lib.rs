@@ -801,6 +801,8 @@ pub fn run() {
             commands::assistant::list_finance_proposals,
             commands::assistant::read_thread_proposals,
             commands::assistant::decide_assistant_proposal,
+            commands::planning::plan_card,
+            commands::planning::plan_view,
             commands::assistant::archive_assistant_thread,
             commands::assistant::delete_assistant_thread,
             commands::assistant::list_beliefs,
