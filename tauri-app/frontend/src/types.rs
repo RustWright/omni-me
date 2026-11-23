@@ -424,6 +424,7 @@ pub enum Feature {
     Llm,
     Documents,
     Tasks,
+    Planning,
 }
 
 pub const ALL_FEATURES: &[Feature] = &[
@@ -435,6 +436,7 @@ pub const ALL_FEATURES: &[Feature] = &[
     Feature::Llm,
     Feature::Documents,
     Feature::Tasks,
+    Feature::Planning,
 ];
 
 impl Feature {
@@ -448,6 +450,7 @@ impl Feature {
             Feature::Llm => "feature.llm",
             Feature::Documents => "feature.documents",
             Feature::Tasks => "feature.tasks",
+            Feature::Planning => "feature.planning",
         }
     }
 
@@ -2402,6 +2405,7 @@ mod feature_tests {
             "feature.llm",
             "feature.documents",
             "feature.tasks",
+            "feature.planning",
         ];
         let actual: Vec<&str> = ALL_FEATURES.iter().map(|f| f.key()).collect();
         assert_eq!(actual, expected);

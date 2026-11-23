@@ -393,8 +393,8 @@ edit site carries their reasoning. These are settled. Do not re-open one without
 - **131.** A repeating obligation (rent, renewals) is a task with a repeat rule, and each
   occurrence is its own task with its own due date, so one slipping never moves the next and the
   record shows which were late. Not routines, which are habits (`Frequency::Custom` is [2,31]).
-- **132.** The calendar is read through the Google Calendar API with a read-only scope, not the
-  secret iCal address: Google expands recurrence and tracks changes, which 113's fresh fetch needs.
+- **133.** The calendar is read through the Google Calendar API with a read-only scope, not the
+  secret iCal address: Google expands recurrence and serves edits at once, which 113 needs.
   The Google connector lives in the private overlay, as bank drivers do; the public engine holds a
   provider-neutral event, a calendar-source interface and all of planning, so an adopter plugs in
   their own source. The OAuth app must be set to "In production", or its token expires in 7 days.

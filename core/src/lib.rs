@@ -13,6 +13,7 @@ pub mod backup;
 pub mod balances;
 pub mod blob;
 pub mod budget;
+pub mod calendar;
 pub mod config;
 pub mod credentials;
 pub mod dashboard;

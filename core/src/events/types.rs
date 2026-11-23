@@ -112,6 +112,9 @@ pub enum EventType {
     TaskProjectClosed,
     HubIndexReceived,
     DeadlineFeedReceived,
+    // Planning: the calendar as read in (ruling 96), and his answers about it.
+    CalendarChanged,
+    CalendarAnswered,
 }
 
 impl fmt::Display for EventType {
@@ -183,6 +186,8 @@ impl fmt::Display for EventType {
             EventType::TaskProjectClosed => "task_project_closed",
             EventType::HubIndexReceived => "hub_index_received",
             EventType::DeadlineFeedReceived => "deadline_feed_received",
+            EventType::CalendarChanged => "calendar_changed",
+            EventType::CalendarAnswered => "calendar_answered",
         };
         write!(f, "{s}")
     }
@@ -259,6 +264,8 @@ impl FromStr for EventType {
             "task_project_closed" => Ok(EventType::TaskProjectClosed),
             "hub_index_received" => Ok(EventType::HubIndexReceived),
             "deadline_feed_received" => Ok(EventType::DeadlineFeedReceived),
+            "calendar_changed" => Ok(EventType::CalendarChanged),
+            "calendar_answered" => Ok(EventType::CalendarAnswered),
             other => Err(format!("unknown event type: {other}")),
         }
     }
@@ -337,6 +344,8 @@ impl EventType {
         EventType::TaskProjectClosed,
         EventType::HubIndexReceived,
         EventType::DeadlineFeedReceived,
+        EventType::CalendarChanged,
+        EventType::CalendarAnswered,
     ];
 
     /// Every event type a set of features owns, for a scoped wipe.
@@ -462,6 +471,8 @@ impl EventType {
             | EventType::TaskProjectClosed
             | EventType::HubIndexReceived
             | EventType::DeadlineFeedReceived => &[Feature::Tasks],
+
+            EventType::CalendarChanged | EventType::CalendarAnswered => &[Feature::Planning],
 
             EventType::DataWiped
             | EventType::FeedbackCaptured
@@ -1855,6 +1866,53 @@ pub type HubIndexReceivedPayload = crate::tasks::hub::HubIndex;
 /// A read of a deadline feed (LEARN), parsed. `aggregate_id` is the feed's source name.
 pub type DeadlineFeedReceivedPayload = crate::tasks::deadlines::DeadlineFeed;
 
+/// What one read of a calendar source changed. `aggregate_id` is the source's name.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CalendarChangedPayload {
+    pub source: String,
+    /// New and changed occurrences, whole.
+    #[serde(default)]
+    pub upserted: Vec<crate::calendar::CalendarEvent>,
+    /// Uids no longer in the calendar.
+    #[serde(default)]
+    pub removed: Vec<String>,
+}
+
+/// One of his answers about the calendar. `aggregate_id` is [`CalendarAnswer::key`]; a later
+/// answer to the same key replaces the earlier one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CalendarAnsweredPayload {
+    pub answer: CalendarAnswer,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CalendarAnswer {
+    /// Whether an all-day event or series takes the day (111).
+    TakesDay { series: String, takes_day: bool },
+    /// The place a series happens at (126).
+    Place { series: String, place: String },
+    /// Which of two clashing events he is going to, that day only (116).
+    Clash {
+        day: chrono::NaiveDate,
+        a: String,
+        b: String,
+        going_to: String,
+    },
+}
+
+impl CalendarAnswer {
+    pub fn key(&self) -> String {
+        match self {
+            CalendarAnswer::TakesDay { series, .. } => format!("takes_day:{series}"),
+            CalendarAnswer::Place { series, .. } => format!("place:{series}"),
+            CalendarAnswer::Clash { day, a, b, .. } => {
+                format!("clash:{day}:{}", crate::calendar::day::pair_key(a, b))
+            }
+        }
+    }
+}
+
 /// Keys the projection hoists into columns. See [`DocumentFieldsExtractedPayload::fields`].
 pub const DOCUMENT_KIND_KEY: &str = "kind";
 pub const DOCUMENT_TITLE_KEY: &str = "title";
@@ -2031,6 +2089,12 @@ pub fn validate_payload(
         }
         EventType::DeadlineFeedReceived => {
             serde_json::from_value::<DeadlineFeedReceivedPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::CalendarChanged => {
+            serde_json::from_value::<CalendarChangedPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::CalendarAnswered => {
+            serde_json::from_value::<CalendarAnsweredPayload>(payload.clone()).map(|_| ())
         }
         EventType::RecordTypeDeclared => {
             serde_json::from_value::<RecordTypeDeclaredPayload>(payload.clone()).map(|_| ())
@@ -2231,10 +2295,12 @@ mod tests {
                 | EventType::TaskProjectCreated
                 | EventType::TaskProjectClosed
                 | EventType::HubIndexReceived
-                | EventType::DeadlineFeedReceived => counted += 1,
+                | EventType::DeadlineFeedReceived
+                | EventType::CalendarChanged
+                | EventType::CalendarAnswered => counted += 1,
             }
         }
-        assert_eq!(counted, 66, "EventType::ALL does not list every variant");
+        assert_eq!(counted, 68, "EventType::ALL does not list every variant");
 
         let unique: std::collections::BTreeSet<String> =
             EventType::ALL.iter().map(|t| t.to_string()).collect();

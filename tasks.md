@@ -28,14 +28,14 @@ builds follow them.
   ritual, the hub trial's acted/dismissed record (92), courses closed at term end (123), staleness
   thresholds as settings (92), timer controls on the view (93), an "inferred" mark on ticks (127). [M]
 - [0109] **Planning build:** read-only calendar (96; source interface public, Google connector
-  in the overlay, 132), plan records, the ritual tier and summary
+  in the overlay, 133), plan records, the ritual tier and summary
   lines (98), block reminders, the load measure (99). Needs [0106]. Reminders per [0104]'s results
   (`PUSH_0074_RESEARCH.md` Appendix B): plugin 2.4.0, reschedule on every start, `USE_EXACT_ALARM`
   (his phone is Android 15), `start:<block>` action ids; MainActivity reads a Start tap
   from the launch intent so it works on a closed app (his call), handed over like the deep link. [L]
   Built as the slices below, in dependency order; [0109] closes when they all have.
 - [0121] **Calendar core (public):** provider-neutral event, a calendar-source trait, change
-  events and projection, the 15-minute poll and fetch before each plan (113), labels, busy,
+  events and projection, one read as a snapshot diff (113), labels, busy,
   duplicates and clashes (111, 116, 125), series place answers (126). Tested on a fake source. [M]
 - [0122] **Free time and fit (plain code):** the day window from first activity plus routines to
   the bedtime target (114), places and travel buffers (115, 126), routine minutes off free time,
@@ -49,8 +49,9 @@ builds follow them.
   dev APK on the S9. Needs [0123]. [M]
 - [0126] **The read-only view and plan card** (110, 117), per `design/0102/`. My assumption that
   it belongs in [0109]: no item names it, and [0116] puts timer controls on it. Needs [0123]. [M]
-- [0127] **Google connector (overlay, 132):** read-only OAuth, sync token, both calendars. Needs
-  his Google Cloud setup, walked through live when this slice starts. Needs [0121]. [M]
+- [0127] **Google connector (overlay, 133):** read-only OAuth, window snapshots, both calendars. Needs
+  his Google Cloud setup, walked through live when this slice starts. Also wires the server's
+  15-minute read (113) through `RunConfig`, since the public server has no source. Needs [0121]. [M]
 - [0110] **People build:** mentions, facts, resolution, pickers and group cards (102–104), merge
   and unmerge reversible for every attached record from the first event, the person view and the
   People tab with model-free search (118–120), per `design/0102/`; task text as a source (124);

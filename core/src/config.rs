@@ -26,6 +26,7 @@ pub enum ConfigKey {
     FeatureLlm,
     FeatureDocuments,
     FeatureTasks,
+    FeaturePlanning,
     AppearanceTheme,
     AppearanceAccent,
     AssistantEmbedModel,
@@ -85,6 +86,7 @@ pub const ALL_KEYS: &[ConfigKey] = &[
     ConfigKey::FeatureLlm,
     ConfigKey::FeatureDocuments,
     ConfigKey::FeatureTasks,
+    ConfigKey::FeaturePlanning,
     ConfigKey::AppearanceTheme,
     ConfigKey::AppearanceAccent,
     ConfigKey::AssistantEmbedModel,
@@ -159,6 +161,7 @@ impl fmt::Display for ConfigKey {
             ConfigKey::FeatureLlm => "feature.llm",
             ConfigKey::FeatureDocuments => "feature.documents",
             ConfigKey::FeatureTasks => "feature.tasks",
+            ConfigKey::FeaturePlanning => "feature.planning",
             ConfigKey::AppearanceTheme => "appearance.theme",
             ConfigKey::AppearanceAccent => "appearance.accent",
             ConfigKey::AssistantEmbedModel => "assistant.embed_model",
@@ -202,6 +205,7 @@ impl FromStr for ConfigKey {
             "feature.llm" => Ok(ConfigKey::FeatureLlm),
             "feature.documents" => Ok(ConfigKey::FeatureDocuments),
             "feature.tasks" => Ok(ConfigKey::FeatureTasks),
+            "feature.planning" => Ok(ConfigKey::FeaturePlanning),
             "appearance.theme" => Ok(ConfigKey::AppearanceTheme),
             "appearance.accent" => Ok(ConfigKey::AppearanceAccent),
             "assistant.embed_model" => Ok(ConfigKey::AssistantEmbedModel),
@@ -347,7 +351,8 @@ impl ConfigKey {
             | ConfigKey::FeatureAutoImport
             | ConfigKey::FeatureLlm
             | ConfigKey::FeatureDocuments
-            | ConfigKey::FeatureTasks => ConfigValue::Bool(true),
+            | ConfigKey::FeatureTasks
+            | ConfigKey::FeaturePlanning => ConfigValue::Bool(true),
             ConfigKey::AppearanceTheme => ConfigValue::Text("dark".to_string()),
             ConfigKey::AppearanceAccent => ConfigValue::Text("blue".to_string()),
             // 384 dimensions and 133 MB: the largest embedder that leaves room for
@@ -440,6 +445,7 @@ impl ConfigKey {
             | ConfigKey::FeatureLlm
             | ConfigKey::FeatureDocuments
             | ConfigKey::FeatureTasks
+            | ConfigKey::FeaturePlanning
             | ConfigKey::AssistantRerank
             | ConfigKey::AssistantCheckIn
             | ConfigKey::NotifyChargesAtNight => ValueKind::Bool,
@@ -508,6 +514,7 @@ impl ConfigKey {
             | ConfigKey::FeatureLlm
             | ConfigKey::FeatureDocuments
             | ConfigKey::FeatureTasks
+            | ConfigKey::FeaturePlanning
             // Models are loaded once at startup and held resident. Reloading one
             // mid-run would stall every question for the length of a download.
             | ConfigKey::AssistantEmbedModel
@@ -527,6 +534,7 @@ impl ConfigKey {
             ConfigKey::FeatureLlm => "LLM",
             ConfigKey::FeatureDocuments => "Documents",
             ConfigKey::FeatureTasks => "Tasks",
+            ConfigKey::FeaturePlanning => "Planning",
             ConfigKey::AppearanceTheme => "Theme",
             ConfigKey::AppearanceAccent => "Accent",
             ConfigKey::AssistantEmbedModel => "Embedding model",
@@ -571,6 +579,7 @@ impl ConfigKey {
             ConfigKey::FeatureLlm => Some(Feature::Llm),
             ConfigKey::FeatureDocuments => Some(Feature::Documents),
             ConfigKey::FeatureTasks => Some(Feature::Tasks),
+            ConfigKey::FeaturePlanning => Some(Feature::Planning),
             ConfigKey::AppearanceTheme
             | ConfigKey::AppearanceAccent
             // Not a `Feature`: these own no projection, no tab and no scheduler.
@@ -615,7 +624,8 @@ impl ConfigKey {
             | ConfigKey::FeatureAutoImport
             | ConfigKey::FeatureLlm
             | ConfigKey::FeatureDocuments
-            | ConfigKey::FeatureTasks => ConfigGroup::Features,
+            | ConfigKey::FeatureTasks
+            | ConfigKey::FeaturePlanning => ConfigGroup::Features,
             ConfigKey::AppearanceTheme | ConfigKey::AppearanceAccent => ConfigGroup::Appearance,
             ConfigKey::AssistantEmbedModel
             | ConfigKey::AssistantRerank
@@ -749,6 +759,7 @@ pub enum Feature {
     Llm,
     Documents,
     Tasks,
+    Planning,
 }
 
 /// Every feature, in the order [`ALL_KEYS`] lists their switches.
@@ -761,6 +772,7 @@ pub const ALL_FEATURES: &[Feature] = &[
     Feature::Llm,
     Feature::Documents,
     Feature::Tasks,
+    Feature::Planning,
 ];
 
 impl Feature {
@@ -775,6 +787,7 @@ impl Feature {
             Feature::Llm => ConfigKey::FeatureLlm,
             Feature::Documents => ConfigKey::FeatureDocuments,
             Feature::Tasks => ConfigKey::FeatureTasks,
+            Feature::Planning => ConfigKey::FeaturePlanning,
         }
     }
 
@@ -910,6 +923,7 @@ mod tests {
                 | ConfigKey::FeatureLlm
                 | ConfigKey::FeatureDocuments
                 | ConfigKey::FeatureTasks
+                | ConfigKey::FeaturePlanning
                 | ConfigKey::AppearanceTheme
                 | ConfigKey::AppearanceAccent
                 | ConfigKey::AssistantEmbedModel
@@ -938,7 +952,7 @@ mod tests {
             }
         }
         assert_eq!(
-            counted, 33,
+            counted, 34,
             "ALL_KEYS does not list every ConfigKey variant"
         );
 
@@ -976,11 +990,12 @@ mod tests {
                 | Feature::AutoImport
                 | Feature::Llm
                 | Feature::Documents
-                | Feature::Tasks => counted += 1,
+                | Feature::Tasks
+                | Feature::Planning => counted += 1,
             }
         }
         assert_eq!(
-            counted, 8,
+            counted, 9,
             "ALL_FEATURES does not list every Feature variant"
         );
 
