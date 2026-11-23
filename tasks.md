@@ -27,7 +27,8 @@ builds follow them.
 - [0116] **Task surfaces, with [0109]:** unattached deadlines and `USER` hub items reach him in a
   ritual, the hub trial's acted/dismissed record (92), courses closed at term end (123), staleness
   thresholds as settings (92), timer controls on the view (93), an "inferred" mark on ticks (127). [M]
-- [0109] **Planning build:** read-only calendar (96), plan records, the ritual tier and summary
+- [0109] **Planning build:** read-only calendar (96; source interface public, Google connector
+  in the overlay, 132), plan records, the ritual tier and summary
   lines (98), block reminders, the load measure (99). Needs [0106]. Reminders per [0104]'s results
   (`PUSH_0074_RESEARCH.md` Appendix B): plugin 2.4.0, reschedule on every start, `USE_EXACT_ALARM`
   (his phone is Android 15), `start:<block>` action ids; MainActivity reads a Start tap
