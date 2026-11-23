@@ -4,13 +4,14 @@
 live in `RULINGS.md`, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`), rationale in
 `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
-## ▶ NEXT ACTION — ask his go for the v1.2.8 app release, then install with logcat ([0117])
-v1.2.8 is on live (server `sha-fb67e96`, agent `dev-acc868b`): PR 9 merged, the backup ([0006]) ran
-its first live pass. Still to watch: [0118] when the next joined transfer's busy leg ages out
-(`~/omni-dev-tools/ws_transfer_dupes_probe.py`). The next build is his to pick; [0109] leads.
+## ▶ NEXT ACTION — ask which build is next; [0109] leads the [0074] chain
+v1.2.8 is fully out: live server `sha-fb67e96`, agent `dev-acc868b`, app published to the updater
+(he updates his daily phone himself). The backup ([0006]) ran its first live pass. Still to watch:
+[0118] when the next joined transfer's busy leg ages out (`~/omni-dev-tools/ws_transfer_dupes_probe.py`).
 
-⛔ Live is the pause: every live step waits for his go, one at a time. The app release and the task
-seed import still wait for his go.
+⛔ Live is the pause: every live step waits for his go, one at a time. The task seed import still
+waits for his go. [0117]'s logcat watch is for the next dev APK on the S9 (the dev phone), never
+the release on his daily phone.
 ⛔ **Never `cargo build`/`test` on this box** (`project-dev-machines-and-build-limits`); the mock demo
 page is the one exception. Renders use the cached headless shell
 (`~/.cache/ms-playwright/chromium_headless_shell-*/…/chrome-headless-shell --screenshot`).
