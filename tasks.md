@@ -80,6 +80,9 @@ builds follow them.
 
 ## Bugs
 
+- [0119] **A Wise conversion arrived as two one-sided rows** (his report, Nov 22 USD to CAD): Wise
+  reports each side per balance under one reference. Fixed: joined after dedup (overlay `624e51b`),
+  ships with the next release. Watch the first conversion after it. [XS]
 - [0118] **Watch the WS transfer fix on live:** shipped in v1.2.8; confirm no lone "Money transfer:
   from…" row reaches Reconcile when the next joined transfer's busy leg ages out. [XS]
 - [0097] **A photo-only email fails the receipt handler** ("produced no extractable text": it
