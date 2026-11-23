@@ -8,7 +8,7 @@ live in `RULINGS.md`, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`
 v1.2.8 is fully out: live server `sha-fb67e96`, agent `dev-acc868b`, app published to the updater
 (he updates his daily phone himself). The backup ([0006]) ran its first live pass. Still to watch:
 [0118] when the next joined transfer's busy leg ages out (`~/omni-dev-tools/ws_transfer_dupes_probe.py`).
-[0119] (Wise conversions) is fixed on the overlay dev branch and waits for the next release (ruling 46).
+[0119] (Wise conversions, overlay `a9d79e4`) waits for the next release (ruling 46); [0120] is the editor gap.
 
 ⛔ Live is the pause: every live step waits for his go, one at a time. The task seed import still
 waits for his go. [0117]'s logcat watch is for the next dev APK on the S9 (the dev phone), never
@@ -21,8 +21,6 @@ between uses (ruling 45), `docker start omni-me-agent-dev` resumes it against de
 
 ## ⛔ Waiting on him
 - **R2 `dev/` folder:** delete it in the dashboard (dev's test run; dev's backup is off).
-- **[0119] Nov 22 conversion:** he merges the two rows in the app (edit the USD one's Unmatched leg to
-  CAD 214.54, delete the CAD one).
 - **[0115]:** go for the task seed import, hook wiring, and the LEARN feed address.
 - **Calendar leftover (his, in Google):** delete the biweekly bookkeeping series in
   `efeogheneerhie.o` (didn't stick). Tim Sarvis's 2027 double: his call, not an issue.
