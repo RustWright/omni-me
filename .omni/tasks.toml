@@ -2,7 +2,7 @@ schema  = 1
 project = "omni-me"
 cycle   = 6
 updated = 2026-11-22
-next_id = 121
+next_id = 128
 
 # Narrative lives in tasks.md. Contract: ../../setup_files/TASK_HUB_CONTRACT.md
 # Public repo: titles are public. Keep private identity out.
@@ -786,6 +786,61 @@ status = "todo"
 size   = "L"
 ref    = "tasks.md § Cycle 6"
 blocked_by = ["omni-me-0104", "omni-me-0106", "omni-me-0112", "omni-me-0114"]
+
+[[task]]
+id     = "omni-me-0121"
+title  = "Calendar core: event model, source trait, change events, poll"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Cycle 6"
+
+[[task]]
+id     = "omni-me-0122"
+title  = "Free time and fit: day window, travel buffers, validator"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Cycle 6"
+blocked_by = ["omni-me-0121"]
+
+[[task]]
+id     = "omni-me-0123"
+title  = "Plans and the planning specialist, morning ritual job"
+status = "todo"
+size   = "L"
+ref    = "tasks.md § Cycle 6"
+blocked_by = ["omni-me-0122"]
+
+[[task]]
+id     = "omni-me-0124"
+title  = "Ritual summary lines and the load measure"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Cycle 6"
+blocked_by = ["omni-me-0123"]
+
+[[task]]
+id     = "omni-me-0125"
+title  = "Block reminders and Start on the app"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Cycle 6"
+blocked_by = ["omni-me-0123"]
+
+[[task]]
+id     = "omni-me-0126"
+title  = "Read-only view and plan card"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Cycle 6"
+blocked_by = ["omni-me-0123"]
+
+[[task]]
+id     = "omni-me-0127"
+title  = "Google Calendar connector in the overlay"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Cycle 6"
+blocked_by = ["omni-me-0121"]
 
 [[task]]
 id     = "omni-me-0110"
