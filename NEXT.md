@@ -9,8 +9,9 @@ live in `RULINGS.md`, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`
 build, with his places seeded. Not yet seen working end to end: a real plan request through the
 new dev agent image (`dev-e2cf053`); the classifier refused my reading the dev agent's env, so it
 is his to run, or a fresh dev container on that tag.
-Ready next, all needing only [0123]: [0124] ritual summary lines and load, [0125] block reminders
-(app), [0126] the view and plan card, [0127] the Google connector (his setup, live). Order is his.
+**Next: [0126], the read-only view and plan card** (his pick, 11-23), in a fresh session: read
+`design/0102/` § 1 and `UI_WORKFLOW.md` first; the card reads `planning::plan` (status, fit).
+After it, in no set order: [0124], [0125], [0127] (his Google setup, live).
 v1.2.8 is fully out. Still to watch: [0118] when the next joined transfer's busy leg ages out
 (`~/omni-dev-tools/ws_transfer_dupes_probe.py`). [0119] and [0120] wait for the next release (46).
 
@@ -22,7 +23,7 @@ The dev agent runs on this machine in Docker, since the box cannot fit it beside
 between uses (ruling 45), `docker start omni-me-agent-dev` resumes it against dev :3001.
 
 ## ⛔ Waiting on him
-- **Which planning slice next** ([0124]–[0127]), and the dev plan-request check above.
+- **The dev plan-request check above** (new agent image on the S9).
 - **[0123] on live:** his go to seed places and set Settings → Planning (`tasks.md` [0123]).
 - **Public history:** an earlier public `NEXT.md` named part of his email and a contact; this
   rewrite drops both, but history keeps them. His call whether that matters.
