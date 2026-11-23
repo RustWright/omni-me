@@ -841,7 +841,7 @@ blocked_by = ["omni-me-0109"]
 [[task]]
 id     = "omni-me-0117"
 title  = "Watch the next app upgrade for the first-launch crash"
-status = "todo"
+status = "done"
 size   = "S"
 ref    = "tasks.md § Cycle 6"
 
@@ -862,6 +862,6 @@ ref    = "tasks.md § Bugs"
 [[task]]
 id     = "omni-me-0120"
 title  = "Transaction editor cannot hold a two-currency entry"
-status = "todo"
+status = "doing"
 size   = "S"
 ref    = "tasks.md § Bugs"

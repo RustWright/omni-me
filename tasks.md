@@ -27,8 +27,6 @@ builds follow them.
 - [0116] **Task surfaces, with [0109]:** unattached deadlines and `USER` hub items reach him in a
   ritual, the hub trial's acted/dismissed record (92), courses closed at term end (123), staleness
   thresholds as settings (92), timer controls on the view (93), an "inferred" mark on ticks (127). [M]
-- [0117] **1.1.54 crashed on the S9's first launches after the upgrade**, before a reboot; no log
-  survived, and it ran clean after. Watch the next upgrade with logcat running before any release. [S]
 - [0109] **Planning build:** read-only calendar (96), plan records, the ritual tier and summary
   lines (98), block reminders, the load measure (99). Needs [0106]. Reminders per [0104]'s results
   (`PUSH_0074_RESEARCH.md` Appendix B): plugin 2.4.0, reschedule on every start, `USE_EXACT_ALARM`
@@ -83,8 +81,8 @@ builds follow them.
 - [0119] **A currency conversion arrived as two one-sided rows** (his report, Nov 22 USD to CAD): the
   money-transfer source reports each side per balance under one reference. Fixed: joined after dedup, target leg priced
   (overlay `a9d79e4`); next release. The Nov 22 one was merged on live by script. [XS]
-- [0120] **The transaction editor cannot hold two currencies** (his report): no rate field, and the
-  per-currency check refuses any unpriced conversion, trade or imported `@@` entry. [S]
+- [0120] **Two-currency entries are priced on save** (ruling 132): built, CI green, verified on the
+  S9 (preview line, saved rate, re-price after an edit). Ships with the next release. [S]
 - [0118] **Watch the brokerage transfer fix on live:** shipped in v1.2.8; confirm no lone
   transfer row reaches Reconcile when the next joined transfer's busy leg ages out. [XS]
 - [0097] **A photo-only email fails the receipt handler** ("produced no extractable text": it
