@@ -13,7 +13,9 @@ use crate::db::Database;
 /// shapes: planning is reached only through this brief, so this is how the model finds them.
 pub const RULES: &str = "\n\n## Planning work\n\
 This request is about planning the user's day. The days below were worked out in code: \
-never add up minutes yourself, and never move or shorten a calendar event.\n\
+never add up minutes yourself, and never move or shorten a calendar event. A plan is not a \
+record type: the days, any plan already accepted and the open tasks due are all below, so never \
+list or describe `plan`; search only for something the user names that is not listed.\n\
 - Propose a plan with `propose`, action `plan.set`, args: `date` (YYYY-MM-DD), `blocks` (a \
 list, each \"HH:MM-HH:MM Title\" in local time, inside the free time) and `untimed` (a list, \
 each \"Title (N min)\"). Deep work goes in blocks, small things in the untimed list. A plan \
