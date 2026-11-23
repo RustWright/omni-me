@@ -34,17 +34,11 @@ builds follow them.
   (his phone is Android 15), `start:<block>` action ids; MainActivity reads a Start tap
   from the launch intent so it works on a closed app (his call), handed over like the deep link. [L]
   Built as the slices below, in dependency order; [0109] closes when they all have.
-- [0121] **Calendar core (public):** provider-neutral event, a calendar-source trait, change
-  events and projection, one read as a snapshot diff (113), labels, busy,
-  duplicates and clashes (111, 116, 125), series place answers (126). Tested on a fake source. [M]
-- [0122] **Free time and fit (plain code):** the day window from first activity plus routines to
-  the bedtime target (114), places and travel buffers (115, 126), routine minutes off free time,
-  and the validator (112). Needs [0121]. [M]
 - [0123] **Plans and the planning specialist:** day plan records, blocks plus an untimed list
   (97), proposed, accepted, superseded, skipped, lapsed (98, 117); the brief, code tools and
   validator loop (112); the morning ritual job and its tier (98). Assembles the day's inputs for
   `planning::fit`: first activity, routine lengths, bedtime and routine-group config keys; seeds
-  his places (Home, Campus, 45 min, 126) on dev, live on his go. Needs [0122]. [L]
+  his places (Home, Campus, 45 min, 126) on dev, live on his go. [L]
 - [0124] **Ritual summary lines and load:** evening, weekly and monthly count lines on the 19:00
   summary (98); the load measure, and a ritual pausing itself after 5 skips (99). Needs [0123]. [M]
 - [0125] **Block reminders and Start (app):** per [0109]'s Appendix B notes above; checked with a
@@ -53,7 +47,7 @@ builds follow them.
   it belongs in [0109]: no item names it, and [0116] puts timer controls on it. Needs [0123]. [M]
 - [0127] **Google connector (overlay, 133):** read-only OAuth, window snapshots, both calendars. Needs
   his Google Cloud setup, walked through live when this slice starts. Also wires the server's
-  15-minute read (113) through `RunConfig`, since the public server has no source. Needs [0121]. [M]
+  15-minute read (113) through `RunConfig`, since the public server has no source. [M]
 - [0110] **People build:** mentions, facts, resolution, pickers and group cards (102–104), merge
   and unmerge reversible for every attached record from the first event, the person view and the
   People tab with model-free search (118–120), per `design/0102/`; task text as a source (124);

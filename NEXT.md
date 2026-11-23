@@ -5,8 +5,10 @@ live in `RULINGS.md`, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`
 `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
 ## ▶ NEXT ACTION — [0109], the planning build, as slices [0121]–[0127] ([0115] waits for it)
-[0121] (calendar core, `237b538`) is pushed: confirm its PR CI is green, fix if not, then [0122].
-Ruling 133 settles the calendar read path; the Google setup is walked through live at [0127].
+[0121] and [0122] are done (CI green on `0ce554c`). Next: [0123], plans and the planning
+specialist, in a fresh session (it is [L]): read `core/src/assistant/specialist.rs` first, since
+planning routes like the ledger does (112). Ruling 133 settles the calendar read path; the Google
+setup is walked through live at [0127].
 v1.2.8 is fully out: live server `sha-fb67e96`, agent `dev-acc868b`, app published to the updater
 (he updates his daily phone himself). The backup ([0006]) ran its first live pass. Still to watch:
 [0118] when the next joined transfer's busy leg ages out (`~/omni-dev-tools/ws_transfer_dupes_probe.py`).

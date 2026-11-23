@@ -790,17 +790,16 @@ blocked_by = ["omni-me-0104", "omni-me-0106", "omni-me-0112", "omni-me-0114"]
 [[task]]
 id     = "omni-me-0121"
 title  = "Calendar core: event model, source trait, change events, poll"
-status = "todo"
+status = "done"
 size   = "M"
 ref    = "tasks.md § Cycle 6"
 
 [[task]]
 id     = "omni-me-0122"
 title  = "Free time and fit: day window, travel buffers, validator"
-status = "todo"
+status = "done"
 size   = "M"
 ref    = "tasks.md § Cycle 6"
-blocked_by = ["omni-me-0121"]
 
 [[task]]
 id     = "omni-me-0123"
@@ -808,7 +807,6 @@ title  = "Plans and the planning specialist, morning ritual job"
 status = "todo"
 size   = "L"
 ref    = "tasks.md § Cycle 6"
-blocked_by = ["omni-me-0122"]
 
 [[task]]
 id     = "omni-me-0124"
@@ -840,7 +838,6 @@ title  = "Google Calendar connector in the overlay"
 status = "todo"
 size   = "M"
 ref    = "tasks.md § Cycle 6"
-blocked_by = ["omni-me-0121"]
 
 [[task]]
 id     = "omni-me-0110"
