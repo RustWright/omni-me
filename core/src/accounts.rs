@@ -208,7 +208,7 @@ pub fn imbalances(postings: &[Posting]) -> Vec<(String, Decimal)> {
 }
 
 /// A two-currency entry priced so it balances, as hledger infers a conversion.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct InferredPrice {
     /// The currency whose postings now carry the rate.
     pub commodity: String,
