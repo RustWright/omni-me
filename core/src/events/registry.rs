@@ -12,7 +12,7 @@ use crate::journal_file::JournalFile;
 
 use super::{
     AssistantProjection, AutoImportProjection, BeliefsProjection, BudgetProjection,
-    CalendarProjection, ConfigProjection, DocumentsProjection, NotesProjection, Projection,
+    ConfigProjection, DocumentsProjection, NotesProjection, PlanningProjection, Projection,
     RecordTypeProjection, RetentionProjection, RoutinesProjection, TasksProjection,
 };
 
@@ -36,7 +36,7 @@ pub const ALL_PROJECTIONS: &[&str] = &[
     DocumentsProjection::NAME,
     RetentionProjection::NAME,
     TasksProjection::NAME,
-    CalendarProjection::NAME,
+    PlanningProjection::NAME,
 ];
 
 /// The projections a feature owns. Non-obvious entries:
@@ -58,7 +58,7 @@ pub fn owned_projections(feature: Feature) -> &'static [&'static str] {
         Feature::AutoImport => &[BudgetProjection::NAME, AutoImportProjection::NAME],
         Feature::Documents => &[DocumentsProjection::NAME, RetentionProjection::NAME],
         Feature::Tasks => &[TasksProjection::NAME],
-        Feature::Planning => &[CalendarProjection::NAME],
+        Feature::Planning => &[PlanningProjection::NAME],
     }
 }
 
@@ -104,7 +104,7 @@ fn all_projections(journal_path: PathBuf) -> Vec<Box<dyn Projection>> {
         Box::new(DocumentsProjection),
         Box::new(RetentionProjection),
         Box::new(TasksProjection),
-        Box::new(CalendarProjection),
+        Box::new(PlanningProjection),
     ]
 }
 
@@ -181,7 +181,7 @@ pub fn build_projections_server() -> Vec<Box<dyn Projection>> {
         Box::new(RetentionProjection),
         Box::new(TasksProjection),
         Box::new(RoutinesProjection),
-        Box::new(CalendarProjection),
+        Box::new(PlanningProjection),
     ]
 }
 
@@ -235,7 +235,7 @@ mod tests {
             "the journal-tick job reads routine items: {names:?}"
         );
         assert!(
-            names.contains(&CalendarProjection::NAME),
+            names.contains(&PlanningProjection::NAME),
             "the calendar read diffs against its table: {names:?}"
         );
     }

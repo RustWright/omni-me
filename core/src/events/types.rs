@@ -115,6 +115,8 @@ pub enum EventType {
     // Planning: the calendar as read in (ruling 96), and his answers about it.
     CalendarChanged,
     CalendarAnswered,
+    PlaceSet,
+    TravelTimeSet,
 }
 
 impl fmt::Display for EventType {
@@ -188,6 +190,8 @@ impl fmt::Display for EventType {
             EventType::DeadlineFeedReceived => "deadline_feed_received",
             EventType::CalendarChanged => "calendar_changed",
             EventType::CalendarAnswered => "calendar_answered",
+            EventType::PlaceSet => "place_set",
+            EventType::TravelTimeSet => "travel_time_set",
         };
         write!(f, "{s}")
     }
@@ -266,6 +270,8 @@ impl FromStr for EventType {
             "deadline_feed_received" => Ok(EventType::DeadlineFeedReceived),
             "calendar_changed" => Ok(EventType::CalendarChanged),
             "calendar_answered" => Ok(EventType::CalendarAnswered),
+            "place_set" => Ok(EventType::PlaceSet),
+            "travel_time_set" => Ok(EventType::TravelTimeSet),
             other => Err(format!("unknown event type: {other}")),
         }
     }
@@ -346,6 +352,8 @@ impl EventType {
         EventType::DeadlineFeedReceived,
         EventType::CalendarChanged,
         EventType::CalendarAnswered,
+        EventType::PlaceSet,
+        EventType::TravelTimeSet,
     ];
 
     /// Every event type a set of features owns, for a scoped wipe.
@@ -472,7 +480,10 @@ impl EventType {
             | EventType::HubIndexReceived
             | EventType::DeadlineFeedReceived => &[Feature::Tasks],
 
-            EventType::CalendarChanged | EventType::CalendarAnswered => &[Feature::Planning],
+            EventType::CalendarChanged
+            | EventType::CalendarAnswered
+            | EventType::PlaceSet
+            | EventType::TravelTimeSet => &[Feature::Planning],
 
             EventType::DataWiped
             | EventType::FeedbackCaptured
@@ -1901,6 +1912,17 @@ pub enum CalendarAnswer {
     },
 }
 
+/// A named place, created or replaced whole. `aggregate_id` is its name.
+pub type PlaceSetPayload = crate::planning::places::Place;
+
+/// His estimate of the trip between two places, either direction. `aggregate_id` is the pair.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TravelTimeSetPayload {
+    pub a: String,
+    pub b: String,
+    pub minutes: u32,
+}
+
 impl CalendarAnswer {
     pub fn key(&self) -> String {
         match self {
@@ -2095,6 +2117,12 @@ pub fn validate_payload(
         }
         EventType::CalendarAnswered => {
             serde_json::from_value::<CalendarAnsweredPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::PlaceSet => {
+            serde_json::from_value::<PlaceSetPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::TravelTimeSet => {
+            serde_json::from_value::<TravelTimeSetPayload>(payload.clone()).map(|_| ())
         }
         EventType::RecordTypeDeclared => {
             serde_json::from_value::<RecordTypeDeclaredPayload>(payload.clone()).map(|_| ())
@@ -2297,10 +2325,12 @@ mod tests {
                 | EventType::HubIndexReceived
                 | EventType::DeadlineFeedReceived
                 | EventType::CalendarChanged
-                | EventType::CalendarAnswered => counted += 1,
+                | EventType::CalendarAnswered
+                | EventType::PlaceSet
+                | EventType::TravelTimeSet => counted += 1,
             }
         }
-        assert_eq!(counted, 68, "EventType::ALL does not list every variant");
+        assert_eq!(counted, 70, "EventType::ALL does not list every variant");
 
         let unique: std::collections::BTreeSet<String> =
             EventType::ALL.iter().map(|t| t.to_string()).collect();

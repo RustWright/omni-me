@@ -6,20 +6,22 @@ use crate::db::Database;
 
 use super::projection::Projection;
 use super::store::{Event, EventError};
-use super::types::{CalendarAnsweredPayload, CalendarChangedPayload};
+use super::types::{
+    CalendarAnsweredPayload, CalendarChangedPayload, PlaceSetPayload, TravelTimeSetPayload,
+};
 
-/// Projection over the calendar as read in, and his answers about it.
+/// Projection over the calendar as read in, his answers about it, and his places.
 ///
 /// Each row keeps the whole value as JSON in `body`, read back as it was written; the other
 /// columns are for filtering and order.
-pub struct CalendarProjection;
+pub struct PlanningProjection;
 
-impl CalendarProjection {
-    pub const NAME: &'static str = "calendar";
+impl PlanningProjection {
+    pub const NAME: &'static str = "planning";
 }
 
 #[async_trait]
-impl Projection for CalendarProjection {
+impl Projection for PlanningProjection {
     fn name(&self) -> &str {
         Self::NAME
     }
@@ -45,7 +47,18 @@ impl Projection for CalendarProjection {
              DEFINE TABLE IF NOT EXISTS calendar_answers SCHEMAFULL;
              DEFINE FIELD IF NOT EXISTS key ON calendar_answers TYPE string;
              DEFINE FIELD IF NOT EXISTS body ON calendar_answers TYPE string;
-             DEFINE FIELD IF NOT EXISTS answered_at ON calendar_answers TYPE datetime;",
+             DEFINE FIELD IF NOT EXISTS answered_at ON calendar_answers TYPE datetime;
+
+             DEFINE TABLE IF NOT EXISTS planning_places SCHEMAFULL;
+             DEFINE FIELD IF NOT EXISTS name ON planning_places TYPE string;
+             -- Authoritative over the flag inside body: setting a new home clears the others.
+             DEFINE FIELD IF NOT EXISTS home ON planning_places TYPE bool;
+             DEFINE FIELD IF NOT EXISTS body ON planning_places TYPE string;
+
+             DEFINE TABLE IF NOT EXISTS planning_travel SCHEMAFULL;
+             DEFINE FIELD IF NOT EXISTS a ON planning_travel TYPE string;
+             DEFINE FIELD IF NOT EXISTS b ON planning_travel TYPE string;
+             DEFINE FIELD IF NOT EXISTS minutes ON planning_travel TYPE int;",
         )
         .await?
         .check()?;
@@ -53,9 +66,12 @@ impl Projection for CalendarProjection {
     }
 
     async fn clear_tables(&self, db: &Database) -> Result<(), EventError> {
-        db.query("DELETE FROM calendar_events; DELETE FROM calendar_answers;")
-            .await?
-            .check()?;
+        db.query(
+            "DELETE FROM calendar_events; DELETE FROM calendar_answers;
+             DELETE FROM planning_places; DELETE FROM planning_travel;",
+        )
+        .await?
+        .check()?;
         Ok(())
     }
 
@@ -76,6 +92,46 @@ impl Projection for CalendarProjection {
                     .bind(("key", p.answer.key()))
                     .bind(("body", body))
                     .bind(("ts", event.timestamp.to_rfc3339()))
+                    .await?
+                    .check()?;
+                    Ok(())
+                }
+                None => Ok(()),
+            },
+            "place_set" => match payload::<PlaceSetPayload>(event) {
+                Some(p) => {
+                    let body = serde_json::to_string(&p)
+                        .map_err(|e| EventError::Validation(e.to_string()))?;
+                    if p.home {
+                        db.query("UPDATE planning_places SET home = false WHERE name != $name")
+                            .bind(("name", p.name.clone()))
+                            .await?
+                            .check()?;
+                    }
+                    db.query(
+                        "UPSERT type::record('planning_places', $name) SET
+                            name = $name, home = $home, body = $body",
+                    )
+                    .bind(("name", p.name.clone()))
+                    .bind(("home", p.home))
+                    .bind(("body", body))
+                    .await?
+                    .check()?;
+                    Ok(())
+                }
+                None => Ok(()),
+            },
+            "travel_time_set" => match payload::<TravelTimeSetPayload>(event) {
+                Some(p) => {
+                    let (a, b) = crate::planning::places::pair(&p.a, &p.b);
+                    db.query(
+                        "UPSERT type::record('planning_travel', $key) SET
+                            a = $a, b = $b, minutes = $minutes",
+                    )
+                    .bind(("key", format!("{a}/{b}")))
+                    .bind(("a", a))
+                    .bind(("b", b))
+                    .bind(("minutes", i64::from(p.minutes)))
                     .await?
                     .check()?;
                     Ok(())

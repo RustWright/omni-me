@@ -42,7 +42,9 @@ builds follow them.
   and the validator (112). Needs [0121]. [M]
 - [0123] **Plans and the planning specialist:** day plan records, blocks plus an untimed list
   (97), proposed, accepted, superseded, skipped, lapsed (98, 117); the brief, code tools and
-  validator loop (112); the morning ritual job and its tier (98). Needs [0122]. [L]
+  validator loop (112); the morning ritual job and its tier (98). Assembles the day's inputs for
+  `planning::fit`: first activity, routine lengths, bedtime and routine-group config keys; seeds
+  his places (Home, Campus, 45 min, 126) on dev, live on his go. Needs [0122]. [L]
 - [0124] **Ritual summary lines and load:** evening, weekly and monthly count lines on the 19:00
   summary (98); the load measure, and a ritual pausing itself after 5 skips (99). Needs [0123]. [M]
 - [0125] **Block reminders and Start (app):** per [0109]'s Appendix B notes above; checked with a

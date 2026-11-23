@@ -211,7 +211,7 @@ mod tests {
     use super::super::test_support::*;
     use super::*;
     use crate::config::ALL_FEATURES;
-    use crate::events::{CalendarProjection, ProjectionRunner, SurrealEventStore};
+    use crate::events::{PlanningProjection, ProjectionRunner, SurrealEventStore};
 
     const TZ: Tz = Tz::UTC;
 
@@ -288,7 +288,7 @@ mod tests {
     async fn harness() -> (Database, EventWriter) {
         let db = crate::db::test_db().await;
         let store = Arc::new(SurrealEventStore::new(db.clone()));
-        let runner = ProjectionRunner::new(db.clone(), vec![Box::new(CalendarProjection)]);
+        let runner = ProjectionRunner::new(db.clone(), vec![Box::new(PlanningProjection)]);
         runner.init_all().await.unwrap();
         let writer = EventWriter::new(
             store,

@@ -48,3 +48,31 @@ implement the trait in your own server crate.
 
 Answers are events too (`calendar_answered`), keyed so that a later answer replaces an
 earlier one.
+
+## Free time
+
+`planning::fit` is the arithmetic the planning model calls as tools. The model never adds up
+minutes itself, and a validator refuses a plan it cannot keep.
+
+**The day runs from when you are actually up.** The window opens at your first activity plus
+your morning routine, and closes at your bedtime target less your evening routine. There is
+no fixed start: a plan that assumes an early start on a late morning gets ignored whole. The
+bedtime is the first one after the morning ends, so a target past midnight works.
+
+**Travel is busy time.** Places are your own data: a name, fragments of event locations that
+put an event there, and which place is home. The day starts at home. Before an event at
+another known place, the trip there is blocked out. An event whose place is unknown (a one-off
+with no location, or somewhere with no travel estimate) leaves you where you were, so it adds
+no trip. If the day ends away from home, the trip back sits at the end of the window, on the
+assumption that you stay out until then.
+
+**Clashes follow your answer.** Once you say which of two clashing events you are going to,
+the other stops counting. Until then both are busy, and travel assumes the earlier one.
+
+**The validator names every problem.** A block is refused if it is empty, starts in the
+past, falls outside the window, or overlaps an event, a trip or another block. Each refusal
+reads as a sentence, and the model gets them back on the same turn.
+
+**The fit line never blocks.** It compares the minutes a plan asks for (blocks plus the
+untimed list's estimates) with the free minutes left after routines that have no set time.
+Over is shown, never enforced.
