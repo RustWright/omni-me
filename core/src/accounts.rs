@@ -337,17 +337,17 @@ mod tests {
     /// Only the two-currency conversion shape is inferred; everything else is still refused.
     #[test]
     fn anything_else_is_left_unpriced() {
-        let three = &mut vec![
+        let three = &mut [
             leg("A:USD", "-1", "USD"),
             leg("A:CAD", "1", "CAD"),
             leg("A:EUR", "1", "EUR"),
         ];
         assert!(price_two_currencies(three, Some("CAD")).is_none());
-        let same_side = &mut vec![leg("A:USD", "1", "USD"), leg("A:CAD", "1", "CAD")];
+        let same_side = &mut [leg("A:USD", "1", "USD"), leg("A:CAD", "1", "CAD")];
         assert!(price_two_currencies(same_side, Some("CAD")).is_none());
-        let one = &mut vec![leg("A:CAD", "1", "CAD"), leg("B:CAD", "-0.5", "CAD")];
+        let one = &mut [leg("A:CAD", "1", "CAD"), leg("B:CAD", "-0.5", "CAD")];
         assert!(price_two_currencies(one, Some("CAD")).is_none());
-        let balanced = &mut vec![leg("A:CAD", "1", "CAD"), leg("B:CAD", "-1", "CAD")];
+        let balanced = &mut [leg("A:CAD", "1", "CAD"), leg("B:CAD", "-1", "CAD")];
         assert!(price_two_currencies(balanced, Some("CAD")).is_none());
         let mut priced = vec![leg("A:USD", "-1", "USD"), leg("A:CAD", "1.4", "CAD")];
         priced[0].fx_rate = Some(fx_rate_into_base(Decimal::from_str("1.3").unwrap(), "CAD"));
