@@ -267,7 +267,8 @@ mod tests {
             "2026-11-23T10:00:00Z",
             "2026-11-23T11:00:00Z",
         );
-        assert!(diff(&[a.clone()], &[a], &window(), TZ).is_empty());
+        let same = [a];
+        assert!(diff(&same, &same, &window(), TZ).is_empty());
     }
 
     struct Fake {
