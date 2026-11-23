@@ -407,6 +407,8 @@ pub enum ConfigGroup {
     Archive,
     /// When alerts may interrupt.
     Notifications,
+    /// The day's shape the planner works from.
+    Planning,
 }
 
 /// A feature that can be switched off whole. Mirror of `core::config::Feature`.

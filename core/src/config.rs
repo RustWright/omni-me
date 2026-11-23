@@ -52,6 +52,10 @@ pub enum ConfigKey {
     NotifyLargeCharge,
     NotifyTierLargeCharge,
     NotifyChargesAtNight,
+    PlanningBedtime,
+    PlanningMorningRoutine,
+    PlanningEveningRoutine,
+    PlanningFallbackHour,
 }
 
 /// The tiers an alert kind can be set to. Review lists it in the daily summary.
@@ -74,6 +78,11 @@ pub fn sender_domains(value: &str) -> impl Iterator<Item = String> + '_ {
 /// (off) or not a `YYYY-MM-DD` date.
 pub fn backfill_before(value: &str) -> Option<chrono::NaiveDate> {
     chrono::NaiveDate::parse_from_str(value.trim(), "%Y-%m-%d").ok()
+}
+
+/// The time in a `planning.bedtime` value (`HH:MM`, 24-hour), or `None`.
+pub fn clock_time(value: &str) -> Option<chrono::NaiveTime> {
+    chrono::NaiveTime::parse_from_str(value.trim(), "%H:%M").ok()
 }
 
 /// Display / persistence order, and the order the settings screen renders.
@@ -112,6 +121,10 @@ pub const ALL_KEYS: &[ConfigKey] = &[
     ConfigKey::NotifyLargeCharge,
     ConfigKey::NotifyTierLargeCharge,
     ConfigKey::NotifyChargesAtNight,
+    ConfigKey::PlanningBedtime,
+    ConfigKey::PlanningMorningRoutine,
+    ConfigKey::PlanningEveningRoutine,
+    ConfigKey::PlanningFallbackHour,
 ];
 
 /// The theme values `appearance.theme` accepts. `System` follows
@@ -187,6 +200,10 @@ impl fmt::Display for ConfigKey {
             ConfigKey::NotifyLargeCharge => "notify.large_charge",
             ConfigKey::NotifyTierLargeCharge => "notify.tier.large_charge",
             ConfigKey::NotifyChargesAtNight => "notify.charges_at_night",
+            ConfigKey::PlanningBedtime => "planning.bedtime",
+            ConfigKey::PlanningMorningRoutine => "planning.morning_routine",
+            ConfigKey::PlanningEveningRoutine => "planning.evening_routine",
+            ConfigKey::PlanningFallbackHour => "planning.fallback_hour",
         };
         write!(f, "{s}")
     }
@@ -231,6 +248,10 @@ impl FromStr for ConfigKey {
             "notify.large_charge" => Ok(ConfigKey::NotifyLargeCharge),
             "notify.tier.large_charge" => Ok(ConfigKey::NotifyTierLargeCharge),
             "notify.charges_at_night" => Ok(ConfigKey::NotifyChargesAtNight),
+            "planning.bedtime" => Ok(ConfigKey::PlanningBedtime),
+            "planning.morning_routine" => Ok(ConfigKey::PlanningMorningRoutine),
+            "planning.evening_routine" => Ok(ConfigKey::PlanningEveningRoutine),
+            "planning.fallback_hour" => Ok(ConfigKey::PlanningFallbackHour),
             other => Err(format!("unknown config key: {other}")),
         }
     }
@@ -322,6 +343,8 @@ pub enum ConfigGroup {
     Archive,
     /// When alerts may interrupt. Read by the server, which sends them.
     Notifications,
+    /// The day's shape the planner works from (ruling 114).
+    Planning,
 }
 
 /// Which layer supplied the value that is actually in effect.
@@ -432,6 +455,15 @@ impl ConfigKey {
             ConfigKey::NotifyLargeCharge => ConfigValue::Int(500),
             // Ruling 59 (RULINGS.md): charge alerts wait out quiet hours unless this is on.
             ConfigKey::NotifyChargesAtNight => ConfigValue::Bool(false),
+            // Ruling 114 (RULINGS.md): the one number he sets, as something to aim at.
+            ConfigKey::PlanningBedtime => ConfigValue::Text("23:30".to_string()),
+            // Routine group names; empty is no routine, so no minutes are taken off the day.
+            ConfigKey::PlanningMorningRoutine | ConfigKey::PlanningEveningRoutine => {
+                ConfigValue::Text(String::new())
+            }
+            // Ruling 98 (RULINGS.md): the morning plan is drafted at his first activity, and at
+            // this hour only when nothing has happened by then.
+            ConfigKey::PlanningFallbackHour => ConfigValue::Int(11),
         }
     }
 
@@ -461,8 +493,12 @@ impl ConfigKey {
             | ConfigKey::NotifyTierMailFailing
             | ConfigKey::NotifyTierBankNeedsUser
             | ConfigKey::NotifyTierBankFailing
-            | ConfigKey::NotifyTierLargeCharge => ValueKind::Text,
+            | ConfigKey::NotifyTierLargeCharge
+            | ConfigKey::PlanningBedtime
+            | ConfigKey::PlanningMorningRoutine
+            | ConfigKey::PlanningEveningRoutine => ValueKind::Text,
             ConfigKey::AssistantCheckInHour
+            | ConfigKey::PlanningFallbackHour
             | ConfigKey::AssistantMaxTurns
             | ConfigKey::AssistantChatArchiveDays
             | ConfigKey::AssistantChatDeleteDays
@@ -505,7 +541,12 @@ impl ConfigKey {
             | ConfigKey::NotifyTierBankFailing
             | ConfigKey::NotifyLargeCharge
             | ConfigKey::NotifyTierLargeCharge
-            | ConfigKey::NotifyChargesAtNight => true,
+            | ConfigKey::NotifyChargesAtNight
+            // Read each time a day's plan inputs are assembled.
+            | ConfigKey::PlanningBedtime
+            | ConfigKey::PlanningMorningRoutine
+            | ConfigKey::PlanningEveningRoutine
+            | ConfigKey::PlanningFallbackHour => true,
             ConfigKey::FeatureJournal
             | ConfigKey::FeatureNotes
             | ConfigKey::FeatureRoutines
@@ -560,6 +601,10 @@ impl ConfigKey {
             ConfigKey::NotifyLargeCharge => "Large charge alert at (0 is off)",
             ConfigKey::NotifyTierLargeCharge => "Alert: large charge",
             ConfigKey::NotifyChargesAtNight => "Charge alerts during quiet hours",
+            ConfigKey::PlanningBedtime => "Bedtime target (HH:MM)",
+            ConfigKey::PlanningMorningRoutine => "Morning routine (routine name)",
+            ConfigKey::PlanningEveningRoutine => "Evening routine (routine name)",
+            ConfigKey::PlanningFallbackHour => "Morning plan if nothing by (hour)",
         }
     }
 
@@ -606,7 +651,11 @@ impl ConfigKey {
             | ConfigKey::NotifyTierBankFailing
             | ConfigKey::NotifyLargeCharge
             | ConfigKey::NotifyTierLargeCharge
-            | ConfigKey::NotifyChargesAtNight => None,
+            | ConfigKey::NotifyChargesAtNight
+            | ConfigKey::PlanningBedtime
+            | ConfigKey::PlanningMorningRoutine
+            | ConfigKey::PlanningEveningRoutine
+            | ConfigKey::PlanningFallbackHour => None,
         }
     }
 
@@ -650,6 +699,10 @@ impl ConfigKey {
             | ConfigKey::NotifyLargeCharge
             | ConfigKey::NotifyTierLargeCharge
             | ConfigKey::NotifyChargesAtNight => ConfigGroup::Notifications,
+            ConfigKey::PlanningBedtime
+            | ConfigKey::PlanningMorningRoutine
+            | ConfigKey::PlanningEveningRoutine
+            | ConfigKey::PlanningFallbackHour => ConfigGroup::Planning,
         }
     }
 
@@ -692,7 +745,8 @@ impl ConfigKey {
             ConfigKey::ArchiveBackfillBatch => Some((1, 200)),
             ConfigKey::NotifyQuietStart
             | ConfigKey::NotifyQuietEnd
-            | ConfigKey::NotifySummaryHour => Some((0, 23)),
+            | ConfigKey::NotifySummaryHour
+            | ConfigKey::PlanningFallbackHour => Some((0, 23)),
             ConfigKey::NotifyLargeCharge => Some((0, 1_000_000)),
             _ => None,
         }
@@ -738,6 +792,12 @@ impl ConfigKey {
             let t = value.as_text().unwrap_or_default();
             if t.parse::<chrono_tz::Tz>().is_err() {
                 return Err(format!("{self} must be an IANA time zone, got {t:?}"));
+            }
+        }
+        if self == ConfigKey::PlanningBedtime {
+            let t = value.as_text().unwrap_or_default();
+            if clock_time(t).is_none() {
+                return Err(format!("{self} must be a time like 23:30, got {t:?}"));
             }
         }
         Ok(())
@@ -948,11 +1008,15 @@ mod tests {
                 | ConfigKey::NotifyTierBankFailing
                 | ConfigKey::NotifyLargeCharge
                 | ConfigKey::NotifyTierLargeCharge
-                | ConfigKey::NotifyChargesAtNight => counted += 1,
+                | ConfigKey::NotifyChargesAtNight
+                | ConfigKey::PlanningBedtime
+                | ConfigKey::PlanningMorningRoutine
+                | ConfigKey::PlanningEveningRoutine
+                | ConfigKey::PlanningFallbackHour => counted += 1,
             }
         }
         assert_eq!(
-            counted, 34,
+            counted, 38,
             "ALL_KEYS does not list every ConfigKey variant"
         );
 

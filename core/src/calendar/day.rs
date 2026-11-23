@@ -306,7 +306,7 @@ mod tests {
             "seminar",
             false,
         );
-        placed.location = Some("E7 3342".into());
+        placed.location = Some("B2 3342".into());
         let one_off = timed(
             "o",
             "Coffee",

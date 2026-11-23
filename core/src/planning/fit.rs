@@ -338,7 +338,7 @@ mod tests {
                 },
                 Place {
                     name: "Campus".into(),
-                    matches: vec!["E7".into()],
+                    matches: vec!["B2".into()],
                     home: false,
                 },
             ],
@@ -375,7 +375,7 @@ mod tests {
 
     fn lecture(uid: &str, start: &str, end: &str) -> CalendarEvent {
         let mut e = timed(uid, "Lecture", start, end);
-        e.location = Some("E7 3342".into());
+        e.location = Some("B2 3342".into());
         e
     }
 

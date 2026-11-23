@@ -76,3 +76,86 @@ reads as a sentence, and the model gets them back on the same turn.
 **The fit line never blocks.** It compares the minutes a plan asks for (blocks plus the
 untimed list's estimates) with the free minutes left after routines that have no set time.
 Over is shown, never enforced.
+
+## The day's inputs
+
+`planning::day` gathers what `fit` needs for one date, from four places:
+
+- **Settings** (Settings → Planning): the bedtime target, the fallback hour, and which of your
+  routines is the morning one and which the evening one. A routine's length is the sum of its
+  items' estimates. A name that matches no routine counts as zero, so a typo plans a longer
+  day rather than none.
+- **Your first activity**: the first journal entry, routine tick or question you typed that
+  day. A scheduled question is the assistant's, so it does not count. Activity before 04:00
+  belongs to the night before: a 01:00 journal line is a late night, not an early start.
+- **The calendar, your answers and your places**, as read in.
+- **Now**: once the day is under way, the window starts at the present, because time already
+  gone is not free.
+
+## Plans
+
+A plan is a `plan.set` proposal: blocks written `HH:MM-HH:MM Title` in local time, and an
+untimed list written `Title (N min)`. It goes through the same approval gate, inbox and sync as
+every other proposal, so nothing new had to be trusted.
+
+**The model's plan is checked before you see it.** `propose` reads the day and refuses any
+block that sits on an event, on travel, outside the window or on another block, naming each.
+The model fixes the plan and proposes it again in the same run. A refused plan never reaches
+you. A plan that only runs over the free time is proposed, with the overage on the card.
+
+**Only an accepted plan writes a record of its own.** Approving one writes
+`day_plan_accepted`, with the blocks resolved to instants against the day as it stands then,
+so a later change of zone or bedtime cannot move them. Reminders and the view read that record.
+Every other state is read off the proposal:
+
+| State | When |
+|---|---|
+| Proposed | waiting on you |
+| Accepted | approved, and no later plan for the day was approved |
+| Superseded | a later plan for the same day exists; approving this one is refused |
+| Skipped | declined ("Skip today") |
+| Lapsed | still waiting when its first block was due, or when its day ended |
+
+A re-plan is a whole new plan for the day, never an edit. Until you accept it, the plan you
+accepted earlier stays in force.
+
+A block time before the day's window that fits after midnight is read as after midnight, so a
+bedtime past 00:00 can be planned.
+
+**Why planning has no read verbs of its own.** A specialist adds instructions and context; it
+never adds a verb. The planning brief carries the free time already worked out for today, while
+any of it is left, and for tomorrow. The check inside `propose` does the rest. A `free_time`
+verb would have let the model ask about any date, but it would have cost a model turn on every
+plan, and plans are almost always for today or tomorrow. Planning stays out of the read
+catalogue, so the brief is also where the model learns `plan.set`'s name, and a test holds it
+to naming every planning action.
+
+## The morning ritual
+
+The morning plan is drafted when your day starts: at your first activity, or at the fallback
+hour if nothing has happened by then. It is never drafted during quiet hours, and it is skipped
+when you have already asked for a plan that day. The agent raises it as a scheduled question
+(`morning_plan`). That question skips the router and is answered under the planning brief, on
+the scheduled-run seat.
+
+The server sends the one silent push for it, outside quiet hours, once a day, because the
+server holds the notification channel. The same server tick closes any plan that has lapsed or
+been replaced, so the inbox never holds a card that cannot be accepted. The plan you asked for
+in chat is not pushed: you are already looking at it.
+
+## Places
+
+Places and travel times are your own estimates until location history supplies real ones. They
+are set on the server:
+
+```
+curl -X POST "$SERVER/planning/places" -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Campus","matches":["B2","North Hall","Library"],"home":false}'
+curl -X POST "$SERVER/planning/travel" -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"a":"Home","b":"Campus","minutes":45}'
+curl "$SERVER/planning/places" -H "Authorization: Bearer $TOKEN"
+```
+
+A fragment matches an event's location as whole words, without case, so `GYM` never matches
+inside "Gymnasts Club".

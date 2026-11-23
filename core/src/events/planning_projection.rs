@@ -7,10 +7,12 @@ use crate::db::Database;
 use super::projection::Projection;
 use super::store::{Event, EventError};
 use super::types::{
-    CalendarAnsweredPayload, CalendarChangedPayload, PlaceSetPayload, TravelTimeSetPayload,
+    CalendarAnsweredPayload, CalendarChangedPayload, DayPlanAcceptedPayload, PlaceSetPayload,
+    TravelTimeSetPayload,
 };
 
-/// Projection over the calendar as read in, his answers about it, and his places.
+/// Projection over the calendar as read in, his answers about it, his places and his accepted
+/// day plans.
 ///
 /// Each row keeps the whole value as JSON in `body`, read back as it was written; the other
 /// columns are for filtering and order.
@@ -26,8 +28,9 @@ impl Projection for PlanningProjection {
         Self::NAME
     }
 
+    /// 2 added `day_plans`.
     fn version(&self) -> u32 {
-        1
+        2
     }
 
     async fn init_schema(&self, db: &Database) -> Result<(), EventError> {
@@ -58,7 +61,13 @@ impl Projection for PlanningProjection {
              DEFINE TABLE IF NOT EXISTS planning_travel SCHEMAFULL;
              DEFINE FIELD IF NOT EXISTS a ON planning_travel TYPE string;
              DEFINE FIELD IF NOT EXISTS b ON planning_travel TYPE string;
-             DEFINE FIELD IF NOT EXISTS minutes ON planning_travel TYPE int;",
+             DEFINE FIELD IF NOT EXISTS minutes ON planning_travel TYPE int;
+
+             -- One row per date: the plan last accepted for it, which supersedes any before.
+             DEFINE TABLE IF NOT EXISTS day_plans SCHEMAFULL;
+             DEFINE FIELD IF NOT EXISTS date ON day_plans TYPE string;
+             DEFINE FIELD IF NOT EXISTS body ON day_plans TYPE string;
+             DEFINE FIELD IF NOT EXISTS accepted_at ON day_plans TYPE datetime;",
         )
         .await?
         .check()?;
@@ -68,7 +77,7 @@ impl Projection for PlanningProjection {
     async fn clear_tables(&self, db: &Database) -> Result<(), EventError> {
         db.query(
             "DELETE FROM calendar_events; DELETE FROM calendar_answers;
-             DELETE FROM planning_places; DELETE FROM planning_travel;",
+             DELETE FROM planning_places; DELETE FROM planning_travel; DELETE FROM day_plans;",
         )
         .await?
         .check()?;
@@ -132,6 +141,23 @@ impl Projection for PlanningProjection {
                     .bind(("a", a))
                     .bind(("b", b))
                     .bind(("minutes", i64::from(p.minutes)))
+                    .await?
+                    .check()?;
+                    Ok(())
+                }
+                None => Ok(()),
+            },
+            "day_plan_accepted" => match payload::<DayPlanAcceptedPayload>(event) {
+                Some(p) => {
+                    let body = serde_json::to_string(&p)
+                        .map_err(|e| EventError::Validation(e.to_string()))?;
+                    db.query(
+                        "UPSERT type::record('day_plans', $date) SET
+                            date = $date, body = $body, accepted_at = type::datetime($ts)",
+                    )
+                    .bind(("date", p.date.to_string()))
+                    .bind(("body", body))
+                    .bind(("ts", event.timestamp.to_rfc3339()))
                     .await?
                     .check()?;
                     Ok(())

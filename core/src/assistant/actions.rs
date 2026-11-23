@@ -52,6 +52,7 @@ pub enum ActionKind {
     TaskDrop,
     ProjectCreate,
     ProjectClose,
+    PlanSet,
 }
 
 /// Where an argument's value comes from.
@@ -1251,6 +1252,50 @@ const PROJECT_CLOSE: ActionType = ActionType {
     trigger: Trigger::OnRequest,
 };
 
+/// Ruling 100 (RULINGS.md): the day's plan is one batch proposal; a re-plan supersedes it (117).
+const PLAN_SET: ActionType = ActionType {
+    name: crate::planning::plan::PLAN_SET,
+    kind: ActionKind::PlanSet,
+    feature: Feature::Planning,
+    description: "Propose the plan for one day: timed blocks for deep work and an untimed list \
+                  for small things. Blocks must sit in the day's free time; a block on a \
+                  calendar event, on travel, outside the window or on another block is refused \
+                  with the reason. To change an existing plan, propose the whole day again.",
+    params: &[
+        ActionParam::text("date", "The day planned, as YYYY-MM-DD.", 10)
+            .checked_by(valid_future_date),
+        ActionParam::list(
+            "blocks",
+            "Timed blocks in the user's local time, each written HH:MM-HH:MM then a title, \
+             like \"14:00-15:30 Essay draft\".",
+            120,
+            crate::planning::plan::MAX_BLOCKS,
+        )
+        .optional()
+        .checked_by(crate::planning::plan::valid_block),
+        ActionParam::list(
+            "untimed",
+            "Small things for the day with no set time, each ending in its estimate, like \
+             \"Email the TA (10 min)\".",
+            160,
+            crate::planning::plan::MAX_UNTIMED,
+        )
+        .optional()
+        .checked_by(crate::planning::plan::valid_untimed),
+        ActionParam::resolved(
+            "resolved",
+            "The blocks as instants, worked out at approval.",
+            8_000,
+        ),
+    ],
+    produces: &[EventType::DayPlanAccepted],
+    reversible: true,
+    reversibility: "The calendar is never written, so a plan is undone by planning the day \
+                    again; the log keeps both.",
+    autonomy: Autonomy::AlwaysAsk,
+    trigger: Trigger::OnRequest,
+};
+
 /// Every action this build knows, enabled or not.
 pub const ALL_ACTIONS: &[ActionType] = &[
     NOTE_CREATE,
@@ -1275,6 +1320,7 @@ pub const ALL_ACTIONS: &[ActionType] = &[
     TASK_DROP,
     PROJECT_CREATE,
     PROJECT_CLOSE,
+    PLAN_SET,
 ];
 
 /// The actions whose feature is on, which is the set the model is told about.
@@ -1948,6 +1994,36 @@ pub fn build_events(
                 &payload,
             )
         }
+        ActionKind::PlanSet => {
+            let date = day_arg(&args, "date").ok_or("the plan names no date")?;
+            // Never built from the local texts: their instants depend on the day's window,
+            // which only approval reads. Same guard as note.revise's raw_text.
+            let resolved = text_arg(&args, "resolved")
+                .ok_or("the plan's times were not worked out at approval")?;
+            let blocks: Vec<crate::planning::fit::Block> =
+                serde_json::from_str(&resolved).map_err(|e| e.to_string())?;
+            let untimed = args["untimed"]
+                .as_array()
+                .map(Vec::as_slice)
+                .unwrap_or(&[])
+                .iter()
+                .filter_map(Value::as_str)
+                .map(crate::planning::plan::parse_untimed)
+                .collect::<Result<Vec<_>, _>>()?;
+            let payload = crate::planning::plan::AcceptedPlan {
+                date,
+                blocks,
+                untimed,
+            };
+            Ok(vec![NewEvent {
+                id: None,
+                event_type: EventType::DayPlanAccepted.to_string(),
+                aggregate_id: date.to_string(),
+                timestamp: chrono::Utc::now(),
+                device_id: device_id.to_string(),
+                payload: serde_json::to_value(&payload).map_err(|e| e.to_string())?,
+            }])
+        }
     }
 }
 
@@ -2310,6 +2386,12 @@ mod tests {
                 "term": "Fall 2026",
             }),
             ActionKind::ProjectClose => json!({ "project_id": "01PROJ000000000000000001" }),
+            ActionKind::PlanSet => json!({
+                "date": "2026-11-23",
+                "blocks": ["14:00-15:30 Essay draft"],
+                "untimed": ["Email the TA (10 min)"],
+                "resolved": r#"[{"start":"2026-11-23T19:00:00Z","end":"2026-11-23T20:30:00Z","title":"Essay draft"}]"#,
+            }),
         }
     }
 

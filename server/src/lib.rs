@@ -496,6 +496,18 @@ pub async fn run(cfg: RunConfig) {
             }
         });
     }
+    // The morning plan's one silent push, and closing plans that lapsed or were replaced. The
+    // agent drafts the plan. Ruling 98.
+    {
+        let notifier = NtfyNotifier::from_env(&state.secrets)
+            .map(|n| Arc::new(n) as Arc<dyn omni_me_core::notify::Notifier>);
+        Arc::new(omni_me_core::planning::ritual::RitualJob::new(
+            (*state.db).clone(),
+            enrich_writer.clone(),
+            notifier,
+        ))
+        .spawn();
+    }
     // Routine items ticked from journal lines, on the structurer seat. Ruling 127.
     if state.llm_client.model_name() != "none" {
         let (db, writer, llm) = (
@@ -619,6 +631,7 @@ pub fn build_app(
         .merge(routes::feedback_routes())
         .merge(routes::llm_routes())
         .merge(routes::task_routes())
+        .merge(routes::planning_routes())
         // Behind the bearer gate like the rest, and with two gates of its own on
         // top: a preview ticket and a named instance. See `routes::wipe`.
         .merge(routes::wipe_routes());

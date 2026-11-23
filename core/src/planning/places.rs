@@ -17,7 +17,7 @@ use crate::events::{EventType, EventWriter, NewEvent, TravelTimeSetPayload};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Place {
     pub name: String,
-    /// Case-insensitive fragments of an event location that put it here ("E7", "Needles Hall").
+    /// Case-insensitive fragments of an event location that put it here ("B2", "North Hall").
     #[serde(default)]
     pub matches: Vec<String>,
     /// Where the day starts and ends. One place has it.
@@ -30,6 +30,20 @@ pub struct Places {
     pub places: Vec<Place>,
     /// Minutes between two places, either direction. Keyed by [`pair`].
     pub travel: HashMap<(String, String), u32>,
+}
+
+/// Whether `fragment` appears in lowercased `location` as whole words, so a building code like
+/// "GYM" never matches inside "Gymnasts Club".
+fn has_words(location: &str, fragment: &str) -> bool {
+    let fragment = fragment.trim().to_lowercase();
+    if fragment.is_empty() {
+        return false;
+    }
+    let boundary = |c: Option<char>| c.is_none_or(|c| !c.is_alphanumeric());
+    location.match_indices(&fragment).any(|(i, m)| {
+        boundary(location[..i].chars().next_back())
+            && boundary(location[i + m.len()..].chars().next())
+    })
 }
 
 /// The key for a pair of places, order-free.
@@ -62,11 +76,7 @@ impl Places {
             return self
                 .places
                 .iter()
-                .find(|p| {
-                    p.matches
-                        .iter()
-                        .any(|m| !m.trim().is_empty() && location.contains(&m.to_lowercase()))
-                })
+                .find(|p| p.matches.iter().any(|m| has_words(&location, m)))
                 .map(|p| p.name.clone());
         }
         let answered = answers.place.get(event.series_key())?;
@@ -227,7 +237,7 @@ mod tests {
                 },
                 Place {
                     name: "Campus".into(),
-                    matches: vec!["E7".into(), "needles hall".into()],
+                    matches: vec!["B2".into(), "north hall".into()],
                     home: false,
                 },
             ],
@@ -243,7 +253,7 @@ mod tests {
             "2026-11-23T13:00:00Z",
             "2026-11-23T14:00:00Z",
         );
-        e.location = Some("Needles Hall 1101".into());
+        e.location = Some("North Hall 1101".into());
         assert_eq!(
             places().place_of(&e, &Answers::default()).as_deref(),
             Some("Campus")
@@ -268,6 +278,16 @@ mod tests {
         assert_eq!(places().place_of(&e, &answers), None);
         answers.place.insert("club".into(), "Campus".into());
         assert_eq!(places().place_of(&e, &answers).as_deref(), Some("Campus"));
+    }
+
+    #[test]
+    fn a_fragment_matches_whole_words_only() {
+        assert!(has_words("b2 3342", "B2"));
+        assert!(has_words("north hall, room 1101", "North Hall"));
+        assert!(has_words("gym annex", "GYM"));
+        assert!(!has_words("gymnasts club", "GYM"));
+        assert!(!has_words("b20 annex", "B2"));
+        assert!(!has_words("anywhere", " "));
     }
 
     #[test]

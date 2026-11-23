@@ -117,6 +117,8 @@ pub enum EventType {
     CalendarAnswered,
     PlaceSet,
     TravelTimeSet,
+    // A day plan he accepted (ruling 98); the rest of a plan's life is its proposal.
+    DayPlanAccepted,
 }
 
 impl fmt::Display for EventType {
@@ -192,6 +194,7 @@ impl fmt::Display for EventType {
             EventType::CalendarAnswered => "calendar_answered",
             EventType::PlaceSet => "place_set",
             EventType::TravelTimeSet => "travel_time_set",
+            EventType::DayPlanAccepted => "day_plan_accepted",
         };
         write!(f, "{s}")
     }
@@ -272,6 +275,7 @@ impl FromStr for EventType {
             "calendar_answered" => Ok(EventType::CalendarAnswered),
             "place_set" => Ok(EventType::PlaceSet),
             "travel_time_set" => Ok(EventType::TravelTimeSet),
+            "day_plan_accepted" => Ok(EventType::DayPlanAccepted),
             other => Err(format!("unknown event type: {other}")),
         }
     }
@@ -354,6 +358,7 @@ impl EventType {
         EventType::CalendarAnswered,
         EventType::PlaceSet,
         EventType::TravelTimeSet,
+        EventType::DayPlanAccepted,
     ];
 
     /// Every event type a set of features owns, for a scoped wipe.
@@ -483,7 +488,8 @@ impl EventType {
             EventType::CalendarChanged
             | EventType::CalendarAnswered
             | EventType::PlaceSet
-            | EventType::TravelTimeSet => &[Feature::Planning],
+            | EventType::TravelTimeSet
+            | EventType::DayPlanAccepted => &[Feature::Planning],
 
             EventType::DataWiped
             | EventType::FeedbackCaptured
@@ -1915,6 +1921,9 @@ pub enum CalendarAnswer {
 /// A named place, created or replaced whole. `aggregate_id` is its name.
 pub type PlaceSetPayload = crate::planning::places::Place;
 
+/// A day plan he accepted, blocks resolved to instants. `aggregate_id` is its date.
+pub type DayPlanAcceptedPayload = crate::planning::plan::AcceptedPlan;
+
 /// His estimate of the trip between two places, either direction. `aggregate_id` is the pair.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TravelTimeSetPayload {
@@ -2124,6 +2133,9 @@ pub fn validate_payload(
         EventType::TravelTimeSet => {
             serde_json::from_value::<TravelTimeSetPayload>(payload.clone()).map(|_| ())
         }
+        EventType::DayPlanAccepted => {
+            serde_json::from_value::<DayPlanAcceptedPayload>(payload.clone()).map(|_| ())
+        }
         EventType::RecordTypeDeclared => {
             serde_json::from_value::<RecordTypeDeclaredPayload>(payload.clone()).map(|_| ())
         }
@@ -2327,10 +2339,11 @@ mod tests {
                 | EventType::CalendarChanged
                 | EventType::CalendarAnswered
                 | EventType::PlaceSet
-                | EventType::TravelTimeSet => counted += 1,
+                | EventType::TravelTimeSet
+                | EventType::DayPlanAccepted => counted += 1,
             }
         }
-        assert_eq!(counted, 70, "EventType::ALL does not list every variant");
+        assert_eq!(counted, 71, "EventType::ALL does not list every variant");
 
         let unique: std::collections::BTreeSet<String> =
             EventType::ALL.iter().map(|t| t.to_string()).collect();

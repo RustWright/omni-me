@@ -211,6 +211,9 @@ pub struct Session<'a> {
     /// Route each request to a specialist first. Off by default: it costs one
     /// model call, and scripted test clients answer only the loop's own calls.
     specialists: bool,
+    /// A specialist chosen by the caller, skipping the router: a scheduled job that is
+    /// always about one domain (the morning plan, ruling 112).
+    fixed: Option<super::specialist::Specialist>,
 }
 
 impl<'a> Session<'a> {
@@ -240,6 +243,7 @@ impl<'a> Session<'a> {
             enable_thinking: None,
             retrievers: Retrievers::default(),
             specialists: false,
+            fixed: None,
         })
     }
 
@@ -262,6 +266,12 @@ impl<'a> Session<'a> {
     /// Route each request to a specialist. See `specialist`.
     pub fn with_specialists(mut self) -> Self {
         self.specialists = true;
+        self
+    }
+
+    /// Answer as `specialist`, without routing.
+    pub fn with_specialist(mut self, specialist: super::specialist::Specialist) -> Self {
+        self.fixed = Some(specialist);
         self
     }
 
@@ -316,12 +326,20 @@ impl<'a> Session<'a> {
         // The brief before the date: the provider caches the longest unchanged
         // prefix, and the date line changes every minute while a 44 KB brief
         // does not.
-        let system = if self.specialists {
-            let who = super::specialist::route(self.llm, self.config, history, question).await;
-            tracing::info!(specialist = ?who, "routed");
-            format!("{system}{}", super::specialist::brief(self.db, who).await)
-        } else {
-            system
+        let who = match self.fixed {
+            Some(who) => Some(who),
+            None if self.specialists => {
+                Some(super::specialist::route(self.llm, self.config, history, question).await)
+            }
+            None => None,
+        };
+        let system = match who {
+            Some(who) => {
+                tracing::info!(specialist = ?who, fixed = self.fixed.is_some(), "routed");
+                let brief = super::specialist::brief(self.db, self.config, who).await;
+                format!("{system}{brief}")
+            }
+            None => system,
         };
         let system = format!("{system}{}", today_line(self.config, chrono::Utc::now()));
         let mut messages = vec![ChatMessage::System(system)];

@@ -7,6 +7,7 @@ use std::time::Duration;
 use omni_me_core::assistant::chat_tidy;
 use omni_me_core::assistant::conversation::{PendingQuestion, pending_questions};
 use omni_me_core::assistant::scheduled::{self, ScheduledPrompt};
+use omni_me_core::assistant::specialist::Specialist;
 use omni_me_core::assistant::{
     Retrievers, Session, answer_payload, inbox, promotion, proposals, skipped_payload,
 };
@@ -17,6 +18,7 @@ use omni_me_core::events::{
     ProposalDecision,
 };
 use omni_me_core::llm::LlmClient;
+use omni_me_core::planning::ritual;
 use omni_me_core::sync::{PullEvent, PullScheduler};
 use tokio::sync::broadcast::error::RecvError;
 
@@ -144,6 +146,19 @@ impl Responder<'_> {
                 self.maybe_run(&prompt).await;
             }
         }
+        self.maybe_run_morning_plan(&config).await;
+    }
+
+    /// The morning plan (ruling 98): due on his first activity, not at an hour, so it has its own
+    /// due-check and is then raised like any scheduled prompt.
+    async fn maybe_run_morning_plan(&self, config: &ResolvedConfig) {
+        match ritual::draft_due_now(self.db, config).await {
+            Ok(Some(_)) => self.raise(&ritual::as_prompt(config)).await,
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(error = %e, "could not check the morning plan; skipping this tick")
+            }
+        }
     }
 
     async fn maybe_run(&self, prompt: &ScheduledPrompt) {
@@ -161,7 +176,11 @@ impl Responder<'_> {
         if !scheduled::is_due_now(prompt, last) {
             return;
         }
+        self.raise(prompt).await;
+    }
 
+    /// Author the prompt's question, then tidy its earlier threads.
+    async fn raise(&self, prompt: &ScheduledPrompt) {
         let thread_id = ulid::Ulid::new().to_string();
         let message_id = ulid::Ulid::new().to_string();
         let payload = AssistantQuestionAskedPayload {
@@ -330,6 +349,10 @@ impl Responder<'_> {
 
         let llm = client_for(self.llm, self.batch, &question);
         let session = match Session::new(self.db, config, llm) {
+            // The morning plan is planning by definition, so it skips the router (ruling 112).
+            Ok(s) if question.prompt_name.as_deref() == Some(ritual::MORNING_PLAN) => {
+                s.with_specialist(Specialist::Planning)
+            }
             Ok(s) => s.with_specialists(),
             Err(e) => {
                 // A session that cannot even be built is a configuration fault,

@@ -266,6 +266,10 @@ pub fn SettingsPage() -> Element {
 
             ConfigSection { group: ConfigGroup::Notifications }
 
+            if features.on(Feature::Planning) {
+                ConfigSection { group: ConfigGroup::Planning }
+            }
+
             // Feature-owned sections below. A section whose feature is off is not
             // rendered at all rather than disabled — a control for something inert
             // is worse than its absence. The two `ConfigSection`s above are never
@@ -377,6 +381,16 @@ fn group_meta(group: ConfigGroup) -> (&'static str, Option<&'static str>) {
                  over the large-charge amount alerts once, in the charge's own \
                  currency. Hours are in the check-in time zone. Sent by the server \
                  through ntfy.",
+            ),
+        ),
+        ConfigGroup::Planning => (
+            "Planning",
+            Some(
+                "The day is planned from when you are actually up toward the bedtime \
+                 target, less the evening routine. Name a routine to have its items' \
+                 minutes taken off the start or end of the day. The morning plan is \
+                 drafted at your first activity, or at the fallback hour if there is none \
+                 by then. Hours are in the check-in time zone.",
             ),
         ),
         // Not "Assistant retrieval" any more: the turn budget governs the loop,

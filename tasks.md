@@ -47,7 +47,8 @@ builds follow them.
   it belongs in [0109]: no item names it, and [0116] puts timer controls on it. Needs [0123]. [M]
 - [0127] **Google connector (overlay, 133):** read-only OAuth, window snapshots, both calendars. Needs
   his Google Cloud setup, walked through live when this slice starts. Also wires the server's
-  15-minute read (113) through `RunConfig`, since the public server has no source. [M]
+  15-minute read (113) through `RunConfig`, since the public server has no source, and the fresh
+  read before each plan (113): until then the brief and `propose` read the stored calendar. [M]
 - [0110] **People build:** mentions, facts, resolution, pickers and group cards (102–104), merge
   and unmerge reversible for every attached record from the first event, the person view and the
   People tab with model-free search (118–120), per `design/0102/`; task text as a source (124);
