@@ -38,15 +38,18 @@ builds follow them.
   his places seeded on live (126) on his go, by the `/planning/places` calls in that doc; on live
   also set Settings → Planning (bedtime, morning and evening routine names). [XS]
 - [0124] **Ritual summary lines and load:** evening, weekly and monthly count lines on the 19:00
-  summary (98); the load measure, and a ritual pausing itself after 5 skips (99). Needs [0123]. [M]
+  summary (98); the load measure, and a ritual pausing itself after 5 skips (99). Needs [0123].
+  The view's month goals (110) wait on the monthly review recording goals, so add them here. [M]
 - [0125] **Block reminders and Start (app):** per [0109]'s Appendix B notes above; checked with a
   dev APK on the S9. Needs [0123]. [M]
-- [0126] **The read-only view and plan card** (110, 117), per `design/0102/`. My assumption that
-  it belongs in [0109]: no item names it, and [0116] puts timer controls on it. Needs [0123]. [M]
+- [0126] **Plan card and view: built** (`docs/src/planning.md` § The card and the view), checked in
+  the mock only. Left: tapping a view row opens chat about it (110), and a look on the S9 with the
+  next dev APK. [S]
 - [0127] **Google connector (overlay, 133):** read-only OAuth, window snapshots, both calendars. Needs
   his Google Cloud setup, walked through live when this slice starts. Also wires the server's
   15-minute read (113) through `RunConfig`, since the public server has no source, and the fresh
-  read before each plan (113): until then the brief and `propose` read the stored calendar. [M]
+  read before each plan (113): until then the brief and `propose` read the stored calendar. A
+  failed read should leave a record, so the plan card can say "Calendar: couldn't refresh" (117). [M]
 - [0110] **People build:** mentions, facts, resolution, pickers and group cards (102–104), merge
   and unmerge reversible for every attached record from the first event, the person view and the
   People tab with model-free search (118–120), per `design/0102/`; task text as a source (124);

@@ -826,9 +826,9 @@ blocked_by = ["omni-me-0123"]
 
 [[task]]
 id     = "omni-me-0126"
-title  = "Read-only view and plan card"
+title  = "Read-only view and plan card: tap-to-chat, on-device check"
 status = "todo"
-size   = "M"
+size   = "S"
 ref    = "tasks.md § Cycle 6"
 blocked_by = ["omni-me-0123"]
 
