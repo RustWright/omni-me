@@ -863,7 +863,7 @@ pub struct AutoImportSourceView {
     /// `kind` as active.
     #[serde(default)]
     pub auth_state: serde_json::Value,
-    /// Whether the source supports interactive re-auth (only the WS subprocess
+    /// Whether the source supports interactive re-auth (only the brokerage subprocess
     /// source does today). Gates whether the Reconnect button/OTP field render.
     #[serde(default)]
     pub reauth_capable: bool,

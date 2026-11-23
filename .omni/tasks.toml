@@ -9,7 +9,7 @@ next_id = 121
 
 [[task]]
 id     = "omni-me-0001"
-title  = "Confirm the 11-16 weekly WS buys arrive as two legs with no Unmatched"
+title  = "Confirm the 11-16 weekly brokerage buys arrive as two legs with no Unmatched"
 status = "done"
 size   = "XS"
 ref    = "tasks.md § Now — dated"
@@ -847,14 +847,14 @@ ref    = "tasks.md § Cycle 6"
 
 [[task]]
 id     = "omni-me-0118"
-title  = "WS transfer half booked twice after its partner left the fetch window"
+title  = "Brokerage transfer half booked twice after its partner left the fetch window"
 status = "doing"
 size   = "S"
 ref    = "tasks.md § Bugs"
 
 [[task]]
 id     = "omni-me-0119"
-title  = "Wise currency conversion booked as two one-sided rows"
+title  = "Currency conversion booked as two one-sided rows"
 status = "doing"
 size   = "XS"
 ref    = "tasks.md § Bugs"

@@ -8,7 +8,7 @@ live in `RULINGS.md`, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`
 v1.2.8 is fully out: live server `sha-fb67e96`, agent `dev-acc868b`, app published to the updater
 (he updates his daily phone himself). The backup ([0006]) ran its first live pass. Still to watch:
 [0118] when the next joined transfer's busy leg ages out (`~/omni-dev-tools/ws_transfer_dupes_probe.py`).
-[0119] (Wise conversions, overlay `a9d79e4`) waits for the next release (ruling 46); [0120] is the editor gap.
+[0119] (currency conversions, overlay `a9d79e4`) waits for the next release (ruling 46); [0120] is the editor gap.
 
 ⛔ Live is the pause: every live step waits for his go, one at a time. The task seed import still
 waits for his go. [0117]'s logcat watch is for the next dev APK on the S9 (the dev phone), never

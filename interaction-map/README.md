@@ -135,7 +135,7 @@ total check and no warnings; D4 is filtered in the private overlay, not the box 
 - **D3 — Reconcile on the Finances menu badge.** Count unmatched rows into Finances' badge so the
   queue is visible from anywhere. Against it: it would make the badge rarely zero while the
   backlog lasts, which trains people to ignore badges.
-- **D4 — The WS driver's scheduled orders** (`recurring_investment_policy-*`, "Recurring order
+- **D4 — The brokerage driver's scheduled orders** (`recurring_investment_policy-*`, "Recurring order
   upcoming: buy TBD") arrive as transactions. Skip them in the box's driver. ⛔ Touches live's
   feed, so his call.
 

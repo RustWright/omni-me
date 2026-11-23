@@ -711,7 +711,7 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
     #[test]
     fn auto_roster_keeps_unmatched() {
         let journal = "\
-2026-05-21 WS top-up
+2026-05-21 Northwind top-up
     Assets:Northwind:Cash       250.00 CAD
     Unmatched                     -250.00 CAD
 ";
