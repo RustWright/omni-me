@@ -424,7 +424,8 @@ mod tests {
 
     #[test]
     fn a_run_counts_his_active_span_plus_reading_capped() {
-        let t = |m: i64| Utc::now() + Duration::minutes(m);
+        let base = Utc::now();
+        let t = |m: i64| base + Duration::minutes(m);
         assert_eq!(run_minutes(vec![]), 0);
         assert_eq!(run_minutes(vec![t(0)]), READ_MIN);
         assert_eq!(run_minutes(vec![t(9), t(0), t(4)]), 9 + READ_MIN);
