@@ -1486,8 +1486,13 @@ pub fn validate_args(action: &ActionType, args: &Value) -> Result<Value, ArgErro
                             action.name, param.key
                         ));
                     };
+                    // An empty optional list is dropped, as a blank optional text is: refusing
+                    // it taught the model to pad `plan.set`'s untimed list with a placeholder.
                     if items.is_empty() {
-                        return Err(format!("{}'s `{}` is empty", action.name, param.key));
+                        if param.required {
+                            return Err(format!("{}'s `{}` is empty", action.name, param.key));
+                        }
+                        continue;
                     }
                     if items.len() > max_items {
                         return Err(format!(
@@ -2286,6 +2291,19 @@ mod tests {
         )
         .expect_err("an unknown key must not be silently dropped");
         assert!(err.contains("tags"), "{err}");
+    }
+
+    #[test]
+    fn an_empty_optional_list_is_dropped_and_an_empty_required_one_refused() {
+        let ok = validate_args(
+            &PLAN_SET,
+            &json!({ "date": "2099-01-01", "blocks": ["14:00-15:30 Essay"], "untimed": [] }),
+        )
+        .expect("no untimed items is a plan");
+        assert!(ok.get("untimed").is_none(), "{ok}");
+        let err = validate_args(&GOAL_SET, &json!({ "month": "2099-01", "goals": [] }))
+            .expect_err("goals are required");
+        assert!(err.contains("goals"), "{err}");
     }
 
     #[test]
