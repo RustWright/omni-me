@@ -56,7 +56,9 @@ builds follow them.
   spinning thread shows SurrealKV compaction (`CompactionIterator`, `TableWriter`) passing the
   1500m cap ~25 s after boot, every boot; the old image too, so not this push. Dev is stopped.
   Live (1.9G volume vs dev's 2.2G) has not restarted since 11-22 and may do the same on its next
-  start. Needs his call on how to give compaction room without squeezing live. [S]
+  start. His call: on-box at 2200m first (failed: the box thrashed off the tailnet ~2 min, live
+  survived), then off-box on a volume copy (`~/omni-dev-tools/state/dev-server-0128/`), waiting
+  on his go to pull the dev server image here. [S]
 - [0110] **People build:** mentions, facts, resolution, pickers and group cards (102–104), merge
   and unmerge reversible for every attached record from the first event, the person view and the
   People tab with model-free search (118–120), per `design/0102/`; task text as a source (124);
