@@ -9,6 +9,7 @@ use surrealdb::types::SurrealValue;
 
 use super::day::{DayContext, NIGHT_ENDS_HOUR};
 use super::fit::{self, Block, FreeTime};
+use super::goals;
 use super::plan::{self, PlanProposal, PlanStatus, UntimedItem};
 use crate::calendar::day_start;
 use crate::config::ResolvedConfig;
@@ -137,6 +138,10 @@ pub struct PlanView {
     /// "Rest of the week", or "Next week" on a Sunday.
     pub week_title: String,
     pub week: Vec<WeekRow>,
+    /// "November goals".
+    pub goals_title: String,
+    /// The month's goals as set (ruling 110); empty until the monthly review sets them.
+    pub goals: Vec<String>,
 }
 
 /// `90` → "1 h 30", `45` → "45 min", `120` → "2 h".
@@ -534,6 +539,11 @@ pub async fn view(
         },
         week_title: week_title.to_string(),
         week,
+        goals_title: format!("{} goals", today.format("%B")),
+        goals: goals::for_month(db, &goals::month_of(today))
+            .await?
+            .map(|g| g.goals)
+            .unwrap_or_default(),
     })
 }
 

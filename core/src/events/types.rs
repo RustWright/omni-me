@@ -121,6 +121,8 @@ pub enum EventType {
     DayPlanAccepted,
     // Start on a plan block's timer, from its reminder (ruling 93).
     BlockTimerStarted,
+    // The month's goals, set by the monthly review (rulings 98, 110).
+    MonthGoalsSet,
 }
 
 impl fmt::Display for EventType {
@@ -198,6 +200,7 @@ impl fmt::Display for EventType {
             EventType::TravelTimeSet => "travel_time_set",
             EventType::DayPlanAccepted => "day_plan_accepted",
             EventType::BlockTimerStarted => "block_timer_started",
+            EventType::MonthGoalsSet => "month_goals_set",
         };
         write!(f, "{s}")
     }
@@ -280,6 +283,7 @@ impl FromStr for EventType {
             "travel_time_set" => Ok(EventType::TravelTimeSet),
             "day_plan_accepted" => Ok(EventType::DayPlanAccepted),
             "block_timer_started" => Ok(EventType::BlockTimerStarted),
+            "month_goals_set" => Ok(EventType::MonthGoalsSet),
             other => Err(format!("unknown event type: {other}")),
         }
     }
@@ -364,6 +368,7 @@ impl EventType {
         EventType::TravelTimeSet,
         EventType::DayPlanAccepted,
         EventType::BlockTimerStarted,
+        EventType::MonthGoalsSet,
     ];
 
     /// Every event type a set of features owns, for a scoped wipe.
@@ -495,7 +500,8 @@ impl EventType {
             | EventType::PlaceSet
             | EventType::TravelTimeSet
             | EventType::DayPlanAccepted
-            | EventType::BlockTimerStarted => &[Feature::Planning],
+            | EventType::BlockTimerStarted
+            | EventType::MonthGoalsSet => &[Feature::Planning],
 
             EventType::DataWiped
             | EventType::FeedbackCaptured
@@ -1930,6 +1936,9 @@ pub type PlaceSetPayload = crate::planning::places::Place;
 /// A day plan he accepted, blocks resolved to instants. `aggregate_id` is its date.
 pub type DayPlanAcceptedPayload = crate::planning::plan::AcceptedPlan;
 
+/// A month's goals, replacing any set before. `aggregate_id` is the month, `YYYY-MM`.
+pub type MonthGoalsSetPayload = crate::planning::goals::MonthGoals;
+
 /// A timer action on a block of an accepted plan; the time is the event's timestamp.
 /// `aggregate_id` is [`BlockTimerPayload::key`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2158,6 +2167,9 @@ pub fn validate_payload(
         EventType::DayPlanAccepted => {
             serde_json::from_value::<DayPlanAcceptedPayload>(payload.clone()).map(|_| ())
         }
+        EventType::MonthGoalsSet => {
+            serde_json::from_value::<MonthGoalsSetPayload>(payload.clone()).map(|_| ())
+        }
         EventType::BlockTimerStarted => {
             serde_json::from_value::<BlockTimerPayload>(payload.clone()).map(|_| ())
         }
@@ -2366,10 +2378,11 @@ mod tests {
                 | EventType::PlaceSet
                 | EventType::TravelTimeSet
                 | EventType::DayPlanAccepted
-                | EventType::BlockTimerStarted => counted += 1,
+                | EventType::BlockTimerStarted
+                | EventType::MonthGoalsSet => counted += 1,
             }
         }
-        assert_eq!(counted, 72, "EventType::ALL does not list every variant");
+        assert_eq!(counted, 73, "EventType::ALL does not list every variant");
 
         let unique: std::collections::BTreeSet<String> =
             EventType::ALL.iter().map(|t| t.to_string()).collect();

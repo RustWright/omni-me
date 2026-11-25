@@ -4,6 +4,7 @@
 pub mod brief;
 pub mod day;
 pub mod fit;
+pub mod goals;
 pub mod places;
 pub mod plan;
 pub mod reminders;

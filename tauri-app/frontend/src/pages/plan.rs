@@ -33,6 +33,18 @@ pub fn PlanPage() -> Element {
                     WeekLine { key: "{row.day}", row: row.clone() }
                 }
             }
+            Horizon { title: v.goals_title.clone(), note: String::new() }
+            if v.goals.is_empty() {
+                p { class: "text-xs text-obsidian-text-muted",
+                    "None set yet. The monthly review asks on the 1st."
+                }
+            } else {
+                ul { class: "flex flex-col gap-1.5 text-sm text-obsidian-text",
+                    for goal in v.goals.iter() {
+                        li { key: "{goal}", "{goal}" }
+                    }
+                }
+            }
         },
     };
 

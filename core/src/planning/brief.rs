@@ -5,12 +5,13 @@ use chrono::{DateTime, Duration, NaiveDate, Utc};
 use surrealdb::types::SurrealValue;
 
 use super::day::DayContext;
-use super::plan;
+use super::{goals, plan};
 use crate::config::{Feature, ResolvedConfig};
 use crate::db::Database;
 
-/// The rules the planning brief adds to the system prompt. Names `plan.set` and its argument
-/// shapes: planning is reached only through this brief, so this is how the model finds them.
+/// The rules the planning brief adds to the system prompt. Names each planning action and its
+/// argument shapes: planning is reached only through this brief, so this is how the model finds
+/// them.
 pub const RULES: &str = "\n\n## Planning work\n\
 This request is about planning the user's day. The days below were worked out in code: \
 never add up minutes yourself, and never move or shorten a calendar event. A plan is not a \
@@ -26,7 +27,10 @@ minute, and keep blocks to what they can start.\n\
 - To change a plan, propose the whole day again; it replaces the earlier one. Say what changed.\n\
 - Say the fit `propose` returns in one line. A plan over the free time is still proposed: say \
 so, never refuse.\n\
-- If a clash is listed, ask which event they are going to in one line.";
+- If a clash is listed, ask which event they are going to in one line.\n\
+- Set a month's goals with `propose`, action `goal.set`, args: `month` (YYYY-MM) and `goals` (a \
+list of at most 5 short lines). Use the user's own words. It replaces any goals already set for \
+that month, so propose the whole set.";
 
 /// The context block: today, while any of it is left, then tomorrow.
 pub async fn context(db: &Database, config: &ResolvedConfig, now: DateTime<Utc>) -> String {
@@ -52,10 +56,30 @@ pub async fn context(db: &Database, config: &ResolvedConfig, now: DateTime<Utc>)
             }
         }
     }
+    out.push_str(&goal_lines(db, today).await);
     if config.enabled(Feature::Tasks) {
         out.push_str(&open_tasks(db, today).await);
     }
     out
+}
+
+/// This month's goals, so a plan can serve them and the monthly review can see what was set.
+async fn goal_lines(db: &Database, today: NaiveDate) -> String {
+    let month = goals::month_of(today);
+    match goals::for_month(db, &month).await {
+        Ok(Some(g)) => {
+            let mut out = format!("\n\nGoals for {month}:");
+            for goal in &g.goals {
+                out.push_str(&format!("\n- {goal}"));
+            }
+            out
+        }
+        Ok(None) => format!("\n\nNo goals are set for {month}."),
+        Err(e) => {
+            tracing::warn!(error = %e, "could not read the month's goals for the planning brief");
+            String::new()
+        }
+    }
 }
 
 fn accepted_lines(p: &plan::AcceptedPlan, tz: chrono_tz::Tz) -> String {

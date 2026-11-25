@@ -8,7 +8,7 @@ use super::projection::Projection;
 use super::store::{Event, EventError};
 use super::types::{
     BlockTimerPayload, CalendarAnsweredPayload, CalendarChangedPayload, DayPlanAcceptedPayload,
-    PlaceSetPayload, TravelTimeSetPayload,
+    MonthGoalsSetPayload, PlaceSetPayload, TravelTimeSetPayload,
 };
 
 /// Projection over the calendar as read in, his answers about it, his places and his accepted
@@ -28,9 +28,9 @@ impl Projection for PlanningProjection {
         Self::NAME
     }
 
-    /// 2 added `day_plans`, 3 `block_timers`.
+    /// 2 added `day_plans`, 3 `block_timers`, 4 `month_goals`.
     fn version(&self) -> u32 {
-        3
+        4
     }
 
     async fn init_schema(&self, db: &Database) -> Result<(), EventError> {
@@ -75,7 +75,13 @@ impl Projection for PlanningProjection {
              DEFINE FIELD IF NOT EXISTS block_start ON block_timers TYPE string;
              DEFINE FIELD IF NOT EXISTS title ON block_timers TYPE string;
              -- RFC 3339, the first start: a second tap does not move it.
-             DEFINE FIELD IF NOT EXISTS started_at ON block_timers TYPE string;",
+             DEFINE FIELD IF NOT EXISTS started_at ON block_timers TYPE string;
+
+             -- One row per month, YYYY-MM: the goals last set for it.
+             DEFINE TABLE IF NOT EXISTS month_goals SCHEMAFULL;
+             DEFINE FIELD IF NOT EXISTS month ON month_goals TYPE string;
+             DEFINE FIELD IF NOT EXISTS body ON month_goals TYPE string;
+             DEFINE FIELD IF NOT EXISTS set_at ON month_goals TYPE datetime;",
         )
         .await?
         .check()?;
@@ -86,7 +92,7 @@ impl Projection for PlanningProjection {
         db.query(
             "DELETE FROM calendar_events; DELETE FROM calendar_answers;
              DELETE FROM planning_places; DELETE FROM planning_travel; DELETE FROM day_plans;
-             DELETE FROM block_timers;",
+             DELETE FROM block_timers; DELETE FROM month_goals;",
         )
         .await?
         .check()?;
@@ -165,6 +171,23 @@ impl Projection for PlanningProjection {
                             date = $date, body = $body, accepted_at = type::datetime($ts)",
                     )
                     .bind(("date", p.date.to_string()))
+                    .bind(("body", body))
+                    .bind(("ts", event.timestamp.to_rfc3339()))
+                    .await?
+                    .check()?;
+                    Ok(())
+                }
+                None => Ok(()),
+            },
+            "month_goals_set" => match payload::<MonthGoalsSetPayload>(event) {
+                Some(p) => {
+                    let body = serde_json::to_string(&p)
+                        .map_err(|e| EventError::Validation(e.to_string()))?;
+                    db.query(
+                        "UPSERT type::record('month_goals', $month) SET
+                            month = $month, body = $body, set_at = type::datetime($ts)",
+                    )
+                    .bind(("month", p.month.clone()))
                     .bind(("body", body))
                     .bind(("ts", event.timestamp.to_rfc3339()))
                     .await?

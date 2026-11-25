@@ -151,8 +151,15 @@ card, so a plan is never left undecidable.
 **The view is one scroll** (ruling 110): what is left of today, with a line where now is, then
 the rest of the week as planned-against-free rows. On a Sunday the rows are the week ahead.
 Before 04:00 the view still shows the night before's day, as first activity does. The month's
-goals are the third part of the ruling; they join the view when the monthly review produces
-them ([0124]), since nothing records a goal yet.
+goals close the scroll.
+
+## Goals
+
+A month's goals are a few lines in your own words (ruling 134), set by the monthly review as a
+`goal.set` proposal: the month as `YYYY-MM` and at most five lines. Approving one writes
+`month_goals_set`, and a later set for the same month replaces the earlier one whole, as a
+re-plan replaces a plan. The view lists them as set, with no progress line. The planning brief
+carries this month's goals, so a plan can serve them and the review can see what was set.
 
 ## Reminders
 

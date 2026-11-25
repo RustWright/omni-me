@@ -1647,6 +1647,11 @@ pub struct PlanView {
     pub today: TodayView,
     pub week_title: String,
     pub week: Vec<WeekRow>,
+    /// "November goals".
+    #[serde(default)]
+    pub goals_title: String,
+    #[serde(default)]
+    pub goals: Vec<String>,
 }
 
 /// Something the assistant has offered to do, waiting on the user.

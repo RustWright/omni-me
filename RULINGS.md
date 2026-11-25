@@ -398,3 +398,7 @@ edit site carries their reasoning. These are settled. Do not re-open one without
   The Google connector lives in the private overlay, as bank drivers do; the public engine holds a
   provider-neutral event, a calendar-source interface and all of planning, so an adopter plugs in
   their own source. The OAuth app must be set to "In production", or its token expires in 7 days.
+- **134.** A month's goals (110) are a few free-text lines in his words, proposed by the monthly
+  review as one card and approved like a plan. A later set for the month replaces the earlier one.
+  The view lists them read-only, with no progress line; linking a goal to something measured can
+  come later as an optional field on the same record.

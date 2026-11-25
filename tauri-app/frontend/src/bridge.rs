@@ -5996,6 +5996,11 @@ mod mock_assistant {
                 row("Sat", 480, None, &[], &["Long run"]),
                 row("Sun", 420, None, &[], &[]),
             ],
+            goals_title: "November goals".into(),
+            goals: vec![
+                "Thesis ch. 2 drafted by 1 Dec".into(),
+                "Masters applications in by 15 Dec".into(),
+            ],
         }
     }
 

@@ -53,6 +53,7 @@ pub enum ActionKind {
     ProjectCreate,
     ProjectClose,
     PlanSet,
+    GoalSet,
 }
 
 /// Where an argument's value comes from.
@@ -1296,6 +1297,32 @@ const PLAN_SET: ActionType = ActionType {
     trigger: Trigger::OnRequest,
 };
 
+/// Ruling 134 (RULINGS.md): the monthly review sets a few goals in his words; a later set for the
+/// month replaces the earlier one.
+const GOAL_SET: ActionType = ActionType {
+    name: crate::planning::goals::GOAL_SET,
+    kind: ActionKind::GoalSet,
+    feature: Feature::Planning,
+    description: "Propose the goals for one month: a few short lines in the user's own words. \
+                  They replace any goals already set for that month, so propose the whole set.",
+    params: &[
+        ActionParam::text("month", "The month, as YYYY-MM.", 7)
+            .checked_by(crate::planning::goals::valid_month),
+        ActionParam::list(
+            "goals",
+            "The goals, one short line each, like \"Thesis ch. 2 drafted by 1 Dec\".",
+            crate::planning::goals::MAX_GOAL_CHARS,
+            crate::planning::goals::MAX_GOALS,
+        )
+        .checked_by(crate::planning::goals::valid_goal),
+    ],
+    produces: &[EventType::MonthGoalsSet],
+    reversible: true,
+    reversibility: "Setting the month's goals again replaces them; the log keeps both.",
+    autonomy: Autonomy::AlwaysAsk,
+    trigger: Trigger::OnRequest,
+};
+
 /// Every action this build knows, enabled or not.
 pub const ALL_ACTIONS: &[ActionType] = &[
     NOTE_CREATE,
@@ -1321,6 +1348,7 @@ pub const ALL_ACTIONS: &[ActionType] = &[
     PROJECT_CREATE,
     PROJECT_CLOSE,
     PLAN_SET,
+    GOAL_SET,
 ];
 
 /// The actions whose feature is on, which is the set the model is told about.
@@ -1994,6 +2022,27 @@ pub fn build_events(
                 &payload,
             )
         }
+        ActionKind::GoalSet => {
+            let month = text_arg(&args, "month").ok_or("the goals name no month")?;
+            let goals: Vec<String> = args["goals"]
+                .as_array()
+                .map(Vec::as_slice)
+                .unwrap_or(&[])
+                .iter()
+                .filter_map(Value::as_str)
+                .map(|g| g.trim().to_string())
+                .filter(|g| !g.is_empty())
+                .collect();
+            if goals.is_empty() {
+                return Err("the goals list is empty".into());
+            }
+            let payload = crate::planning::goals::MonthGoals {
+                month: month.trim().to_string(),
+                goals,
+            };
+            let month = payload.month.clone();
+            task_event(EventType::MonthGoalsSet, month, device_id, &payload)
+        }
         ActionKind::PlanSet => {
             let date = day_arg(&args, "date").ok_or("the plan names no date")?;
             // Never built from the local texts: their instants depend on the day's window,
@@ -2386,6 +2435,10 @@ mod tests {
                 "term": "Fall 2026",
             }),
             ActionKind::ProjectClose => json!({ "project_id": "01PROJ000000000000000001" }),
+            ActionKind::GoalSet => json!({
+                "month": "2026-12",
+                "goals": ["Thesis ch. 2 drafted by 1 Dec"],
+            }),
             ActionKind::PlanSet => json!({
                 "date": "2026-11-23",
                 "blocks": ["14:00-15:30 Essay draft"],
