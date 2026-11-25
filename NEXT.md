@@ -5,11 +5,9 @@ live in `RULINGS.md`, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`
 `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
 ## ▶ NEXT ACTION — [0109]'s last checks, then [0127] with him
-[0124] and [0125] are built (his order, 11-25; `tasks.md` has what each still needs). The
-1.2.9-dev APK is on the S9: a reminder fired with the app killed, and the Plan view looks right.
-⛔ **Blocked: dev's server is stopped** ([0128], OOM in storage compaction at every boot). Once it
-runs on `dev-0d29dfb-58ee6f1` (already in `~/omni-dev/.env`): Start from a cold start ([0125]),
-a dev-agent run of each ritual ([0124]; agent image building from `58ee6f1`), `e152a79`'s check.
+[0125] is done and verified on the S9; [0124] is built, and dev runs it (`dev-0d29dfb-58ee6f1`).
+Next: a dev-agent run of each ritual ([0124]) and `e152a79`'s check, both on the agent image
+`omni-me-private-agent:dev-58ee6f1`, which needs his go to pull here. Then [0127] with him.
 Judgment calls made unattended: overlay `DECISION_LOG_2026-11-25.md`.
 ⛔ Order: server before any client. A server older than its clients refuses the whole push batch
 on an unknown event type (`server/src/routes/sync.rs`), and this push adds two.
@@ -25,7 +23,8 @@ The dev agent runs on this machine in Docker, since the box cannot fit it beside
 between uses (ruling 45), `docker start omni-me-agent-dev` resumes it against dev :3001.
 
 ## ⛔ Waiting on him
-- **[0128] dev OOM:** how to give dev's compaction memory without squeezing live (asked 11-25).
+- **[0128] before live's next deploy:** his go to compact a copy of live off-box (`tasks.md` [0128]).
+- **Agent image pull:** his go for `docker pull …-agent:dev-58ee6f1` (the [0124] ritual run).
 - **[0124] prompt texts:** the evening, weekly and monthly prompts in `planning/rituals.rs` are mine.
 - **[0123] on live:** his go to seed places and set Settings → Planning (`tasks.md` [0123]).
 - **Public history:** an earlier public `NEXT.md` named part of his email and a contact; this

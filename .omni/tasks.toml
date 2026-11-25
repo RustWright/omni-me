@@ -819,7 +819,7 @@ blocked_by = ["omni-me-0123"]
 [[task]]
 id     = "omni-me-0125"
 title  = "Block reminders and Start on the app"
-status = "todo"
+status = "done"
 size   = "M"
 ref    = "tasks.md § Cycle 6"
 blocked_by = ["omni-me-0123"]
@@ -841,7 +841,7 @@ ref    = "tasks.md § Cycle 6"
 
 [[task]]
 id     = "omni-me-0128"
-title  = "Dev server OOM-killed at startup by storage compaction"
+title  = "Live may OOM-loop on restart: compact a copy first"
 status = "todo"
 size   = "S"
 ref    = "tasks.md § Cycle 6"
