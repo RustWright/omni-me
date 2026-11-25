@@ -52,6 +52,11 @@ builds follow them.
   15-minute read (113) through `RunConfig`, since the public server has no source, and the fresh
   read before each plan (113): until then the brief and `propose` read the stored calendar. A
   failed read should leave a record, so the plan card can say "Calendar: couldn't refresh" (117). [M]
+- [0128] **Dev server OOM-killed at startup (blocks [0124]/[0125]'s dev checks):** perf on the
+  spinning thread shows SurrealKV compaction (`CompactionIterator`, `TableWriter`) passing the
+  1500m cap ~25 s after boot, every boot; the old image too, so not this push. Dev is stopped.
+  Live (1.9G volume vs dev's 2.2G) has not restarted since 11-22 and may do the same on its next
+  start. Needs his call on how to give compaction room without squeezing live. [S]
 - [0110] **People build:** mentions, facts, resolution, pickers and group cards (102–104), merge
   and unmerge reversible for every attached record from the first event, the person view and the
   People tab with model-free search (118–120), per `design/0102/`; task text as a source (124);

@@ -5,10 +5,11 @@ live in `RULINGS.md`, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`
 `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
 ## ▶ NEXT ACTION — [0109]'s last checks, then [0127] with him
-[0124] and [0125] are built (his order, 11-25; `tasks.md` has what each still needs).
-Next: dev server on the new image, then the 1.2.9-dev APK on the S9 for [0125]'s check, which also
-carries [0126]'s S9 look and [0117]'s logcat watch. Then a dev-agent run of each ritual ([0124];
-credits were granted for 11-25 only) and `e152a79`'s check on the same new agent image.
+[0124] and [0125] are built (his order, 11-25; `tasks.md` has what each still needs). The
+1.2.9-dev APK is on the S9: a reminder fired with the app killed, and the Plan view looks right.
+⛔ **Blocked: dev's server is stopped** ([0128], OOM in storage compaction at every boot). Once it
+runs on `dev-0d29dfb-58ee6f1` (already in `~/omni-dev/.env`): Start from a cold start ([0125]),
+a dev-agent run of each ritual ([0124]; agent image building from `58ee6f1`), `e152a79`'s check.
 Judgment calls made unattended: overlay `DECISION_LOG_2026-11-25.md`.
 ⛔ Order: server before any client. A server older than its clients refuses the whole push batch
 on an unknown event type (`server/src/routes/sync.rs`), and this push adds two.
@@ -24,6 +25,7 @@ The dev agent runs on this machine in Docker, since the box cannot fit it beside
 between uses (ruling 45), `docker start omni-me-agent-dev` resumes it against dev :3001.
 
 ## ⛔ Waiting on him
+- **[0128] dev OOM:** how to give dev's compaction memory without squeezing live (asked 11-25).
 - **[0124] prompt texts:** the evening, weekly and monthly prompts in `planning/rituals.rs` are mine.
 - **[0123] on live:** his go to seed places and set Settings → Planning (`tasks.md` [0123]).
 - **Public history:** an earlier public `NEXT.md` named part of his email and a contact; this
