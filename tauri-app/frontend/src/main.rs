@@ -844,6 +844,36 @@ fn App() -> Element {
         }
     });
 
+    // Start on a block reminder: taken at mount (the tap launched the app) and on each
+    // `omni:block-start` from MainActivity (it was running). The outcome opens the Plan view.
+    let block_start_signal = use_signal(|| None);
+    let block_start_note = use_context_provider(|| pages::plan::BlockStartNote(block_start_signal));
+    use_hook(move || {
+        let (tx, mut rx) = futures::channel::mpsc::unbounded::<()>();
+        let _ = tx.unbounded_send(());
+        bridge::listen_window_event("omni:block-start", move || {
+            let _ = tx.unbounded_send(());
+        });
+        let mut note = block_start_note.0;
+        spawn(async move {
+            while rx.next().await.is_some() {
+                let outcome = match bridge::invoke_take_block_start().await {
+                    Ok(None) => continue,
+                    Ok(Some(b)) => Ok(b),
+                    Err(e) => Err(e),
+                };
+                share_claimed_tab.set(true);
+                while feature_set.peek().is_none() {
+                    timer::sleep_ms(20).await;
+                }
+                note.set(Some(outcome));
+                if Tab::Plan.visible(&feature_set.peek().clone().unwrap_or_default()) {
+                    active_tab.set(Tab::Plan);
+                }
+            }
+        });
+    });
+
     // `omni-me://<tab>` from a notification tap: taken at mount (a cold start) and
     // on each `deep-link:open` (the app was running). A tab this launch does not
     // render is ignored, as a share intent's is.

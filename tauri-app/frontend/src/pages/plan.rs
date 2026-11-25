@@ -8,7 +8,11 @@ use crate::bridge;
 use crate::components::plan_card::{Agenda, DayLabels, Due, Fit};
 use crate::components::primitives::PageHeader;
 use crate::sync_refresh::use_sync_epoch;
-use crate::types::{TodayView, WeekRow};
+use crate::types::{StartedBlock, TodayView, WeekRow};
+
+/// The last Start tap's outcome, shown at the top of the view until dismissed. Provided by `App`.
+#[derive(Clone, Copy)]
+pub struct BlockStartNote(pub Signal<Option<Result<StartedBlock, String>>>);
 
 #[component]
 pub fn PlanPage() -> Element {
@@ -32,9 +36,32 @@ pub fn PlanPage() -> Element {
         },
     };
 
+    let mut note = use_context::<BlockStartNote>().0;
+    let started = match note.read().clone() {
+        None => rsx! {},
+        Some(outcome) => {
+            let (class, text) = match outcome {
+                Ok(b) => ("text-success", format!("Started {} · {}", b.title, b.when)),
+                Err(e) => ("text-obsidian-text-muted", e),
+            };
+            rsx! {
+                div { class: "flex justify-between items-baseline gap-2 text-sm mb-3",
+                    span { class, "{text}" }
+                    button {
+                        class: "text-xs text-obsidian-text-muted",
+                        "aria-label": "Dismiss",
+                        onclick: move |_| note.set(None),
+                        "×"
+                    }
+                }
+            }
+        }
+    };
+
     rsx! {
         div { class: "animate-in fade-in duration-300 max-w-2xl",
             PageHeader { title: "Plan" }
+            {started}
             {body}
         }
     }

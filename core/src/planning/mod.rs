@@ -6,5 +6,6 @@ pub mod day;
 pub mod fit;
 pub mod places;
 pub mod plan;
+pub mod reminders;
 pub mod ritual;
 pub mod view;

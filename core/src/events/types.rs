@@ -119,6 +119,8 @@ pub enum EventType {
     TravelTimeSet,
     // A day plan he accepted (ruling 98); the rest of a plan's life is its proposal.
     DayPlanAccepted,
+    // Start on a plan block's timer, from its reminder (ruling 93).
+    BlockTimerStarted,
 }
 
 impl fmt::Display for EventType {
@@ -195,6 +197,7 @@ impl fmt::Display for EventType {
             EventType::PlaceSet => "place_set",
             EventType::TravelTimeSet => "travel_time_set",
             EventType::DayPlanAccepted => "day_plan_accepted",
+            EventType::BlockTimerStarted => "block_timer_started",
         };
         write!(f, "{s}")
     }
@@ -276,6 +279,7 @@ impl FromStr for EventType {
             "place_set" => Ok(EventType::PlaceSet),
             "travel_time_set" => Ok(EventType::TravelTimeSet),
             "day_plan_accepted" => Ok(EventType::DayPlanAccepted),
+            "block_timer_started" => Ok(EventType::BlockTimerStarted),
             other => Err(format!("unknown event type: {other}")),
         }
     }
@@ -359,6 +363,7 @@ impl EventType {
         EventType::PlaceSet,
         EventType::TravelTimeSet,
         EventType::DayPlanAccepted,
+        EventType::BlockTimerStarted,
     ];
 
     /// Every event type a set of features owns, for a scoped wipe.
@@ -489,7 +494,8 @@ impl EventType {
             | EventType::CalendarAnswered
             | EventType::PlaceSet
             | EventType::TravelTimeSet
-            | EventType::DayPlanAccepted => &[Feature::Planning],
+            | EventType::DayPlanAccepted
+            | EventType::BlockTimerStarted => &[Feature::Planning],
 
             EventType::DataWiped
             | EventType::FeedbackCaptured
@@ -1924,6 +1930,22 @@ pub type PlaceSetPayload = crate::planning::places::Place;
 /// A day plan he accepted, blocks resolved to instants. `aggregate_id` is its date.
 pub type DayPlanAcceptedPayload = crate::planning::plan::AcceptedPlan;
 
+/// A timer action on a block of an accepted plan; the time is the event's timestamp.
+/// `aggregate_id` is [`BlockTimerPayload::key`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockTimerPayload {
+    pub date: chrono::NaiveDate,
+    pub block_start: chrono::DateTime<chrono::Utc>,
+    pub title: String,
+}
+
+impl BlockTimerPayload {
+    /// The plan's date and the block's start, which no other block of that plan shares.
+    pub fn key(&self) -> String {
+        format!("{}/{}", self.date, self.block_start.timestamp())
+    }
+}
+
 /// His estimate of the trip between two places, either direction. `aggregate_id` is the pair.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TravelTimeSetPayload {
@@ -2136,6 +2158,9 @@ pub fn validate_payload(
         EventType::DayPlanAccepted => {
             serde_json::from_value::<DayPlanAcceptedPayload>(payload.clone()).map(|_| ())
         }
+        EventType::BlockTimerStarted => {
+            serde_json::from_value::<BlockTimerPayload>(payload.clone()).map(|_| ())
+        }
         EventType::RecordTypeDeclared => {
             serde_json::from_value::<RecordTypeDeclaredPayload>(payload.clone()).map(|_| ())
         }
@@ -2340,10 +2365,11 @@ mod tests {
                 | EventType::CalendarAnswered
                 | EventType::PlaceSet
                 | EventType::TravelTimeSet
-                | EventType::DayPlanAccepted => counted += 1,
+                | EventType::DayPlanAccepted
+                | EventType::BlockTimerStarted => counted += 1,
             }
         }
-        assert_eq!(counted, 71, "EventType::ALL does not list every variant");
+        assert_eq!(counted, 72, "EventType::ALL does not list every variant");
 
         let unique: std::collections::BTreeSet<String> =
             EventType::ALL.iter().map(|t| t.to_string()).collect();

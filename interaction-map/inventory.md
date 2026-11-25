@@ -826,6 +826,14 @@ What the columns mean, and where this is wrong: the script's header.
 | `on_remove` |  | — |
 | `onclick` | Raw properties | STATE |
 
+## `pages/plan.rs`
+
+### PlanPage
+
+| handler | label nearby | effect |
+|---|---|---|
+| `onclick` | Plan | STATE |
+
 ## `pages/routines.rs`
 
 ### RoutinesPage
@@ -1117,4 +1125,4 @@ What the columns mean, and where this is wrong: the script's header.
 | `onclick` | Cancel | — |
 | `onclick` | Sending… | — |
 
-_486 handlers._
+_487 handlers._

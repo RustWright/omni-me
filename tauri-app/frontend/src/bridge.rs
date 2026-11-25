@@ -5128,6 +5128,20 @@ pub async fn invoke_plan_card(proposal_id: &str) -> Result<Option<crate::types::
     }
 }
 
+/// A Start tap on a block reminder, recorded by the backend; `None` when none is waiting.
+pub async fn invoke_take_block_start() -> Result<Option<crate::types::StartedBlock>, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(None)
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("take_block_start", &Args {}).await
+    }
+}
+
 /// What is left of today and the rest of the week.
 pub async fn invoke_plan_view() -> Result<crate::types::PlanView, String> {
     #[cfg(feature = "mock")]

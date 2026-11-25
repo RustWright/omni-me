@@ -1633,6 +1633,14 @@ pub struct WeekRow {
     pub due: Vec<String>,
 }
 
+/// A block a reminder's Start began (ruling 93).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StartedBlock {
+    pub title: String,
+    /// `14:15–15:45`, local.
+    pub when: String,
+}
+
 /// The read-only view beside chat (ruling 110).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlanView {

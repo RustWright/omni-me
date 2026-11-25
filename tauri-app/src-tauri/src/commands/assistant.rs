@@ -183,7 +183,7 @@ pub async fn decide_assistant_proposal(
     // whether an action is still available to carry out, which is a question
     // about now, not about what was registered at boot.
     let config = state.config.read().await.clone();
-    inbox::decide(
+    let decided = inbox::decide(
         &state.db,
         &config,
         &state.writer,
@@ -192,7 +192,10 @@ pub async fn decide_assistant_proposal(
         reason.filter(|r| !r.trim().is_empty()),
     )
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    // An accepted plan here has reminders to schedule.
+    crate::block_reminders::nudge();
+    Ok(decided)
 }
 
 /// Hide a conversation into the "Archived" list, or bring it back.

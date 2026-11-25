@@ -154,6 +154,41 @@ Before 04:00 the view still shows the night before's day, as first activity does
 goals are the third part of the ruling; they join the view when the monthly review produces
 them ([0124]), since nothing records a goal yet.
 
+## Reminders
+
+omni-me fires its own block reminders (ruling 96): the phone shows one when each block of an
+accepted plan begins, with a **Start** button that starts the block's timer (ruling 93).
+
+**The app reconciles rather than remembers.** At every start, after every pull that lands
+events, after a decision on the phone and every ten minutes, it works out the reminders the
+accepted plans call for (`planning::reminders::upcoming`) and brings the phone's scheduled
+notifications in line: it cancels any not wanted and schedules any missing. Remembering what it
+had scheduled would not survive a force-stop, which cancels every scheduled reminder; the plugin
+restores them only after a reboot. A re-plan therefore moves its reminders on the next
+reconcile, with no bookkeeping of its own.
+
+**The Start button names its block in its id.** The notification plugin reports only the id of
+the action tapped, so each block gets its own action, `start:<block start in unix seconds>`. The
+notification id is the start in minutes since the epoch; blocks never overlap, so two reminders
+never share one.
+
+**Start works with the app closed.** The plugin delivers a tap only to a listener that already
+exists, and a tap that cold-starts the app arrives before any does. So `MainActivity` reads the
+action off the launch intent itself, leaves it in a side file and, if the page is loaded, tells
+it. The page takes it at mount and on that signal, records the start and opens the Plan view
+with "Started …" at the top. A Start whose block is no longer in the plan, as after a re-plan
+moved it, is refused with a line saying so: a stale reminder never times a block that is not in
+the plan.
+
+**Exact alarms.** The app declares `USE_EXACT_ALARM`. Without it Android 12 and later batch the
+alarm and a reminder can arrive minutes late, and from Android 14 the alternative,
+`SCHEDULE_EXACT_ALARM`, is denied by default. Android 13 and later also ask once for permission
+to show notifications; a refusal leaves reminders unshown, and the next start asks again.
+
+**What Start records.** `block_timer_started` carries the plan's date, the block's start and its
+title, and the `block_timers` table keeps the first start of each block. Pause, stop and the
+running timer in the view arrive with the view's timer controls.
+
 ## The morning ritual
 
 The morning plan is drafted when your day starts: at your first activity, or at the fallback

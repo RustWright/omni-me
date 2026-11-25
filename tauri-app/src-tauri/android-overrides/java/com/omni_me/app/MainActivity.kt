@@ -54,6 +54,10 @@ class MainActivity : TauriActivity() {
         }
         super.onCreate(savedInstanceState)
         intent?.let { handleSendIntent(it) }
+        // A recreation or a relaunch from Recents carries the old intent; its Start is spent.
+        if (savedInstanceState == null) {
+            intent?.let { handleBlockStart(it) }
+        }
         // Bridge Android's system-bar insets into CSS custom properties so
         // the frontend can `padding-bottom: var(--safe-area-inset-bottom)`.
         // Implementation lives in `InsetBridge.kt` (same override pattern as
@@ -88,6 +92,27 @@ class MainActivity : TauriActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleSendIntent(intent)
+        handleBlockStart(intent)
+    }
+
+    // --- Start on a block reminder (ruling 93) ---
+    //
+    // The notification plugin reports a tap only to a listener that already exists, so a tap
+    // that cold-starts the app is lost. Read the action id off the intent instead, leave it for
+    // `take_block_start` (commands/planning.rs), and tell a loaded page to take it.
+    private fun handleBlockStart(intent: Intent) {
+        if (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
+        val action = intent.getStringExtra(NOTIFICATION_ACTION_EXTRA) ?: return
+        if (!action.startsWith("start:")) return
+        try {
+            File(bridgeDir(), BLOCK_START_FILE).writeText(action)
+        } catch (e: Exception) {
+            android.util.Log.w("OmniMe", "block start hand-over failed", e)
+            return
+        }
+        android.util.Log.i("OmniMe", "block start handed over: $action")
+        findWebView(findViewById(android.R.id.content))
+            ?.evaluateJavascript("window.dispatchEvent(new Event('omni:block-start'))", null)
     }
 
     // --- Hardware/gesture back → in-app navigation (#372) ---
@@ -268,5 +293,9 @@ class MainActivity : TauriActivity() {
         // Must match `INSTALL_REQUEST_FILE` in commands/update.rs.
         const val INSTALL_REQUEST_FILE = "install_request"
         const val INSTALL_POLL_MS = 1500L
+        // Must match `BLOCK_START_FILE` in commands/planning.rs.
+        const val BLOCK_START_FILE = "block_start"
+        // tauri-plugin-notification 2.4.0's ACTION_INTENT_KEY; the plugin is pinned to that version.
+        const val NOTIFICATION_ACTION_EXTRA = "NotificationUserAction"
     }
 }

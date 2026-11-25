@@ -7,8 +7,8 @@ use crate::db::Database;
 use super::projection::Projection;
 use super::store::{Event, EventError};
 use super::types::{
-    CalendarAnsweredPayload, CalendarChangedPayload, DayPlanAcceptedPayload, PlaceSetPayload,
-    TravelTimeSetPayload,
+    BlockTimerPayload, CalendarAnsweredPayload, CalendarChangedPayload, DayPlanAcceptedPayload,
+    PlaceSetPayload, TravelTimeSetPayload,
 };
 
 /// Projection over the calendar as read in, his answers about it, his places and his accepted
@@ -28,9 +28,9 @@ impl Projection for PlanningProjection {
         Self::NAME
     }
 
-    /// 2 added `day_plans`.
+    /// 2 added `day_plans`, 3 `block_timers`.
     fn version(&self) -> u32 {
-        2
+        3
     }
 
     async fn init_schema(&self, db: &Database) -> Result<(), EventError> {
@@ -67,7 +67,15 @@ impl Projection for PlanningProjection {
              DEFINE TABLE IF NOT EXISTS day_plans SCHEMAFULL;
              DEFINE FIELD IF NOT EXISTS date ON day_plans TYPE string;
              DEFINE FIELD IF NOT EXISTS body ON day_plans TYPE string;
-             DEFINE FIELD IF NOT EXISTS accepted_at ON day_plans TYPE datetime;",
+             DEFINE FIELD IF NOT EXISTS accepted_at ON day_plans TYPE datetime;
+
+             -- One row per plan block ever started (ruling 93), keyed by BlockTimerPayload::key.
+             DEFINE TABLE IF NOT EXISTS block_timers SCHEMAFULL;
+             DEFINE FIELD IF NOT EXISTS date ON block_timers TYPE string;
+             DEFINE FIELD IF NOT EXISTS block_start ON block_timers TYPE string;
+             DEFINE FIELD IF NOT EXISTS title ON block_timers TYPE string;
+             -- RFC 3339, the first start: a second tap does not move it.
+             DEFINE FIELD IF NOT EXISTS started_at ON block_timers TYPE string;",
         )
         .await?
         .check()?;
@@ -77,7 +85,8 @@ impl Projection for PlanningProjection {
     async fn clear_tables(&self, db: &Database) -> Result<(), EventError> {
         db.query(
             "DELETE FROM calendar_events; DELETE FROM calendar_answers;
-             DELETE FROM planning_places; DELETE FROM planning_travel; DELETE FROM day_plans;",
+             DELETE FROM planning_places; DELETE FROM planning_travel; DELETE FROM day_plans;
+             DELETE FROM block_timers;",
         )
         .await?
         .check()?;
@@ -164,9 +173,43 @@ impl Projection for PlanningProjection {
                 }
                 None => Ok(()),
             },
+            "block_timer_started" => match payload::<BlockTimerPayload>(event) {
+                Some(p) => on_block_started(&p, event, db).await,
+                None => Ok(()),
+            },
             _ => Ok(()),
         }
     }
+}
+
+/// Pause and stop arrive with the view's timer controls ([0116]); until then a row records the
+/// first start only.
+async fn on_block_started(
+    p: &BlockTimerPayload,
+    event: &Event,
+    db: &Database,
+) -> Result<(), EventError> {
+    let mut resp = db
+        .query("SELECT VALUE started_at FROM type::record('block_timers', $key)")
+        .bind(("key", p.key()))
+        .await?
+        .check()?;
+    let existing: Vec<String> = resp.take(0)?;
+    if !existing.is_empty() {
+        return Ok(());
+    }
+    db.query(
+        "UPSERT type::record('block_timers', $key) SET
+            date = $date, block_start = $block_start, title = $title, started_at = $ts",
+    )
+    .bind(("key", p.key()))
+    .bind(("date", p.date.to_string()))
+    .bind(("block_start", p.block_start.to_rfc3339()))
+    .bind(("title", p.title.clone()))
+    .bind(("ts", event.timestamp.to_rfc3339()))
+    .await?
+    .check()?;
+    Ok(())
 }
 
 /// Row id: the source and the uid, so two sources never collide.
