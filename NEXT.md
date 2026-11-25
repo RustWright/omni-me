@@ -4,13 +4,16 @@
 live in `RULINGS.md`, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`), rationale in
 `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
-## ▶ NEXT ACTION — [0109], the planning build, as slices [0121]–[0127] ([0115] waits for it)
-[0121]–[0123] and [0126] are built, CI green on `ae10c32` (design in `docs/src/planning.md`).
-[0126], the plan card and the Plan view, has been seen in the mock only, never on a device.
-`e152a79` (brief: no lookups of `plan`) is unchecked until the next dev agent image.
-**Next: his pick among [0124], [0125], [0127]** (no dependency orders them; [0127] needs his
-Google setup, live). [0126]'s leftovers (tap-to-chat, S9 look) ride [0125]'s dev APK.
-v1.2.8 is fully out. Still to watch: [0118] when the next joined transfer's busy leg ages out
+## ▶ NEXT ACTION — [0109]'s last checks, then [0127] with him
+[0124] and [0125] are built (his order, 11-25; `tasks.md` has what each still needs).
+Next: dev server on the new image, then the 1.2.9-dev APK on the S9 for [0125]'s check, which also
+carries [0126]'s S9 look and [0117]'s logcat watch. Then a dev-agent run of each ritual ([0124];
+credits were granted for 11-25 only) and `e152a79`'s check on the same new agent image.
+Judgment calls made unattended: overlay `DECISION_LOG_2026-11-25.md`.
+⛔ Order: server before any client. A server older than its clients refuses the whole push batch
+on an unknown event type (`server/src/routes/sync.rs`), and this push adds two.
+[0127] (Google connector) waits for him: his Google Cloud setup, walked through live.
+Still to watch: [0118] when the next joined transfer's busy leg ages out
 (`~/omni-dev-tools/ws_transfer_dupes_probe.py`). [0119] and [0120] wait for the next release (46).
 
 ⛔ Live is the pause: every live step waits for his go, one at a time. [0117]'s logcat watch is for
@@ -21,6 +24,7 @@ The dev agent runs on this machine in Docker, since the box cannot fit it beside
 between uses (ruling 45), `docker start omni-me-agent-dev` resumes it against dev :3001.
 
 ## ⛔ Waiting on him
+- **[0124] prompt texts:** the evening, weekly and monthly prompts in `planning/rituals.rs` are mine.
 - **[0123] on live:** his go to seed places and set Settings → Planning (`tasks.md` [0123]).
 - **Public history:** an earlier public `NEXT.md` named part of his email and a contact; this
   rewrite drops both, but history keeps them. His call whether that matters.

@@ -37,11 +37,13 @@ builds follow them.
 - [0123] **Plans and the planning specialist: built** (`e2cf053`, `docs/src/planning.md`). Left:
   his places seeded on live (126) on his go, by the `/planning/places` calls in that doc; on live
   also set Settings → Planning (bedtime, morning and evening routine names). [XS]
-- [0124] **Ritual summary lines and load:** evening, weekly and monthly count lines on the 19:00
-  summary (98); the load measure, and a ritual pausing itself after 5 skips (99). Needs [0123].
-  The view's month goals (110) wait on the monthly review recording goals, so add them here. [M]
-- [0125] **Block reminders and Start (app):** per [0109]'s Appendix B notes above; checked with a
-  dev APK on the S9. Needs [0123]. [M]
+- [0124] **Rituals, summary lines, load, goals: built** (`456814a`..`58ee6f1`, `docs/src/planning.md`
+  § The other rituals, § Goals; goals are ruling 134). Left: a dev-agent run of each ritual, and
+  his read of the three prompt texts in `planning/rituals.rs`, which are mine. [S]
+- [0125] **Block reminders and Start: built** (`e93984e`, `4ade27b`, § Reminders). Left: the S9
+  check on the 1.2.9-dev APK (reminder fires with the app swiped away; Start cold-starts it and
+  shows "Started …"; a re-planned block's Start is refused). Start records only; pause, stop
+  and the view's Start are [0116]'s timer controls. [S]
 - [0126] **Plan card and view: built** (`docs/src/planning.md` § The card and the view), checked in
   the mock only. Left: tapping a view row opens chat about it (110), and a look on the S9 with the
   next dev APK. [S]
