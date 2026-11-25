@@ -211,6 +211,34 @@ server holds the notification channel. The same server tick closes any plan that
 been replaced, so the inbox never holds a card that cannot be accepted. The plan you asked for
 in chat is not pushed: you are already looking at it.
 
+## The other rituals
+
+The evening shutdown, the weekly plan and the monthly review (ruling 98) are scheduled prompts
+too, raised at the summary hour and answered under the planning brief:
+
+| Ritual | When | What it asks |
+|---|---|---|
+| Evening shutdown (`evening_shutdown`) | daily, except Sunday | each planned item not said done: done, moved to another day, or dropped |
+| Weekly plan (`weekly_plan`) | Sundays | how last week went, then at most 10 task decisions, the rest next week |
+| Monthly review (`monthly_review`) | the 1st | how last month's goals went, then this month's as a `goal.set` card |
+
+The weekly plan covers its own evening, so Sunday has no shutdown. Nothing moves without your
+answer: a moved item becomes a task scheduled for its new day, so the next morning's draft
+picks it up, and tomorrow is never planned the evening before.
+
+**None of them pushes.** Each rides the 19:00 summary as one line built in code, such as
+"Evening shutdown: 4 planned items to settle" or "Weekly plan: 5 of 7 days planned last week,
+3 tasks due this week", and the tap opens chat. The line says the ritual is due today; it does
+not wait for the agent's thread, so the summary cannot run ahead of it and miss the day.
+
+**A ritual skipped five times running pauses itself** (ruling 99), the morning plan included.
+A run counts as skipped when you neither wrote in its thread nor decided a card in it before the
+next one. Saying "Skip today" is a decision, so it counts as taking part. A card the server
+closed because it lapsed or was replaced does not. The summary says a ritual has paused once,
+and answering in any of its last five threads resumes it: the rule reads the threads, so there
+is no switch to keep in step. Each ritual lapses on its own record, so skipping mornings never
+pauses evenings.
+
 ## Places
 
 Places and travel times are your own estimates until location history supplies real ones. They

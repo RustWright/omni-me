@@ -18,7 +18,7 @@ use omni_me_core::events::{
     ProposalDecision,
 };
 use omni_me_core::llm::LlmClient;
-use omni_me_core::planning::ritual;
+use omni_me_core::planning::{ritual, rituals};
 use omni_me_core::sync::{PullEvent, PullScheduler};
 use tokio::sync::broadcast::error::RecvError;
 
@@ -147,6 +147,27 @@ impl Responder<'_> {
             }
         }
         self.maybe_run_morning_plan(&config).await;
+        self.maybe_run_rituals(&config).await;
+    }
+
+    /// The evening shutdown, weekly plan and monthly review (ruling 98): due like any scheduled
+    /// prompt, except on a day the ritual has off or once it has paused itself (99).
+    async fn maybe_run_rituals(&self, config: &ResolvedConfig) {
+        for prompt in rituals::prompts(config) {
+            if !prompt.enabled {
+                continue;
+            }
+            if !rituals::runs_today(&prompt) {
+                continue;
+            }
+            match rituals::paused(self.db, prompt.name).await {
+                Ok(false) => self.maybe_run(&prompt).await,
+                Ok(true) => {}
+                Err(e) => {
+                    tracing::warn!(prompt = prompt.name, error = %e, "could not read its runs; skipping this tick")
+                }
+            }
+        }
     }
 
     /// The morning plan (ruling 98): due on his first activity, not at an hour, so it has its own
@@ -349,8 +370,13 @@ impl Responder<'_> {
 
         let llm = client_for(self.llm, self.batch, &question);
         let session = match Session::new(self.db, config, llm) {
-            // The morning plan is planning by definition, so it skips the router (ruling 112).
-            Ok(s) if question.prompt_name.as_deref() == Some(ritual::MORNING_PLAN) => {
+            // The rituals are planning by definition, so they skip the router (ruling 112).
+            Ok(s)
+                if question
+                    .prompt_name
+                    .as_deref()
+                    .is_some_and(rituals::is_ritual) =>
+            {
                 s.with_specialist(Specialist::Planning)
             }
             Ok(s) => s.with_specialists(),

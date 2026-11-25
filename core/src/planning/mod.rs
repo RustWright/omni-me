@@ -9,4 +9,5 @@ pub mod places;
 pub mod plan;
 pub mod reminders;
 pub mod ritual;
+pub mod rituals;
 pub mod view;

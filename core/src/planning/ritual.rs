@@ -55,6 +55,10 @@ pub async fn draft_due(
     if last.is_some_and(|t| t.with_timezone(&tz).date_naive() >= today) {
         return Ok(None);
     }
+    // Ruling 99 (RULINGS.md): five untouched mornings pause it until he answers one.
+    if super::rituals::paused(db, MORNING_PLAN).await? {
+        return Ok(None);
+    }
     // A question he typed and is waiting on may be asking for a plan: answer it first, or the
     // ritual's draft would supersede his.
     let waiting = crate::assistant::conversation::pending_questions(db)

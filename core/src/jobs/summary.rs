@@ -38,6 +38,14 @@ pub struct Waiting {
     /// Set when the last 7 days sent more critical alerts than the budget.
     #[serde(default)]
     pub over_budget: Option<String>,
+    /// Rituals due today, each a line that taps through to chat (ruling 98), keyed
+    /// `<name>:<date>`.
+    #[serde(default)]
+    pub rituals: BTreeMap<String, String>,
+    /// Rituals that paused themselves (ruling 99), keyed by the pause. Each is said once: the job
+    /// drops any its last summary listed.
+    #[serde(default)]
+    pub paused: BTreeMap<String, String>,
 }
 
 impl Waiting {
@@ -92,6 +100,9 @@ impl Waiting {
             w.alerts.insert(a.alert_id.clone(), a.line());
         }
         w.over_budget = super::alerts::over_budget(db, now).await?;
+        let rituals = crate::planning::rituals::summary_lines(db, config, now).await?;
+        w.rituals = rituals.due.into_iter().collect();
+        w.paused = rituals.paused.into_iter().collect();
         Ok(w)
     }
 
@@ -102,6 +113,8 @@ impl Waiting {
             && self.purge.is_empty()
             && self.alerts.is_empty()
             && self.over_budget.is_none()
+            && self.rituals.is_empty()
+            && self.paused.is_empty()
     }
 
     /// Whether anything is here that the last summary did not list. A changed
@@ -113,6 +126,14 @@ impl Waiting {
             || !self.purge.is_subset(&last.purge)
             || self.alerts.keys().any(|id| !last.alerts.contains_key(id))
             || (self.over_budget.is_some() && self.over_budget != last.over_budget)
+            || self.rituals.keys().any(|k| !last.rituals.contains_key(k))
+            || self.paused.keys().any(|k| !last.paused.contains_key(k))
+    }
+
+    /// Drops the pauses `last` already said: ruling 99 says each once.
+    pub fn without_said_pauses(mut self, last: &Waiting) -> Self {
+        self.paused.retain(|k, _| !last.paused.contains_key(k));
+        self
     }
 
     pub fn counts(&self) -> BTreeMap<String, u64> {
@@ -123,6 +144,8 @@ impl Waiting {
             ("purge", self.purge.len()),
             ("alerts", self.alerts.len()),
             ("over_budget", usize::from(self.over_budget.is_some())),
+            ("rituals", self.rituals.len()),
+            ("paused", self.paused.len()),
         ]
         .into_iter()
         .map(|(k, v)| (k.to_string(), v as u64))
@@ -135,7 +158,7 @@ impl Waiting {
         let finances = self.batches.len() + self.unmatched.len() + self.finance_alerts.len();
         let candidates = [
             (finances, "finances"),
-            (self.suggestions.len(), "assistant"),
+            (self.suggestions.len() + self.rituals.len(), "assistant"),
             (self.purge.len(), "archive"),
         ];
         candidates
@@ -168,8 +191,10 @@ impl Waiting {
         if !self.purge.is_empty() {
             lines.push(format!("Archive: {} due for purge", self.purge.len()));
         }
+        lines.extend(self.rituals.values().cloned());
         lines.extend(self.alerts.values().cloned());
         lines.extend(self.over_budget.clone());
+        lines.extend(self.paused.values().cloned());
         lines.join("\n")
     }
 }
@@ -273,17 +298,27 @@ impl SummaryJob {
 
         let started = Utc::now();
         let mut sent = 0;
-        let gathered = Waiting::gather(&self.db, &config, now).await;
+        // `all` is kept as the state, so a pause stays said for as long as it lasts; `waiting` is
+        // what this run would send.
+        let gathered = Waiting::gather(&self.db, &config, now).await.map(|all| {
+            let waiting = all.clone().without_said_pauses(&state.last_sent);
+            (all, waiting)
+        });
         // This run's own counts: `state.last_sent` still holds yesterday's after a failure.
-        let mut counts = gathered.as_ref().map(Waiting::counts).unwrap_or_default();
+        let mut counts = gathered
+            .as_ref()
+            .map(|(_, w)| w.counts())
+            .unwrap_or_default();
         let outcome = match gathered {
             Err(e) => RunOutcome::Failure { error: e },
-            Ok(waiting) if waiting.is_empty() || !waiting.has_new_since(&state.last_sent) => {
+            Ok((all, waiting))
+                if waiting.is_empty() || !waiting.has_new_since(&state.last_sent) =>
+            {
                 state.last_day = Some(day);
-                state.last_sent = waiting;
+                state.last_sent = all;
                 RunOutcome::Success
             }
-            Ok(waiting) => {
+            Ok((all, waiting)) => {
                 let n = Notification {
                     title: "Waiting on review".into(),
                     message: waiting.message(),
@@ -301,7 +336,7 @@ impl SummaryJob {
                             tracing::warn!(error = %e, "summary sent, but its one-shot alerts stay open");
                         }
                         state.last_day = Some(day);
-                        state.last_sent = waiting;
+                        state.last_sent = all;
                         RunOutcome::Success
                     }
                     Err(e) => RunOutcome::Failure { error: e },
@@ -383,6 +418,38 @@ mod tests {
             ..Default::default()
         };
         assert!(!fewer.has_new_since(&last), "only cleared, nothing new");
+    }
+
+    #[test]
+    fn a_pause_is_said_once_and_a_ritual_line_each_day() {
+        let map = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
+        };
+        let pause = (
+            "evening_shutdown:t5",
+            "Evening shutdown paused after 5 skips",
+        );
+        let first = Waiting {
+            paused: map(&[pause]),
+            ..Default::default()
+        };
+        let said = first.clone().without_said_pauses(&Waiting::default());
+        assert!(said.has_new_since(&Waiting::default()));
+        assert!(said.message().contains("paused"));
+
+        // The next day: still paused, and the state kept yesterday's full set.
+        let next = Waiting {
+            paused: map(&[pause]),
+            rituals: map(&[("weekly_plan:2026-11-29", "Weekly plan: 5 of 7 days planned")]),
+            ..Default::default()
+        }
+        .without_said_pauses(&first);
+        assert!(!next.message().contains("paused"), "said once");
+        assert!(next.has_new_since(&first), "today's ritual is new");
+        assert_eq!(next.tab(), "assistant");
     }
 
     #[test]
