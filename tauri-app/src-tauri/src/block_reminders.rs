@@ -20,6 +20,14 @@ fn wake() -> &'static Notify {
     WAKE.get_or_init(Notify::new)
 }
 
+/// The device's secret in every Start action id, so a forged launcher intent cannot start a
+/// block. Made on first use; app-private, so no other app can read it.
+pub fn token(app_data: &std::path::Path) -> String {
+    omni_me_core::runtime::load_or_create(app_data, "reminder_token", || {
+        ulid::Ulid::new().to_string()
+    })
+}
+
 /// Long enough to cost nothing, short enough that a plan accepted on another device and missed
 /// by the pull nudge still gets its first reminder.
 #[cfg_attr(not(mobile), allow(dead_code))]
@@ -61,7 +69,8 @@ async fn reconcile(app: &tauri::AppHandle) -> Result<(), String> {
     let state = app.state::<crate::AppState>();
     let config = state.config.read().await.clone();
     let wanted = if config.enabled(Feature::Planning) {
-        reminders::upcoming(&state.db, &config, chrono::Utc::now()).await?
+        let token = token(&state.app_data_dir);
+        reminders::upcoming(&state.db, &config, chrono::Utc::now(), &token).await?
     } else {
         Vec::new()
     };

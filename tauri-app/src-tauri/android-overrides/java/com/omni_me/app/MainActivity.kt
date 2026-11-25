@@ -110,7 +110,8 @@ class MainActivity : TauriActivity() {
             android.util.Log.w("OmniMe", "block start hand-over failed", e)
             return
         }
-        android.util.Log.i("OmniMe", "block start handed over: $action")
+        // Not the action itself: it carries the device's token.
+        android.util.Log.i("OmniMe", "block start handed over")
         findWebView(findViewById(android.R.id.content))
             ?.evaluateJavascript("window.dispatchEvent(new Event('omni:block-start'))", null)
     }

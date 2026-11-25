@@ -15,7 +15,8 @@ use crate::db::Database;
 use crate::events::{BlockTimerPayload, EventType, EventWriter, NewEvent};
 
 /// Prefix of a reminder's action id. The plugin reports only the action id on a tap, so the id
-/// carries the block: `start:<block start, unix seconds>`.
+/// carries the block: `start:<block start, unix seconds>:<token>`. The token is the device's
+/// own secret, so another app cannot start a block by sending the launcher a forged id.
 pub const START_PREFIX: &str = "start:";
 
 /// One reminder the phone should hold.
@@ -24,7 +25,7 @@ pub struct BlockReminder {
     /// The notification id: the block's start in minutes since the epoch. Blocks never
     /// overlap, so two reminders never share one.
     pub id: i32,
-    /// The action type id and the Start action's id, both `start:<unix>`.
+    /// The action type id and the Start action's id, both `start:<unix>:<token>`.
     pub action: String,
     pub at: DateTime<Utc>,
     pub title: String,
@@ -37,25 +38,34 @@ pub fn notification_id(start: DateTime<Utc>) -> i32 {
     i32::try_from(start.timestamp().div_euclid(60)).unwrap_or(i32::MAX)
 }
 
-pub fn start_action(start: DateTime<Utc>) -> String {
-    format!("{START_PREFIX}{}", start.timestamp())
+pub fn start_action(start: DateTime<Utc>, token: &str) -> String {
+    format!("{START_PREFIX}{}:{token}", start.timestamp())
 }
 
-/// The block start a Start action names, or `None` for any other action (a plain tap is `tap`).
-pub fn parse_start_action(action: &str) -> Option<DateTime<Utc>> {
-    let secs: i64 = action.strip_prefix(START_PREFIX)?.parse().ok()?;
-    DateTime::from_timestamp(secs, 0)
+/// The block start a Start action names, when its token is `token`. `None` for any other
+/// action (a plain tap is `tap`) and for a forged one.
+pub fn parse_start_action(action: &str, token: &str) -> Option<DateTime<Utc>> {
+    let (secs, got) = action.strip_prefix(START_PREFIX)?.split_once(':')?;
+    if token.is_empty() || got != token {
+        return None;
+    }
+    DateTime::from_timestamp(secs.parse().ok()?, 0)
 }
 
 /// Reminders for every block in `plans` that has not started by `now`.
-pub fn wanted(plans: &[AcceptedPlan], tz: Tz, now: DateTime<Utc>) -> Vec<BlockReminder> {
+pub fn wanted(
+    plans: &[AcceptedPlan],
+    tz: Tz,
+    now: DateTime<Utc>,
+    token: &str,
+) -> Vec<BlockReminder> {
     let mut out: Vec<BlockReminder> = plans
         .iter()
         .flat_map(|p| p.blocks.iter())
         .filter(|b| b.start > now)
         .map(|b| BlockReminder {
             id: notification_id(b.start),
-            action: start_action(b.start),
+            action: start_action(b.start, token),
             at: b.start,
             title: b.title.clone(),
             body: format!(
@@ -82,6 +92,7 @@ pub async fn upcoming(
     db: &Database,
     config: &ResolvedConfig,
     now: DateTime<Utc>,
+    token: &str,
 ) -> Result<Vec<BlockReminder>, String> {
     let tz = config.user_zone();
     let mut plans = Vec::new();
@@ -90,7 +101,7 @@ pub async fn upcoming(
             plans.push(p);
         }
     }
-    Ok(wanted(&plans, tz, now))
+    Ok(wanted(&plans, tz, now, token))
 }
 
 /// A block a Start tap began.
@@ -222,7 +233,7 @@ mod tests {
                 vec![block("2026-11-26T14:00:00Z", "2026-11-26T15:00:00Z", "Gym")],
             ),
         ];
-        let got = wanted(&plans, TZ, at("2026-11-25T14:00:00Z"));
+        let got = wanted(&plans, TZ, at("2026-11-25T14:00:00Z"), "tok");
         let titles: Vec<&str> = got.iter().map(|r| r.title.as_str()).collect();
         assert_eq!(
             titles,
@@ -236,11 +247,19 @@ mod tests {
     #[test]
     fn the_action_names_its_block_and_nothing_else_parses() {
         let start = at("2026-11-25T19:15:00Z");
-        let action = start_action(start);
-        assert_eq!(parse_start_action(&action), Some(start));
-        assert_eq!(parse_start_action("tap"), None);
-        assert_eq!(parse_start_action("start:"), None);
-        assert_eq!(parse_start_action("start:x"), None);
+        let action = start_action(start, "tok");
+        assert_eq!(parse_start_action(&action, "tok"), Some(start));
+        assert_eq!(
+            parse_start_action(&action, "other"),
+            None,
+            "a forged or stale token is refused"
+        );
+        assert_eq!(parse_start_action(&action, ""), None);
+        let bare = format!("start:{}", start.timestamp());
+        assert_eq!(parse_start_action(&bare, "tok"), None);
+        assert_eq!(parse_start_action("tap", "tok"), None);
+        assert_eq!(parse_start_action("start:", "tok"), None);
+        assert_eq!(parse_start_action("start:x:tok", "tok"), None);
         assert_ne!(
             notification_id(start),
             notification_id(start + Duration::minutes(1)),
@@ -319,7 +338,7 @@ mod tests {
         accept(&writer, &replan).await;
         assert!(start_block(&db, &writer, &config, start).await.is_err());
 
-        let due = upcoming(&db, &config, at("2026-11-25T15:00:00Z"))
+        let due = upcoming(&db, &config, at("2026-11-25T15:00:00Z"), "tok")
             .await
             .unwrap();
         assert_eq!(due.len(), 1);

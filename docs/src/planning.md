@@ -168,9 +168,11 @@ restores them only after a reboot. A re-plan therefore moves its reminders on th
 reconcile, with no bookkeeping of its own.
 
 **The Start button names its block in its id.** The notification plugin reports only the id of
-the action tapped, so each block gets its own action, `start:<block start in unix seconds>`. The
-notification id is the start in minutes since the epoch; blocks never overlap, so two reminders
-never share one.
+the action tapped, so each block gets its own action, `start:<block start in unix seconds>:<token>`.
+The token is a secret made once per install and kept in the app's private data. The app's
+launcher accepts intents from any app, so without it another app could start a block by sending
+a made-up action. The notification id is the start in minutes since the epoch; blocks never
+overlap, so two reminders never share one.
 
 **Start works with the app closed.** The plugin delivers a tap only to a listener that already
 exists, and a tap that cold-starts the app arrives before any does. So `MainActivity` reads the

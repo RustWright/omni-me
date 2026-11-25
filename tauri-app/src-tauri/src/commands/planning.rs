@@ -44,8 +44,10 @@ pub async fn take_block_start(
         Err(e) => return Err(format!("block start read: {e}")),
     };
     let _ = tokio::fs::remove_file(&path).await;
-    let Some(start) = reminders::parse_start_action(action.trim()) else {
-        tracing::warn!(action = %action.trim(), "block start: not a start action");
+    let token = crate::block_reminders::token(&state.app_data_dir);
+    let Some(start) = reminders::parse_start_action(action.trim(), &token) else {
+        // Never log the action: a forged one is noise, and a real one carries the token.
+        tracing::warn!("block start: not this device's start action");
         return Ok(None);
     };
     require_feature(&state, Feature::Planning)?;
