@@ -239,6 +239,93 @@ pub async fn summary_lines(
             out.due.push((format!("{name}:{today}"), line));
         }
     }
+    // Once a week, beside the weekly plan's line.
+    if today.weekday() == WEEKLY_DAY {
+        for (i, line) in load_lines(db, now).await?.into_iter().enumerate() {
+            out.due.push((format!("load:{today}:{i}"), line));
+        }
+    }
+    Ok(out)
+}
+
+/// Ruling 99's aims for a week of rituals, measured and never enforced.
+pub const WEEKLY_MINUTES_AIM: i64 = 30;
+pub const WEEKLY_DECISIONS_AIM: usize = 10;
+/// Added to each run he took part in, for reading it.
+const READ_MIN: i64 = 2;
+/// No run counts for more: a reply hours later is a gap, not an hour of ritual.
+const RUN_CAP_MIN: i64 = 60;
+
+/// Estimated minutes he spent in one ritual thread: from his first reply or decision to his
+/// last, plus reading time, capped. Zero when he never took part.
+pub fn run_minutes(mut at: Vec<DateTime<Utc>>) -> i64 {
+    at.sort();
+    match (at.first(), at.last()) {
+        (Some(first), Some(last)) => ((*last - *first).num_minutes() + READ_MIN).min(RUN_CAP_MIN),
+        _ => 0,
+    }
+}
+
+async fn activity(db: &Database, thread_id: &str) -> Result<(Vec<DateTime<Utc>>, usize), String> {
+    let mut resp = db
+        .query(
+            "SELECT <string> created_at AS at FROM assistant_messages
+             WHERE thread_id = $thread AND role = 'user' AND scheduled != true;
+             SELECT <string> decided_at AS at FROM assistant_proposals
+             WHERE thread_id = $thread AND decided_at IS NOT NONE
+               AND (decided_reason IS NONE OR decided_reason NOT IN [$lapsed, $superseded]);
+             SELECT count() AS n FROM assistant_proposals WHERE thread_id = $thread GROUP ALL;",
+        )
+        .bind(("thread", thread_id.to_string()))
+        .bind(("lapsed", REASON_LAPSED))
+        .bind(("superseded", REASON_SUPERSEDED))
+        .await
+        .map_err(|e| e.to_string())?
+        .check()
+        .map_err(|e| e.to_string())?;
+    let written: Vec<String> = resp.take((0, "at")).map_err(|e| e.to_string())?;
+    let decided: Vec<String> = resp.take((1, "at")).map_err(|e| e.to_string())?;
+    let asked: Vec<i64> = resp.take((2, "n")).map_err(|e| e.to_string())?;
+    let at = written
+        .iter()
+        .chain(&decided)
+        .filter_map(|t| DateTime::parse_from_rfc3339(t).ok())
+        .map(|t| t.with_timezone(&Utc))
+        .collect();
+    Ok((at, asked.first().copied().unwrap_or(0).max(0) as usize))
+}
+
+/// The week's ritual load, said only when over an aim (ruling 99, measured as 55 is).
+async fn load_lines(db: &Database, now: DateTime<Utc>) -> Result<Vec<String>, String> {
+    let since = now - Duration::days(7);
+    let mut minutes = 0;
+    for name in [MORNING_PLAN, EVENING, WEEKLY, MONTHLY] {
+        for run in runs(db, name, 8).await? {
+            if run.raised_at >= since && run.engaged {
+                minutes += run_minutes(activity(db, &run.thread_id).await?.0);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    if minutes > WEEKLY_MINUTES_AIM {
+        out.push(format!(
+            "Rituals took about {minutes} min this week, over the {WEEKLY_MINUTES_AIM} min aim"
+        ));
+    }
+    // The weekly plan before today's, which has not been answered yet.
+    let earlier = now - Duration::hours(12);
+    if let Some(last) = runs(db, WEEKLY, 2)
+        .await?
+        .into_iter()
+        .find(|r| r.raised_at < earlier)
+    {
+        let (_, asked) = activity(db, &last.thread_id).await?;
+        if asked > WEEKLY_DECISIONS_AIM {
+            out.push(format!(
+                "Last weekly plan asked {asked} decisions, over the {WEEKLY_DECISIONS_AIM} aim"
+            ));
+        }
+    }
     Ok(out)
 }
 
@@ -332,6 +419,19 @@ mod tests {
         assert!(
             !paused_by(&vec![run(false); LAPSE_AFTER - 1]),
             "a new ritual is not paused"
+        );
+    }
+
+    #[test]
+    fn a_run_counts_his_active_span_plus_reading_capped() {
+        let t = |m: i64| Utc::now() + Duration::minutes(m);
+        assert_eq!(run_minutes(vec![]), 0);
+        assert_eq!(run_minutes(vec![t(0)]), READ_MIN);
+        assert_eq!(run_minutes(vec![t(9), t(0), t(4)]), 9 + READ_MIN);
+        assert_eq!(
+            run_minutes(vec![t(0), t(300)]),
+            RUN_CAP_MIN,
+            "a late reply is a gap"
         );
     }
 

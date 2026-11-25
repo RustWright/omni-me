@@ -239,6 +239,15 @@ and answering in any of its last five threads resumes it: the rule reads the thr
 is no switch to keep in step. Each ritual lapses on its own record, so skipping mornings never
 pauses evenings.
 
+**Their load is measured, never enforced** (ruling 99, as the alert budget is in 55). On
+Sundays the summary adds a line when the week went over an aim: about 30 minutes of rituals,
+or more than 10 decisions in the last weekly plan. Minutes are an estimate read off the
+threads: from your first reply or decision in a run to your last, plus two minutes for reading,
+and never more than an hour for one run, since a reply hours later is a gap rather than an hour
+spent. Decisions are the cards the weekly plan proposed. The aim of at most two planning pushes
+a day holds by construction for now: the morning plan is the only one, and it pushes at most
+once a day.
+
 ## Places
 
 Places and travel times are your own estimates until location history supplies real ones. They
