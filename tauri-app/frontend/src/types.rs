@@ -1786,6 +1786,11 @@ impl AssistantProposal {
                 Some(s) => format!("Mark a transaction reconciled against {s}"),
                 None => "Mark a transaction reconciled".to_string(),
             },
+            // Ruling 134: the whole set for the month, replacing any before it.
+            "goal.set" => match arg("month").and_then(month_name) {
+                Some(month) => format!("Set the goals for {month}"),
+                None => "Set the month's goals".to_string(),
+            },
             other => other.to_string(),
         }
     }
@@ -1939,6 +1944,11 @@ impl AssistantProposal {
             // The category is in the summary and the identities are opaque ULIDs
             // that mean nothing to a reader; the rationale is what carries this.
             "transaction.categorize" => return None,
+            "goal.set" => {
+                let goals = self.args.get("goals")?.as_array()?;
+                let lines: Vec<&str> = goals.iter().filter_map(|g| g.as_str()).collect();
+                return (!lines.is_empty()).then(|| lines.join("\n"));
+            }
             _ => {}
         }
         // An action this build does not know: show its arguments verbatim so the
@@ -1953,6 +1963,13 @@ impl AssistantProposal {
             .collect();
         (!rendered.is_empty()).then(|| rendered.join("\n"))
     }
+}
+
+/// `2026-12` as "December 2026"; `None` for anything else.
+fn month_name(month: &str) -> Option<String> {
+    chrono::NaiveDate::parse_from_str(&format!("{month}-01"), "%Y-%m-%d")
+        .ok()
+        .map(|d| d.format("%B %Y").to_string())
 }
 
 /// A routine frequency as a person says it.
@@ -2188,6 +2205,25 @@ mod proposal_tests {
             created_at: "2026-09-10T00:00:00Z".into(),
             decision: None,
         }
+    }
+
+    #[test]
+    fn a_goals_card_names_the_month_and_lists_the_goals() {
+        let p = proposal(
+            "goal.set",
+            serde_json::json!({ "month": "2026-12", "goals": ["Thesis ch. 3", "Run twice a week"] }),
+        );
+        assert_eq!(p.summary(), "Set the goals for December 2026");
+        assert_eq!(
+            p.detail().as_deref(),
+            Some("Thesis ch. 3\nRun twice a week")
+        );
+        let odd = proposal(
+            "goal.set",
+            serde_json::json!({ "month": "Dec", "goals": [] }),
+        );
+        assert_eq!(odd.summary(), "Set the month's goals");
+        assert_eq!(odd.detail(), None);
     }
 
     #[test]
