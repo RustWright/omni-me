@@ -40,8 +40,8 @@ builds follow them.
 - [0124] **Rituals, summary lines, load, goals: built** (`456814a`..`58ee6f1`, `docs/src/planning.md`
   § The other rituals, § Goals; goals are ruling 134). Real path ran on dev 11-26 (hour set to 0):
   every scheduled question was routed, on the interactive seat, because `pending_questions`
-  dropped `prompt_name`; monthly went to General and said it had no `goal.set`. Fixed in the
-  commit after `c3d67c8`. Left: rerun on an agent image with the fix (evening any day, weekly
+  dropped `prompt_name`; monthly went to General and said it had no `goal.set`. Fixed in
+  `1820d85`. Left: rerun on an agent image with the fix (evening any day, weekly
   Sunday, monthly the 1st), then his read of the prompt texts in `planning/rituals.rs`. [S]
 - [0126] **Plan card and view: built**, row taps open chat (`docs/src/planning.md` § The card and
   the view). Left: the taps seen on the S9 with the next dev APK; clippy-clean, never run. [XS]
