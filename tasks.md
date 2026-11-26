@@ -24,9 +24,10 @@ builds follow them.
 - [0115] **Held until [0109] lands** (his call, 11-22: planning may revise task decisions). **Task inputs only he can give:** go for the seed import (overlay `TASKS_PREP.md`); wiring
   `scripts/task-hub.sh` into the shared session hooks (push and SessionStart receipt, 91, 121);
   the LEARN feed address as `learn_feed_url` in dev and live secrets (122). [USER]
-- [0116] **Task surfaces, with [0109]:** unattached deadlines and `USER` hub items reach him in a
-  ritual, the hub trial's acted/dismissed record (92), courses closed at term end (123), staleness
-  thresholds as settings (92), timer controls on the view (93), an "inferred" mark on ticks (127). [M]
+- [0116] **Task surfaces: mostly built** (`705f9eb`, `88999a0`; `docs/src/planning.md`): view timer
+  with nudge, "Waiting on him" in the brief, staleness settings, inferred ticks. Left: the hub
+  trial's acted/dismissed record (92, needs a design call), courses closed at term end (123, needs
+  the LEARN feed, [0115]), and all of it seen on the S9 and in a real ritual run. [M]
 - [0109] **Planning build:** read-only calendar (96; source interface public, Google connector
   in the overlay, 133), plan records, the ritual tier and summary
   lines (98), block reminders, the load measure (99). Needs [0106]. Reminders per [0104]'s results

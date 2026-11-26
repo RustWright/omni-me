@@ -178,7 +178,8 @@ fn Today(today: TodayView, on_timer: EventHandler<(i64, &'static str)>) -> Eleme
                 Due {
                     items: t.due.clone(),
                     on_tap: move |d: DueItem| {
-                        ask(due_thread.clone(), format!("About \"{}\", due {}: ", d.title, d.when))
+                        // `when` is "today", "Fri" or "was due Sat 31 Oct", so it reads alone.
+                        ask(due_thread.clone(), format!("About \"{}\" ({}): ", d.title, d.when))
                     },
                 }
             }
