@@ -1267,6 +1267,8 @@ pub async fn invoke_get_completions_for_date(
             date: date.to_string(),
             skipped: false,
             reason: None,
+            inferred: Some(true),
+            source_line: Some("07:40 meditated for ten minutes".into()),
         }])
     }
     #[cfg(not(feature = "mock"))]

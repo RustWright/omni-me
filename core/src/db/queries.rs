@@ -129,6 +129,10 @@ pub struct CompletionRow {
     pub completed_at: String,
     pub skipped: bool,
     pub reason: Option<String>,
+    /// Ticked from a journal line, not by hand (ruling 127).
+    pub inferred: Option<bool>,
+    /// That line, `HH:MM text`.
+    pub source_line: Option<String>,
 }
 
 /// A pending auto-import batch awaiting user review. Mirrors the projection
@@ -370,7 +374,7 @@ pub async fn get_completions_for_date(
     let mut resp = db
         .query(
             "SELECT meta::id(id) AS id, item_id, group_id, date,
-                    <string> completed_at AS completed_at, skipped, reason
+                    <string> completed_at AS completed_at, skipped, reason, inferred, source_line
              FROM routine_completions
              WHERE group_id = $group_id AND date = $date
              ORDER BY completed_at ASC",
@@ -398,7 +402,7 @@ pub async fn get_completion_history(
     let mut resp = db
         .query(
             "SELECT meta::id(id) AS id, item_id, group_id, date,
-                    <string> completed_at AS completed_at, skipped, reason
+                    <string> completed_at AS completed_at, skipped, reason, inferred, source_line
              FROM routine_completions
              WHERE group_id = $group_id AND date >= $cutoff
              ORDER BY date ASC, completed_at ASC",

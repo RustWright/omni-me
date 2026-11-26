@@ -56,6 +56,8 @@ pub enum ConfigKey {
     PlanningMorningRoutine,
     PlanningEveningRoutine,
     PlanningFallbackHour,
+    PlanningIndexStaleDays,
+    PlanningTaskStaleDays,
 }
 
 /// The tiers an alert kind can be set to. Review lists it in the daily summary.
@@ -125,6 +127,8 @@ pub const ALL_KEYS: &[ConfigKey] = &[
     ConfigKey::PlanningMorningRoutine,
     ConfigKey::PlanningEveningRoutine,
     ConfigKey::PlanningFallbackHour,
+    ConfigKey::PlanningIndexStaleDays,
+    ConfigKey::PlanningTaskStaleDays,
 ];
 
 /// The theme values `appearance.theme` accepts. `System` follows
@@ -204,6 +208,8 @@ impl fmt::Display for ConfigKey {
             ConfigKey::PlanningMorningRoutine => "planning.morning_routine",
             ConfigKey::PlanningEveningRoutine => "planning.evening_routine",
             ConfigKey::PlanningFallbackHour => "planning.fallback_hour",
+            ConfigKey::PlanningIndexStaleDays => "planning.index_stale_days",
+            ConfigKey::PlanningTaskStaleDays => "planning.task_stale_days",
         };
         write!(f, "{s}")
     }
@@ -252,6 +258,8 @@ impl FromStr for ConfigKey {
             "planning.morning_routine" => Ok(ConfigKey::PlanningMorningRoutine),
             "planning.evening_routine" => Ok(ConfigKey::PlanningEveningRoutine),
             "planning.fallback_hour" => Ok(ConfigKey::PlanningFallbackHour),
+            "planning.index_stale_days" => Ok(ConfigKey::PlanningIndexStaleDays),
+            "planning.task_stale_days" => Ok(ConfigKey::PlanningTaskStaleDays),
             other => Err(format!("unknown config key: {other}")),
         }
     }
@@ -464,6 +472,10 @@ impl ConfigKey {
             // Ruling 98 (RULINGS.md): the morning plan is drafted at his first activity, and at
             // this hour only when nothing has happened by then.
             ConfigKey::PlanningFallbackHour => ConfigValue::Int(11),
+            // Ruling 92 (RULINGS.md): an index unchanged 21 days is asked about as one line, and a
+            // native task untouched 4 weeks is offered for drop in the weekly plan.
+            ConfigKey::PlanningIndexStaleDays => ConfigValue::Int(21),
+            ConfigKey::PlanningTaskStaleDays => ConfigValue::Int(28),
         }
     }
 
@@ -499,6 +511,8 @@ impl ConfigKey {
             | ConfigKey::PlanningEveningRoutine => ValueKind::Text,
             ConfigKey::AssistantCheckInHour
             | ConfigKey::PlanningFallbackHour
+            | ConfigKey::PlanningIndexStaleDays
+            | ConfigKey::PlanningTaskStaleDays
             | ConfigKey::AssistantMaxTurns
             | ConfigKey::AssistantChatArchiveDays
             | ConfigKey::AssistantChatDeleteDays
@@ -546,7 +560,9 @@ impl ConfigKey {
             | ConfigKey::PlanningBedtime
             | ConfigKey::PlanningMorningRoutine
             | ConfigKey::PlanningEveningRoutine
-            | ConfigKey::PlanningFallbackHour => true,
+            | ConfigKey::PlanningFallbackHour
+            | ConfigKey::PlanningIndexStaleDays
+            | ConfigKey::PlanningTaskStaleDays => true,
             ConfigKey::FeatureJournal
             | ConfigKey::FeatureNotes
             | ConfigKey::FeatureRoutines
@@ -605,6 +621,10 @@ impl ConfigKey {
             ConfigKey::PlanningMorningRoutine => "Morning routine (routine name)",
             ConfigKey::PlanningEveningRoutine => "Evening routine (routine name)",
             ConfigKey::PlanningFallbackHour => "Morning plan if nothing by (hour)",
+            ConfigKey::PlanningIndexStaleDays => {
+                "Ask if a project's task list is current after (days)"
+            }
+            ConfigKey::PlanningTaskStaleDays => "Offer to drop a task untouched for (days)",
         }
     }
 
@@ -655,7 +675,9 @@ impl ConfigKey {
             | ConfigKey::PlanningBedtime
             | ConfigKey::PlanningMorningRoutine
             | ConfigKey::PlanningEveningRoutine
-            | ConfigKey::PlanningFallbackHour => None,
+            | ConfigKey::PlanningFallbackHour
+            | ConfigKey::PlanningIndexStaleDays
+            | ConfigKey::PlanningTaskStaleDays => None,
         }
     }
 
@@ -702,7 +724,9 @@ impl ConfigKey {
             ConfigKey::PlanningBedtime
             | ConfigKey::PlanningMorningRoutine
             | ConfigKey::PlanningEveningRoutine
-            | ConfigKey::PlanningFallbackHour => ConfigGroup::Planning,
+            | ConfigKey::PlanningFallbackHour
+            | ConfigKey::PlanningIndexStaleDays
+            | ConfigKey::PlanningTaskStaleDays => ConfigGroup::Planning,
         }
     }
 
@@ -748,6 +772,7 @@ impl ConfigKey {
             | ConfigKey::NotifySummaryHour
             | ConfigKey::PlanningFallbackHour => Some((0, 23)),
             ConfigKey::NotifyLargeCharge => Some((0, 1_000_000)),
+            ConfigKey::PlanningIndexStaleDays | ConfigKey::PlanningTaskStaleDays => Some((1, 365)),
             _ => None,
         }
     }
@@ -1012,11 +1037,13 @@ mod tests {
                 | ConfigKey::PlanningBedtime
                 | ConfigKey::PlanningMorningRoutine
                 | ConfigKey::PlanningEveningRoutine
-                | ConfigKey::PlanningFallbackHour => counted += 1,
+                | ConfigKey::PlanningFallbackHour
+                | ConfigKey::PlanningIndexStaleDays
+                | ConfigKey::PlanningTaskStaleDays => counted += 1,
             }
         }
         assert_eq!(
-            counted, 38,
+            counted, 40,
             "ALL_KEYS does not list every ConfigKey variant"
         );
 

@@ -73,6 +73,8 @@ mod tests {
             date: date.to_string(),
             skipped,
             reason: None,
+            inferred: None,
+            source_line: None,
         }
     }
 

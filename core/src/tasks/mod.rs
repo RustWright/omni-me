@@ -180,10 +180,6 @@ fn on_month_day(year: i32, month: u32, day: u32) -> NaiveDate {
         .expect("only 29 February is missing in some years")
 }
 
-/// A native task untouched this long is offered for drop in the weekly review: ruling 92
-/// (RULINGS.md), which makes it a setting.
-pub const NATIVE_STALE_DAYS: i64 = 28;
-
 #[cfg(test)]
 mod tests {
     use super::*;

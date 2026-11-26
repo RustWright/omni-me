@@ -6,7 +6,7 @@ use surrealdb::types::SurrealValue;
 
 use super::day::DayContext;
 use super::{goals, plan};
-use crate::config::{Feature, ResolvedConfig};
+use crate::config::{ConfigKey, Feature, ResolvedConfig};
 use crate::db::Database;
 
 /// The rules the planning brief adds to the system prompt. Names each planning action and its
@@ -28,6 +28,8 @@ minute, and keep blocks to what they can start.\n\
 - Say the fit `propose` returns in one line. A plan over the free time is still proposed: say \
 so, never refuse.\n\
 - If a clash is listed, ask which event they are going to in one line.\n\
+- \"Waiting on him\" is what surfaced on its own. Ask about it; never plan, attach, drop or \
+pull one in without their answer.\n\
 - Set a month's goals with `propose`, action `goal.set`, args: `month` (YYYY-MM) and `goals` (a \
 list of at most 5 short lines). Use the user's own words. It replaces any goals already set for \
 that month, so propose the whole set.";
@@ -59,6 +61,76 @@ pub async fn context(db: &Database, config: &ResolvedConfig, now: DateTime<Utc>)
     out.push_str(&goal_lines(db, today).await);
     if config.enabled(Feature::Tasks) {
         out.push_str(&open_tasks(db, today).await);
+        out.push_str(&waiting_lines(db, config, today).await);
+    }
+    out
+}
+
+/// Most lines each part of "Waiting on him" lists; past this it says how many more.
+const MAX_WAITING: usize = 10;
+
+/// What surfaces on its own (rulings 91, 92), for a ritual to ask about.
+async fn waiting_lines(db: &Database, config: &ResolvedConfig, today: NaiveDate) -> String {
+    let w = match crate::tasks::queries::waiting(
+        db,
+        today,
+        config.int_of(ConfigKey::PlanningIndexStaleDays),
+        config.int_of(ConfigKey::PlanningTaskStaleDays),
+    )
+    .await
+    {
+        Ok(w) => w,
+        Err(e) => {
+            tracing::warn!(error = %e, "could not read what is waiting for the planning brief");
+            return "\n\n### Waiting on him\nThis could not be read.".to_string();
+        }
+    };
+    let mut lines: Vec<String> = Vec::new();
+    let mut part = |items: Vec<String>| {
+        let more = items.len().saturating_sub(MAX_WAITING);
+        lines.extend(items.into_iter().take(MAX_WAITING));
+        if more > 0 {
+            lines.push(format!("({more} more not listed.)"));
+        }
+    };
+    part(
+        w.hub
+            .iter()
+            .map(|h| match &h.due {
+                Some(d) => format!("Needs him, from {}: {}, due {d}", h.project, h.title),
+                None => format!("Needs him, from {}: {}", h.project, h.title),
+            })
+            .collect(),
+    );
+    part(
+        w.stale_indexes
+            .iter()
+            .map(|p| format!("The {p} task list has not changed in a while: ask once whether it is still current."))
+            .collect(),
+    );
+    part(
+        w.deadlines
+            .iter()
+            .map(|d| {
+                format!(
+                    "Deadline with no task yet: {} {}, due {}",
+                    d.course, d.title, d.due_date
+                )
+            })
+            .collect(),
+    );
+    part(
+        w.untouched
+            .iter()
+            .map(|t| format!("Untouched for weeks, offer to drop in the weekly plan only: {t}"))
+            .collect(),
+    );
+    if lines.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("\n\n### Waiting on him");
+    for l in lines {
+        out.push_str(&format!("\n- {l}"));
     }
     out
 }

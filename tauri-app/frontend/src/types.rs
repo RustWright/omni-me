@@ -306,6 +306,11 @@ pub struct CompletionEntry {
     pub date: String,
     pub skipped: bool,
     pub reason: Option<String>,
+    /// Ticked from a journal line (ruling 127); undone like any tick.
+    #[serde(default)]
+    pub inferred: Option<bool>,
+    #[serde(default)]
+    pub source_line: Option<String>,
 }
 
 /// Result of a manual sync operation.

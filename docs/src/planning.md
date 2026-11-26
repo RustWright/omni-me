@@ -213,9 +213,9 @@ alarm and a reminder can arrive minutes late, and from Android 14 the alternativ
 `SCHEDULE_EXACT_ALARM`, is denied by default. Android 13 and later also ask once for permission
 to show notifications; a refusal leaves reminders unshown, and the next start asks again.
 
-**What Start records.** `block_timer_started` carries the plan's date, the block's start and its
-title, and the `block_timers` table keeps the first start of each block. Pause, stop and the
-running timer in the view arrive with the view's timer controls.
+**What the timer records.** Each timer event carries the plan's date, the block's start and its
+title. The `block_timers` table keeps each block's first start and its timer: open session,
+running span, working time and time since start, as a task's timer does.
 
 ## The morning ritual
 
@@ -240,6 +240,16 @@ too, raised at the summary hour and answered under the planning brief:
 | Evening shutdown (`evening_shutdown`) | daily, except Sunday | each planned item not said done: done, moved to another day, or dropped |
 | Weekly plan (`weekly_plan`) | Sundays | how last week went, then at most 10 task decisions, the rest next week |
 | Monthly review (`monthly_review`) | the 1st | how last month's goals went, then this month's as a `goal.set` card |
+
+**What surfaces on its own reaches you through them** (rulings 91, 92). The planning brief ends
+with "Waiting on him", built in code: open `USER` or dated items from the project task lists
+that you have not taken over, course deadlines still ahead with no task attached, one "still
+current?" line for each task list unchanged past Settings → Planning's threshold (21 days) in
+place of its items, and native tasks untouched past the other threshold (28 days), which only the
+weekly plan offers to drop. A repeating task is never offered, since it sits untouched between
+occurrences by design. Each part lists at most ten. Not yet built: the hub trial's record of
+acted against dismissed (92), and closing a course's project at term end (123), which waits on
+the LEARN feed.
 
 The weekly plan covers its own evening, so Sunday has no shutdown. Nothing moves without your
 answer: a moved item becomes a task scheduled for its new day, so the next morning's draft

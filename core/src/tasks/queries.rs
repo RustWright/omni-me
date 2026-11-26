@@ -9,10 +9,6 @@ use super::hub::{HubIndex, HubIndexError, parse_index};
 use crate::db::Database;
 use crate::events::{EventError, EventType, EventWriter, NewEvent, TaskModifiedPayload};
 
-/// An index unchanged this long shows as one "still current?" line instead of its items:
-/// ruling 92 (RULINGS.md), which makes it a setting.
-pub const INDEX_STALE_DAYS: i64 = 21;
-
 #[derive(Debug)]
 pub enum IngestError {
     /// The pushed file could not be read at all.
@@ -127,6 +123,84 @@ pub async fn stale_indexes(
         })
         .map(|r| r.project)
         .collect())
+}
+
+/// What surfaces to him on its own (rulings 91, 92), for the rituals to ask about.
+#[derive(Debug, Default, PartialEq)]
+pub struct Waiting {
+    /// Open `USER` or dated hub items not yet taken over, from indexes still current.
+    pub hub: Vec<WaitingHub>,
+    /// Indexes past the threshold: one "still current?" line each, instead of their items.
+    pub stale_indexes: Vec<String>,
+    /// Feed deadlines still ahead with no task attached.
+    pub deadlines: Vec<WaitingDeadline>,
+    /// Open native tasks untouched past the threshold, offered for drop in the weekly plan.
+    /// Never a repeating one: a monthly bill sits untouched between occurrences by design.
+    pub untouched: Vec<String>,
+}
+
+#[derive(Debug, PartialEq, SurrealValue)]
+pub struct WaitingHub {
+    pub hub_id: String,
+    pub project: String,
+    pub title: String,
+    pub due: Option<String>,
+}
+
+#[derive(Debug, PartialEq, SurrealValue)]
+pub struct WaitingDeadline {
+    pub uid: String,
+    pub course: String,
+    pub title: String,
+    pub due_date: String,
+}
+
+pub async fn waiting(
+    db: &Database,
+    today: NaiveDate,
+    index_days: i64,
+    task_days: i64,
+) -> Result<Waiting, EventError> {
+    let stale = stale_indexes(db, today, index_days).await?;
+    let untouched_before = (today - Duration::days(task_days))
+        .and_hms_opt(0, 0, 0)
+        .map(|t| t.and_utc().to_rfc3339())
+        .unwrap_or_default();
+    let mut resp = db
+        .query(
+            "SELECT hub_id, project, title, due FROM hub_tasks
+                 WHERE needs_you = true AND is_open = true ORDER BY due ASC, hub_id ASC;
+             SELECT VALUE hub_id FROM tasks WHERE hub_id != NONE;
+             SELECT uid, course, title, due_date FROM feed_deadlines
+                 WHERE due_date >= $today ORDER BY due_date ASC;
+             SELECT VALUE deadline_uid FROM tasks WHERE deadline_uid != NONE;
+             SELECT VALUE title FROM tasks
+                 WHERE status = 'todo' AND hub_id IS NONE AND deadline_uid IS NONE
+                   AND repeat_rule IS NONE AND series_id IS NONE
+                   AND updated_at < type::datetime($before)
+                 ORDER BY updated_at ASC;",
+        )
+        .bind(("today", today.to_string()))
+        .bind(("before", untouched_before))
+        .await?
+        .check()?;
+    let hub: Vec<WaitingHub> = resp.take(0)?;
+    let taken: Vec<String> = resp.take(1)?;
+    let deadlines: Vec<WaitingDeadline> = resp.take(2)?;
+    let attached: Vec<String> = resp.take(3)?;
+    let untouched: Vec<String> = resp.take(4)?;
+    Ok(Waiting {
+        hub: hub
+            .into_iter()
+            .filter(|h| !taken.contains(&h.hub_id) && !stale.contains(&h.project))
+            .collect(),
+        stale_indexes: stale,
+        deadlines: deadlines
+            .into_iter()
+            .filter(|d| !attached.contains(&d.uid))
+            .collect(),
+        untouched,
+    })
 }
 
 /// How far back a feed read keeps deadlines, so a recently missed one still shows.
@@ -396,20 +470,95 @@ size = "USER"
     }
 
     #[tokio::test]
+    async fn waiting_lists_what_surfaces_on_its_own() {
+        use super::super::deadlines::Deadline;
+        let (db, writer) = harness().await;
+        let day = |s| NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+        ingest(&db, &writer, INDEX).await.unwrap();
+        let task = |id: &str, ts: &str, extra: serde_json::Value| {
+            let mut payload = serde_json::json!({"task_id": id, "title": format!("task {id}")});
+            payload
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            NewEvent {
+                id: None,
+                event_type: EventType::TaskCreated.to_string(),
+                aggregate_id: id.into(),
+                timestamp: ts.parse().unwrap(),
+                device_id: "phone".into(),
+                payload,
+            }
+        };
+        for e in [
+            task("01OLD", "2026-08-01T12:00:00Z", serde_json::json!({})),
+            task(
+                "01RENT",
+                "2026-08-01T12:00:00Z",
+                serde_json::json!({"repeat": "monthly"}),
+            ),
+            task("01NEW", "2026-09-08T12:00:00Z", serde_json::json!({})),
+            task(
+                "01TOOK",
+                "2026-09-08T12:00:00Z",
+                serde_json::json!({"hub_id": "life-health-0001"}),
+            ),
+        ] {
+            writer.append_new(e).await.unwrap();
+        }
+        let feed = DeadlineFeed {
+            source: "learn".into(),
+            deadlines: vec![
+                Deadline {
+                    uid: "a@learn".into(),
+                    course: "ME 744".into(),
+                    term: "Fall 2026".into(),
+                    title: "Quiz 3".into(),
+                    due: "2026-09-20 23:59".into(),
+                },
+                Deadline {
+                    uid: "b@learn".into(),
+                    course: "ME 744".into(),
+                    term: "Fall 2026".into(),
+                    title: "Quiz 1".into(),
+                    due: "2026-09-01 23:59".into(),
+                },
+            ],
+            problems: vec![],
+            content_hash: "h".into(),
+        };
+        ingest_deadlines(&db, &writer, &feed).await.unwrap();
+
+        let w = waiting(&db, day("2026-09-10"), 21, 28).await.unwrap();
+        let hub: Vec<&str> = w.hub.iter().map(|h| h.hub_id.as_str()).collect();
+        assert_eq!(
+            hub,
+            ["life-health-0002"],
+            "the taken-over item is native now"
+        );
+        assert!(w.stale_indexes.is_empty());
+        let due: Vec<&str> = w.deadlines.iter().map(|d| d.uid.as_str()).collect();
+        assert_eq!(due, ["a@learn"], "a passed deadline is not waiting");
+        assert_eq!(w.untouched, ["task 01OLD"], "never a repeating task");
+
+        let later = waiting(&db, day("2026-11-21"), 21, 28).await.unwrap();
+        assert!(later.hub.is_empty(), "a stale index shows as one line");
+        assert_eq!(later.stale_indexes, ["life-health"]);
+    }
+
+    #[tokio::test]
     async fn an_index_past_the_threshold_is_stale() {
         let (db, writer) = harness().await;
         ingest(&db, &writer, INDEX).await.unwrap();
         let day = |s| NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
         assert!(
-            stale_indexes(&db, day("2026-09-20"), INDEX_STALE_DAYS)
+            stale_indexes(&db, day("2026-09-20"), 21)
                 .await
                 .unwrap()
                 .is_empty()
         );
         assert_eq!(
-            stale_indexes(&db, day("2026-11-21"), INDEX_STALE_DAYS)
-                .await
-                .unwrap(),
+            stale_indexes(&db, day("2026-11-21"), 21).await.unwrap(),
             vec!["life-health".to_string()]
         );
     }
