@@ -76,9 +76,7 @@ fn wasted(outcome: &Outcome) -> usize {
 
 /// What the weekly plan should ask about: open tasks and everything waiting, at most ten.
 async fn weekly_items(db: &Database, config: &ResolvedConfig) -> Vec<String> {
-    let today = chrono::Utc::now()
-        .with_timezone(&config.user_zone())
-        .date_naive();
+    let (today, _) = rituals::today_and_last_month(config);
     let mut items: Vec<String> = Vec::new();
     if let Ok(mut resp) = db
         .query("SELECT VALUE title FROM tasks WHERE status = 'todo' ORDER BY created_at ASC")
@@ -112,11 +110,7 @@ fn coverage(answer: &str, items: &[String]) -> (usize, usize) {
 }
 
 fn last_month_named(answer: &str, config: &ResolvedConfig) -> bool {
-    use chrono::Datelike;
-    let today = chrono::Utc::now()
-        .with_timezone(&config.user_zone())
-        .date_naive();
-    let last = today.with_day(1).unwrap_or(today) - chrono::Duration::days(1);
+    let (_, last) = rituals::today_and_last_month(config);
     let lower = answer.to_lowercase();
     lower.contains(&last.format("%B").to_string().to_lowercase())
         || lower.contains(&last.format("%Y-%m").to_string())

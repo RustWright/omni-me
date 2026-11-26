@@ -94,6 +94,14 @@ pub fn runs_on(prompt_name: &str, day: NaiveDate) -> bool {
     prompt_name != EVENING || day.weekday() != WEEKLY_DAY
 }
 
+/// Today in the user's zone, and the last day of the month before it: the dates a ritual looks
+/// back from. Here so the agent takes no `chrono` dependency.
+pub fn today_and_last_month(config: &ResolvedConfig) -> (NaiveDate, NaiveDate) {
+    let today = Utc::now().with_timezone(&config.user_zone()).date_naive();
+    let last = today.with_day(1).unwrap_or(today) - Duration::days(1);
+    (today, last)
+}
+
 /// [`runs_on`] for today in the prompt's zone, so the agent takes no `chrono` dependency.
 pub fn runs_today(prompt: &ScheduledPrompt) -> bool {
     runs_on(
