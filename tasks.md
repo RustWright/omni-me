@@ -38,8 +38,10 @@ builds follow them.
   his places seeded on live (126) on his go, by the `/planning/places` calls in that doc; on live
   also set Settings → Planning (bedtime, morning and evening routine names). [XS]
 - [0124] **Rituals, summary lines, load, goals: built** (`456814a`..`58ee6f1`, `docs/src/planning.md`
-  § The other rituals, § Goals; goals are ruling 134). Left: a dev-agent run of each ritual, and
-  his read of the three prompt texts in `planning/rituals.rs`, which are mine. [S]
+  § The other rituals, § Goals; goals are ruling 134). Left: the real scheduled path on dev (run
+  the agent across a 19:00; `--ask` goes through the router, so the 11-25 prompt runs prove
+  little: weekly was good, evening and monthly drifted, monthly never found `goal.set`, which
+  only the planning brief names), and his read of the three prompt texts in `planning/rituals.rs`. [S]
 - [0126] **Plan card and view: built**, seen on the S9 (1.2.9-dev). Left: tapping a view row opens
   chat about it (110). [S]
 - [0127] **Google connector (overlay, 133):** read-only OAuth, window snapshots, both calendars. Needs
