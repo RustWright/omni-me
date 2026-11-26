@@ -11,9 +11,11 @@ use super::day::{DayContext, NIGHT_ENDS_HOUR};
 use super::fit::{self, Block, FreeTime};
 use super::goals;
 use super::plan::{self, PlanProposal, PlanStatus, UntimedItem};
+use super::reminders;
 use crate::calendar::day_start;
 use crate::config::ResolvedConfig;
 use crate::db::Database;
+use crate::events::TimerState;
 
 /// How far ahead a due date puts a task on the card.
 const DUE_WITHIN_DAYS: i64 = 7;
@@ -40,10 +42,77 @@ pub struct Slot {
     pub place: Option<String>,
     /// A block a re-plan moved from where the plan before it had it.
     pub moved: bool,
+    /// The view only, on today's blocks: its timer, or Start on the block now under way (93).
+    pub timer: Option<SlotTimer>,
     #[serde(skip)]
     start: DateTime<Utc>,
     #[serde(skip)]
     end: DateTime<Utc>,
+}
+
+/// A block's timer, as the view shows it (ruling 93).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SlotTimer {
+    pub state: TimerShown,
+    /// "40 min working · 52 min since start", or "40 min worked" once stopped; `None` when ready.
+    pub line: Option<String>,
+    /// The block's start in unix seconds, which the controls send back.
+    pub block_start: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TimerShown {
+    /// The block now under way, not started: offers Start.
+    Ready,
+    Running,
+    Paused,
+    Stopped,
+}
+
+/// What a block's timer shows at `now`; `None` for a block not under way and never started.
+fn slot_timer(
+    timer: Option<&TimerState>,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+    now: DateTime<Utc>,
+) -> Option<SlotTimer> {
+    let block_start = start.timestamp();
+    let min = |secs: i64| duration((secs.max(0) + 30) / 60);
+    let shown = |state, line| {
+        Some(SlotTimer {
+            state,
+            line,
+            block_start,
+        })
+    };
+    let Some(t) = timer else {
+        return if start <= now && now < end {
+            shown(TimerShown::Ready, None)
+        } else {
+            None
+        };
+    };
+    match t.session_start {
+        Some(session) => {
+            let live = t.running_since.map_or(0, |s| (now - s).num_seconds());
+            let line = format!(
+                "{} working · {} since start",
+                min(t.active_secs + live),
+                min((now - session).num_seconds())
+            );
+            let state = if t.running {
+                TimerShown::Running
+            } else {
+                TimerShown::Paused
+            };
+            shown(state, Some(line))
+        }
+        None => shown(
+            TimerShown::Stopped,
+            Some(format!("{} worked", min(t.active_total))),
+        ),
+    }
 }
 
 /// The one coloured line (117): what is planned against what is free. Never blocks Accept.
@@ -225,6 +294,7 @@ fn timeline(
         title: title.to_string(),
         place,
         moved,
+        timer: None,
         start,
         end,
     };
@@ -469,7 +539,17 @@ pub async fn view(
             .map(|f| format!("{} free", duration(f.free_min()))),
     };
     let mut slots = timeline(&ctx, free_now.as_ref(), &blocks, &[]);
-    slots.retain(|s| s.end > now);
+    for s in slots.iter_mut().filter(|s| s.kind == SlotKind::Block) {
+        let t = reminders::timer(db, today, s.start).await?.map(|(_, t)| t);
+        s.timer = slot_timer(t.as_ref(), s.start, s.end, now);
+    }
+    // A block whose timer is still open stays until it is stopped: that is when it is nudged.
+    slots.retain(|s| {
+        s.end > now
+            || s.timer
+                .as_ref()
+                .is_some_and(|t| matches!(t.state, TimerShown::Running | TimerShown::Paused))
+    });
     let now_at = slots.iter().take_while(|s| s.start <= now).count();
     let blocks_done = blocks.iter().filter(|b| b.end <= now).count();
 
@@ -579,6 +659,33 @@ mod tests {
 
     fn at(s: &str) -> DateTime<Utc> {
         s.parse().unwrap()
+    }
+
+    #[test]
+    fn a_block_timer_shows_working_and_since_start() {
+        use crate::events::TimerStep;
+        let (start, end) = (at("2026-11-19T19:15:00Z"), at("2026-11-19T20:45:00Z"));
+        let ready = slot_timer(None, start, end, at("2026-11-19T19:20:00Z")).unwrap();
+        assert_eq!(ready.state, TimerShown::Ready);
+        assert_eq!(ready.block_start, start.timestamp());
+        assert!(slot_timer(None, start, end, at("2026-11-19T19:00:00Z")).is_none());
+
+        let mut t = TimerState::default();
+        t.step(TimerStep::Start, at("2026-11-19T19:15:00Z"));
+        t.step(TimerStep::Pause, at("2026-11-19T19:40:00Z"));
+        t.step(TimerStep::Start, at("2026-11-19T19:52:00Z"));
+        let now = at("2026-11-19T20:07:00Z");
+        let shown = slot_timer(Some(&t), start, end, now).unwrap();
+        assert_eq!(shown.state, TimerShown::Running);
+        assert_eq!(
+            shown.line.as_deref(),
+            Some("40 min working · 52 min since start")
+        );
+
+        t.step(TimerStep::Stop, now);
+        let shown = slot_timer(Some(&t), start, end, now).unwrap();
+        assert_eq!(shown.state, TimerShown::Stopped);
+        assert_eq!(shown.line.as_deref(), Some("40 min worked"));
     }
 
     fn ctx(events: Vec<crate::calendar::CalendarEvent>) -> DayContext {

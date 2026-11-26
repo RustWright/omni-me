@@ -7,12 +7,14 @@
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use chrono_tz::Tz;
 use serde::Serialize;
-use surrealdb::types::SurrealValue;
 
 use super::plan::{self, AcceptedPlan};
 use crate::config::ResolvedConfig;
 use crate::db::Database;
-use crate::events::{BlockTimerPayload, EventType, EventWriter, NewEvent};
+use crate::events::{
+    BLOCK_TIMER_COLUMNS, BlockTimerPayload, BlockTimerRow, EventType, EventWriter, NewEvent,
+    TimerState, TimerStep,
+};
 
 /// Prefix of a reminder's action id. The plugin reports only the action id on a tap, so the id
 /// carries the block: `start:<block start, unix seconds>:<token>`. The token is the device's
@@ -25,8 +27,9 @@ pub struct BlockReminder {
     /// The notification id: the block's start in minutes since the epoch. Blocks never
     /// overlap, so two reminders never share one.
     pub id: i32,
-    /// The action type id and the Start action's id, both `start:<unix>:<token>`.
-    pub action: String,
+    /// The action type id and the Start action's id, both `start:<unix>:<token>`. A nudge has
+    /// none.
+    pub action: Option<String>,
     pub at: DateTime<Utc>,
     pub title: String,
     /// `14:15–15:45`, local.
@@ -65,7 +68,7 @@ pub fn wanted(
         .filter(|b| b.start > now)
         .map(|b| BlockReminder {
             id: notification_id(b.start),
-            action: start_action(b.start, token),
+            action: Some(start_action(b.start, token)),
             at: b.start,
             title: b.title.clone(),
             body: format!(
@@ -101,7 +104,42 @@ pub async fn upcoming(
             plans.push(p);
         }
     }
-    Ok(wanted(&plans, tz, now, token))
+    let mut out = wanted(&plans, tz, now, token);
+    for p in &plans {
+        for b in p.blocks.iter().filter(|b| b.start <= now) {
+            let t = timer(db, p.date, b.start).await?.map(|(_, t)| t);
+            out.extend(nudge(b, t.as_ref(), tz, now));
+        }
+    }
+    Ok(out)
+}
+
+/// How long a timer runs past its block before the one nudge (ruling 93).
+pub const NUDGE_AFTER: Duration = Duration::minutes(30);
+
+/// The one nudge for a block whose timer is still running past its end, while it is still
+/// ahead. Once it has fired it is no longer ahead, so it is never scheduled again.
+pub fn nudge(
+    b: &super::fit::Block,
+    timer: Option<&TimerState>,
+    tz: Tz,
+    now: DateTime<Utc>,
+) -> Option<BlockReminder> {
+    let at = b.end + NUDGE_AFTER;
+    if !timer.is_some_and(|t| t.running) || at <= now {
+        return None;
+    }
+    Some(BlockReminder {
+        // Negated, so it never shares an id with a block's Start reminder.
+        id: -notification_id(b.start),
+        action: None,
+        at,
+        title: format!("Still on {}?", b.title),
+        body: format!(
+            "Its block ended at {}. Pause or stop it in the Plan view.",
+            b.end.with_timezone(&tz).format("%H:%M")
+        ),
+    })
 }
 
 /// A block a Start tap began.
@@ -112,14 +150,25 @@ pub struct StartedBlock {
     pub when: String,
 }
 
-/// Starts the timer on the accepted block that begins at `block_start`. Refused when no plan in
-/// force has that block, as after a re-plan moved it: a stale reminder never times a block
-/// that is not in the plan.
+/// Starts the timer on the accepted block that begins at `block_start`, from its reminder.
 pub async fn start_block(
     db: &Database,
     writer: &EventWriter,
     config: &ResolvedConfig,
     block_start: DateTime<Utc>,
+) -> Result<StartedBlock, String> {
+    time_block(db, writer, config, block_start, TimerStep::Start).await
+}
+
+/// Applies `step` to the timer on the accepted block that begins at `block_start`. Refused when
+/// no plan in force has that block, as after a re-plan moved it, so a stale reminder never times
+/// a block that is not in the plan; a pause or stop is refused on a block with no open session.
+pub async fn time_block(
+    db: &Database,
+    writer: &EventWriter,
+    config: &ResolvedConfig,
+    block_start: DateTime<Utc>,
+    step: TimerStep,
 ) -> Result<StartedBlock, String> {
     let tz = config.user_zone();
     for date in plan_dates(block_start, tz) {
@@ -129,15 +178,28 @@ pub async fn start_block(
         let Some(b) = p.blocks.iter().find(|b| b.start == block_start) else {
             continue;
         };
+        if step != TimerStep::Start {
+            let open = timer(db, date, block_start)
+                .await?
+                .is_some_and(|(_, t)| t.session_start.is_some());
+            if !open {
+                return Err("That block's timer is not running.".to_string());
+            }
+        }
         let payload = BlockTimerPayload {
             date,
             block_start,
             title: b.title.clone(),
         };
+        let event_type = match step {
+            TimerStep::Start => EventType::BlockTimerStarted,
+            TimerStep::Pause => EventType::BlockTimerPaused,
+            TimerStep::Stop => EventType::BlockTimerStopped,
+        };
         writer
             .append_new(NewEvent {
                 id: None,
-                event_type: EventType::BlockTimerStarted.to_string(),
+                event_type: event_type.to_string(),
                 aggregate_id: payload.key(),
                 timestamp: Utc::now(),
                 device_id: writer.device_id().to_string(),
@@ -163,10 +225,15 @@ pub async fn started_at(
     date: NaiveDate,
     block_start: DateTime<Utc>,
 ) -> Result<Option<DateTime<Utc>>, String> {
-    #[derive(SurrealValue)]
-    struct Row {
-        started_at: String,
-    }
+    Ok(timer(db, date, block_start).await?.map(|(first, _)| first))
+}
+
+/// A block's first start and its timer, or `None` for a block never started.
+pub async fn timer(
+    db: &Database,
+    date: NaiveDate,
+    block_start: DateTime<Utc>,
+) -> Result<Option<(DateTime<Utc>, TimerState)>, String> {
     let key = BlockTimerPayload {
         date,
         block_start,
@@ -174,17 +241,17 @@ pub async fn started_at(
     }
     .key();
     let mut resp = db
-        .query("SELECT started_at FROM type::record('block_timers', $key)")
+        .query(BLOCK_TIMER_COLUMNS)
         .bind(("key", key))
         .await
         .map_err(|e| e.to_string())?
         .check()
         .map_err(|e| e.to_string())?;
-    let rows: Vec<Row> = resp.take(0).map_err(|e| e.to_string())?;
-    Ok(rows
-        .into_iter()
-        .next()
-        .and_then(|r| r.started_at.parse().ok()))
+    let rows: Vec<BlockTimerRow> = resp.take(0).map_err(|e| e.to_string())?;
+    Ok(rows.into_iter().next().and_then(|r| {
+        let first = DateTime::parse_from_rfc3339(&r.started_at).ok()?;
+        Some((first.with_timezone(&Utc), r.state()))
+    }))
 }
 
 #[cfg(test)]
@@ -298,6 +365,66 @@ mod tests {
             })
             .await
             .unwrap();
+    }
+
+    #[test]
+    fn a_running_timer_past_its_block_gets_one_nudge() {
+        let b = block("2026-11-25T19:15:00Z", "2026-11-25T20:45:00Z", "Thesis");
+        let mut t = TimerState::default();
+        t.step(TimerStep::Start, at("2026-11-25T19:15:00Z"));
+        let n = nudge(&b, Some(&t), TZ, at("2026-11-25T20:50:00Z")).unwrap();
+        assert_eq!(n.at, at("2026-11-25T21:15:00Z"));
+        assert_eq!(n.title, "Still on Thesis?");
+        assert!(n.body.contains("15:45"));
+        assert!(n.action.is_none());
+        assert_ne!(
+            n.id,
+            notification_id(b.start),
+            "never a Start reminder's id"
+        );
+        assert!(
+            nudge(&b, Some(&t), TZ, at("2026-11-25T21:16:00Z")).is_none(),
+            "once past, never again"
+        );
+        assert!(nudge(&b, None, TZ, at("2026-11-25T20:50:00Z")).is_none());
+        t.step(TimerStep::Pause, at("2026-11-25T20:00:00Z"));
+        assert!(nudge(&b, Some(&t), TZ, at("2026-11-25T20:50:00Z")).is_none());
+    }
+
+    #[tokio::test]
+    async fn pause_and_stop_need_an_open_session() {
+        let (db, writer, config) = harness().await;
+        let p = plan(
+            "2026-11-25",
+            vec![block(
+                "2026-11-25T19:15:00Z",
+                "2026-11-25T20:45:00Z",
+                "Thesis",
+            )],
+        );
+        accept(&writer, &p).await;
+        let start = at("2026-11-25T19:15:00Z");
+        let step = |s| time_block(&db, &writer, &config, start, s);
+
+        assert!(step(TimerStep::Pause).await.is_err(), "nothing to pause");
+        step(TimerStep::Start).await.unwrap();
+        step(TimerStep::Pause).await.unwrap();
+        let (_, t) = timer(&db, p.date, start).await.unwrap().unwrap();
+        assert!(!t.running);
+        assert!(t.session_start.is_some(), "a pause keeps the session open");
+
+        step(TimerStep::Start).await.unwrap();
+        let (_, t) = timer(&db, p.date, start).await.unwrap().unwrap();
+        assert!(t.running, "a start after a pause resumes");
+
+        step(TimerStep::Stop).await.unwrap();
+        let (_, t) = timer(&db, p.date, start).await.unwrap().unwrap();
+        assert!(!t.running);
+        assert!(t.session_start.is_none());
+        assert!(
+            step(TimerStep::Stop).await.is_err(),
+            "a stopped timer is closed"
+        );
     }
 
     #[tokio::test]

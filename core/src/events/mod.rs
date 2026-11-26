@@ -24,6 +24,7 @@ pub use config_projection::{ConfigProjection, load_persisted, load_shared};
 pub use documents_projection::DocumentsProjection;
 pub use notes_projection::NotesProjection;
 pub use planning_projection::PlanningProjection;
+pub(crate) use planning_projection::{BLOCK_TIMER_COLUMNS, BlockTimerRow};
 pub use projection::{Projection, ProjectionRunner};
 pub use record_type_projection::{
     RecordTypeProjection, journal_record_type, load_record_type, seed_journal_record_type,
@@ -31,6 +32,6 @@ pub use record_type_projection::{
 pub use retention_projection::RetentionProjection;
 pub use routines_projection::RoutinesProjection;
 pub use store::{Event, EventError, EventStore, NewEvent, SurrealEventStore};
-pub use tasks_projection::{TasksProjection, TimerState};
+pub use tasks_projection::{TasksProjection, TimerState, TimerStep};
 pub use types::*;
 pub use writer::{EventWriter, WriteError, feature_off_message};

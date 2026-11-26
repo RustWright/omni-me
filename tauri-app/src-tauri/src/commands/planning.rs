@@ -4,6 +4,7 @@
 use tauri::{AppHandle, Manager, State};
 
 use omni_me_core::config::Feature;
+use omni_me_core::events::TimerStep;
 use omni_me_core::planning::reminders::{self, StartedBlock};
 use omni_me_core::planning::view::{self, PlanCard, PlanView};
 
@@ -52,9 +53,33 @@ pub async fn take_block_start(
     };
     require_feature(&state, Feature::Planning)?;
     let config = state.config.read().await.clone();
-    reminders::start_block(&state.db, &state.writer, &config, start)
-        .await
-        .map(Some)
+    let started = reminders::start_block(&state.db, &state.writer, &config, start).await;
+    crate::block_reminders::nudge();
+    started.map(Some)
+}
+
+/// Start, Pause or Stop on a block in the Plan view (ruling 93). `block_start` is the block's
+/// start in unix seconds, as the view hands it out; `step` is `start`, `pause` or `stop`.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn block_timer(
+    state: State<'_, AppState>,
+    block_start: i64,
+    step: String,
+) -> Result<StartedBlock, String> {
+    require_feature(&state, Feature::Planning)?;
+    let step = match step.as_str() {
+        "start" => TimerStep::Start,
+        "pause" => TimerStep::Pause,
+        "stop" => TimerStep::Stop,
+        other => return Err(format!("unknown timer step {other:?}")),
+    };
+    let start = chrono::DateTime::from_timestamp(block_start, 0)
+        .ok_or_else(|| format!("block start {block_start} is out of range"))?;
+    let config = state.config.read().await.clone();
+    let done = reminders::time_block(&state.db, &state.writer, &config, start, step).await;
+    // A running timer schedules its nudge and a pause or stop cancels it.
+    crate::block_reminders::nudge();
+    done
 }
 
 /// What is left of today and the rest of the week.

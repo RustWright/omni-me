@@ -26,16 +26,38 @@ pub struct BlockStartNote(pub Signal<Option<Result<StartedBlock, String>>>);
 #[component]
 pub fn PlanPage() -> Element {
     let sync_epoch = use_sync_epoch();
+    // Bumped each minute, so the now line and a running timer's minutes move, and after a
+    // timer tap.
+    let mut reread = use_signal(|| 0u32);
+    use_future(move || async move {
+        loop {
+            crate::timer::sleep_ms(60_000).await;
+            reread += 1;
+        }
+    });
     let view = use_resource(move || {
         let _ = sync_epoch.read();
+        let _ = reread.read();
         async move { bridge::invoke_plan_view().await }
     });
 
+    // Start taps from a reminder land here, and so does a refused view timer tap.
+    let mut note = use_context::<BlockStartNote>().0;
     let body = match view.read().clone() {
         None => rsx! { p { class: "text-sm text-obsidian-text-muted", "Reading the day…" } },
         Some(Err(e)) => rsx! { p { class: "text-sm text-error", "Couldn't read the plan: {e}" } },
         Some(Ok(v)) => rsx! {
-            Today { today: v.today.clone() }
+            Today {
+                today: v.today.clone(),
+                on_timer: move |(at, step): (i64, &'static str)| {
+                    spawn(async move {
+                        if let Err(e) = bridge::invoke_block_timer(at, step).await {
+                            note.set(Some(Err(e)));
+                        }
+                        reread += 1;
+                    });
+                },
+            }
             Horizon { title: v.week_title.clone(), note: String::new() }
             div { class: "flex flex-col gap-1.5",
                 for row in v.week.iter() {
@@ -65,7 +87,6 @@ pub fn PlanPage() -> Element {
         },
     };
 
-    let mut note = use_context::<BlockStartNote>().0;
     let started = match note.read().clone() {
         None => rsx! {},
         Some(outcome) => {
@@ -108,7 +129,7 @@ fn Horizon(title: String, note: String) -> Element {
 }
 
 #[component]
-fn Today(today: TodayView) -> Element {
+fn Today(today: TodayView, on_timer: EventHandler<(i64, &'static str)>) -> Element {
     let t = today;
     let mut tail: Vec<String> = Vec::new();
     match t.blocks_done {
@@ -147,6 +168,7 @@ fn Today(today: TodayView) -> Element {
                     on_tap: move |s: PlanSlot| {
                         ask(slot_thread.clone(), format!("About {}–{} {}: ", s.from, s.to, s.title))
                     },
+                    on_timer,
                 }
             }
             if !tail.is_empty() {

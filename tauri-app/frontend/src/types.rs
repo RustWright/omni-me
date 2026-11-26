@@ -1551,6 +1551,30 @@ pub struct PlanSlot {
     pub place: Option<String>,
     #[serde(default)]
     pub moved: bool,
+    /// The Plan view only, on today's blocks (ruling 93).
+    #[serde(default)]
+    pub timer: Option<SlotTimer>,
+}
+
+/// A block's timer as core worked it out; the view only lays it out.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SlotTimer {
+    pub state: TimerShown,
+    #[serde(default)]
+    pub line: Option<String>,
+    /// Unix seconds, sent back by the controls.
+    pub block_start: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TimerShown {
+    Ready,
+    Running,
+    Paused,
+    Stopped,
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -7,7 +7,8 @@ use crate::bridge;
 use crate::components::primitives::{Button, ButtonSize, ButtonVariant};
 use crate::sync_refresh::{bump_sync_epoch, use_sync_epoch};
 use crate::types::{
-    AssistantProposal, DueItem, FitLine, PlanSlot, PlanStatus, SlotKind, UntimedItem,
+    AssistantProposal, DueItem, FitLine, PlanSlot, PlanStatus, SlotKind, SlotTimer, TimerShown,
+    UntimedItem,
 };
 
 /// The decision reason core reads as "Skip today" (`planning::plan::REASON_SKIPPED`).
@@ -198,6 +199,9 @@ pub fn Agenda(
     now: Option<String>,
     /// Set by the Plan view, where a tapped row opens chat about it; the chat card leaves it.
     on_tap: Option<EventHandler<PlanSlot>>,
+    /// The Plan view's timer controls (ruling 93): the block's start and `start`, `pause` or
+    /// `stop`. The view's one exception to read-only.
+    on_timer: Option<EventHandler<(i64, &'static str)>>,
 ) -> Element {
     rsx! {
         div { class: "flex flex-col gap-1",
@@ -206,7 +210,7 @@ pub fn Agenda(
                     if now_at == Some(i) {
                         NowLine { now: now.clone().unwrap_or_default() }
                     }
-                    SlotRow { slot: s.clone(), on_tap }
+                    SlotRow { slot: s.clone(), on_tap, on_timer }
                 }
             }
             if now_at.is_some_and(|n| n >= slots.len()) {
@@ -227,7 +231,11 @@ fn NowLine(now: String) -> Element {
 }
 
 #[component]
-fn SlotRow(slot: PlanSlot, on_tap: Option<EventHandler<PlanSlot>>) -> Element {
+fn SlotRow(
+    slot: PlanSlot,
+    on_tap: Option<EventHandler<PlanSlot>>,
+    on_timer: Option<EventHandler<(i64, &'static str)>>,
+) -> Element {
     let tap = tap_class(on_tap.is_some());
     let tapped = slot.clone();
     let (box_class, sub) = match slot.kind {
@@ -267,6 +275,43 @@ fn SlotRow(slot: PlanSlot, on_tap: Option<EventHandler<PlanSlot>>) -> Element {
                 }
                 if let Some(s) = sub {
                     div { class: "text-[11px] opacity-80", "{s}" }
+                }
+                if let (Some(t), Some(h)) = (slot.timer.clone(), on_timer) {
+                    TimerControls { timer: t, on_timer: h }
+                }
+            }
+        }
+    }
+}
+
+/// The running block's line and its buttons (ruling 93, `design/0102/` C).
+#[component]
+fn TimerControls(timer: SlotTimer, on_timer: EventHandler<(i64, &'static str)>) -> Element {
+    let at = timer.block_start;
+    let buttons: &[(&str, &'static str)] = match timer.state {
+        TimerShown::Ready => &[("Start", "start")],
+        TimerShown::Running => &[("Pause", "pause"), ("Stop", "stop")],
+        TimerShown::Paused => &[("Resume", "start"), ("Stop", "stop")],
+        _ => &[],
+    };
+    rsx! {
+        if let Some(line) = timer.line.clone() {
+            div { class: "text-[11px] opacity-80 tabular-nums", "{line}" }
+        }
+        if !buttons.is_empty() {
+            div { class: "flex gap-2 mt-1",
+                for (label, step) in buttons.iter().copied() {
+                    button {
+                        key: "{step}",
+                        r#type: "button",
+                        class: "px-2 py-0.5 rounded border border-obsidian-accent/40 text-[11px] text-obsidian-accent",
+                        // A tap on the row opens chat; a tap here must not.
+                        onclick: move |e| {
+                            e.stop_propagation();
+                            on_timer.call((at, step));
+                        },
+                        "{label}"
+                    }
                 }
             }
         }

@@ -131,35 +131,34 @@ fn apply(
     }
 
     // One action type per block: the tap reports only the action id, which names the block.
-    n.register_action_types(
-        missing
-            .iter()
-            .map(|w| {
-                ActionType::builder(&w.action)
-                    .actions(vec![
-                        Action::builder(&w.action, "Start").foreground(true).build(),
-                    ])
-                    .build()
-            })
-            .collect(),
-    )
-    .map_err(|e| e.to_string())?;
+    // A nudge has no action.
+    let types: Vec<_> = missing
+        .iter()
+        .filter_map(|w| w.action.as_deref())
+        .map(|a| {
+            ActionType::builder(a)
+                .actions(vec![Action::builder(a, "Start").foreground(true).build()])
+                .build()
+        })
+        .collect();
+    if !types.is_empty() {
+        n.register_action_types(types).map_err(|e| e.to_string())?;
+    }
 
     for w in &missing {
         let date = time::OffsetDateTime::from_unix_timestamp(w.at.timestamp())
             .map_err(|e| e.to_string())?;
-        n.builder()
-            .id(w.id)
-            .title(&w.title)
-            .body(&w.body)
-            .action_type_id(&w.action)
-            .schedule(Schedule::At {
-                date,
-                repeating: false,
-                allow_while_idle: true,
-            })
-            .show()
-            .map_err(|e| e.to_string())?;
+        let mut b = n.builder().id(w.id).title(&w.title).body(&w.body);
+        if let Some(a) = &w.action {
+            b = b.action_type_id(a);
+        }
+        b.schedule(Schedule::At {
+            date,
+            repeating: false,
+            allow_while_idle: true,
+        })
+        .show()
+        .map_err(|e| e.to_string())?;
     }
     tracing::info!(
         scheduled = missing.len(),

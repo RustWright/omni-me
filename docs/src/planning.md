@@ -195,6 +195,19 @@ with "Started …" at the top. A Start whose block is no longer in the plan, as 
 moved it, is refused with a line saying so: a stale reminder never times a block that is not in
 the plan.
 
+**The timer lives on the view.** The block now under way offers Start; a started one shows "40
+min working · 52 min since start" with Pause and Stop (Resume and Stop while paused), the view's
+one exception to read-only (ruling 93). Working time counts only the running spans, and time
+since start keeps the breaks, which is what scheduling calibrates on. A block whose timer is
+still open stays on the view past its end. Each tap writes `block_timer_started`, `_paused` or
+`_stopped`; a start after a pause resumes, and a pause or stop on a block with no open session
+is refused.
+
+**One nudge, 30 minutes past the block's end, if its timer is still running.** It is a reminder
+like the others, so the reconcile schedules it while the timer runs and cancels it once paused
+or stopped; each timer tap wakes the reconcile. Once its time has passed it is never scheduled
+again, so it fires at most once. Its id is the negated block id, and it carries no action.
+
 **Exact alarms.** The app declares `USE_EXACT_ALARM`. Without it Android 12 and later batch the
 alarm and a reminder can arrive minutes late, and from Android 14 the alternative,
 `SCHEDULE_EXACT_ALARM`, is denied by default. Android 13 and later also ask once for permission

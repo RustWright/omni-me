@@ -349,20 +349,40 @@ pub struct TimerState {
     pub elapsed_total: i64,
 }
 
+/// One timer control, for a task's timer or a plan block's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimerStep {
+    Start,
+    Pause,
+    Stop,
+}
+
+impl TimerStep {
+    /// The step a timer event names, task or block; `None` for any other event.
+    pub fn of(event_type: &str) -> Option<TimerStep> {
+        match event_type {
+            "task_timer_started" | "block_timer_started" => Some(TimerStep::Start),
+            "task_timer_paused" | "block_timer_paused" => Some(TimerStep::Pause),
+            "task_timer_stopped" | "block_timer_stopped" => Some(TimerStep::Stop),
+            _ => None,
+        }
+    }
+}
+
 impl TimerState {
     /// Apply a start, pause or stop at `at`. A repeat of the current state is a no-op, so a
     /// double tap or a replay changes nothing.
-    pub fn step(&mut self, kind: &str, at: DateTime<Utc>) {
-        match kind {
-            "task_timer_started" if !self.running => {
+    pub fn step(&mut self, step: TimerStep, at: DateTime<Utc>) {
+        match step {
+            TimerStep::Start if !self.running => {
                 self.session_start.get_or_insert(at);
                 self.running_since = Some(at);
                 self.running = true;
             }
-            "task_timer_paused" if self.running => {
+            TimerStep::Pause if self.running => {
                 self.close_span(at);
             }
-            "task_timer_stopped" => {
+            TimerStep::Stop => {
                 if self.running {
                     self.close_span(at);
                 }
@@ -436,7 +456,9 @@ async fn on_timer(
         active_total: row.active_secs_total.unwrap_or(0),
         elapsed_total: row.elapsed_secs_total.unwrap_or(0),
     };
-    state.step(kind, at);
+    if let Some(step) = TimerStep::of(kind) {
+        state.step(step, at);
+    }
     db.query(
         "UPDATE type::record('tasks', $id) SET
             timer_state = $state,
@@ -613,17 +635,17 @@ mod tests {
     #[test]
     fn a_paused_session_counts_active_and_elapsed_apart() {
         let mut t = TimerState::default();
-        t.step("task_timer_started", at("2026-11-21T09:00:00Z"));
-        t.step("task_timer_started", at("2026-11-21T09:05:00Z"));
-        t.step("task_timer_paused", at("2026-11-21T09:20:00Z"));
+        t.step(TimerStep::Start, at("2026-11-21T09:00:00Z"));
+        t.step(TimerStep::Start, at("2026-11-21T09:05:00Z"));
+        t.step(TimerStep::Pause, at("2026-11-21T09:20:00Z"));
         assert_eq!(t.label(), Some("paused"));
-        t.step("task_timer_paused", at("2026-11-21T09:25:00Z"));
-        t.step("task_timer_started", at("2026-11-21T09:30:00Z"));
-        t.step("task_timer_stopped", at("2026-11-21T09:50:00Z"));
+        t.step(TimerStep::Pause, at("2026-11-21T09:25:00Z"));
+        t.step(TimerStep::Start, at("2026-11-21T09:30:00Z"));
+        t.step(TimerStep::Stop, at("2026-11-21T09:50:00Z"));
         assert_eq!(t.label(), None);
         assert_eq!(t.active_total, 40 * 60);
         assert_eq!(t.elapsed_total, 50 * 60);
-        t.step("task_timer_stopped", at("2026-11-21T10:00:00Z"));
+        t.step(TimerStep::Stop, at("2026-11-21T10:00:00Z"));
         assert_eq!(t.elapsed_total, 50 * 60, "a second stop adds nothing");
     }
 

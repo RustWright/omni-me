@@ -1,11 +1,14 @@
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use serde::de::DeserializeOwned;
+use surrealdb::types::SurrealValue;
 
 use crate::calendar::{CalendarEvent, EventTime};
 use crate::db::Database;
 
 use super::projection::Projection;
 use super::store::{Event, EventError};
+use super::tasks_projection::{TimerState, TimerStep};
 use super::types::{
     BlockTimerPayload, CalendarAnsweredPayload, CalendarChangedPayload, DayPlanAcceptedPayload,
     MonthGoalsSetPayload, PlaceSetPayload, TravelTimeSetPayload,
@@ -28,9 +31,9 @@ impl Projection for PlanningProjection {
         Self::NAME
     }
 
-    /// 2 added `day_plans`, 3 `block_timers`, 4 `month_goals`.
+    /// 2 added `day_plans`, 3 `block_timers`, 4 `month_goals`, 5 the timer on `block_timers`.
     fn version(&self) -> u32 {
-        4
+        5
     }
 
     async fn init_schema(&self, db: &Database) -> Result<(), EventError> {
@@ -76,6 +79,13 @@ impl Projection for PlanningProjection {
              DEFINE FIELD IF NOT EXISTS title ON block_timers TYPE string;
              -- RFC 3339, the first start: a second tap does not move it.
              DEFINE FIELD IF NOT EXISTS started_at ON block_timers TYPE string;
+             -- The timer, as TimerState holds it; times RFC 3339, durations in seconds.
+             DEFINE FIELD IF NOT EXISTS running ON block_timers TYPE option<bool>;
+             DEFINE FIELD IF NOT EXISTS session_start ON block_timers TYPE option<string>;
+             DEFINE FIELD IF NOT EXISTS running_since ON block_timers TYPE option<string>;
+             DEFINE FIELD IF NOT EXISTS active_secs ON block_timers TYPE option<int>;
+             DEFINE FIELD IF NOT EXISTS active_total ON block_timers TYPE option<int>;
+             DEFINE FIELD IF NOT EXISTS elapsed_total ON block_timers TYPE option<int>;
 
              -- One row per month, YYYY-MM: the goals last set for it.
              DEFINE TABLE IF NOT EXISTS month_goals SCHEMAFULL;
@@ -196,40 +206,87 @@ impl Projection for PlanningProjection {
                 }
                 None => Ok(()),
             },
-            "block_timer_started" => match payload::<BlockTimerPayload>(event) {
-                Some(p) => on_block_started(&p, event, db).await,
-                None => Ok(()),
-            },
+            kind @ ("block_timer_started" | "block_timer_paused" | "block_timer_stopped") => {
+                match (payload::<BlockTimerPayload>(event), TimerStep::of(kind)) {
+                    (Some(p), Some(step)) => on_block_timer(step, &p, event, db).await,
+                    _ => Ok(()),
+                }
+            }
             _ => Ok(()),
         }
     }
 }
 
-/// Pause and stop arrive with the view's timer controls ([0116]); until then a row records the
-/// first start only.
-async fn on_block_started(
+/// One block's timer row, as stored.
+#[derive(Debug, SurrealValue)]
+pub(crate) struct BlockTimerRow {
+    pub started_at: String,
+    pub running: Option<bool>,
+    pub session_start: Option<String>,
+    pub running_since: Option<String>,
+    pub active_secs: Option<i64>,
+    pub active_total: Option<i64>,
+    pub elapsed_total: Option<i64>,
+}
+
+impl BlockTimerRow {
+    pub(crate) fn state(&self) -> TimerState {
+        let ts = |s: &Option<String>| {
+            s.as_deref()
+                .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                .map(|t| t.with_timezone(&Utc))
+        };
+        TimerState {
+            running: self.running.unwrap_or(false),
+            session_start: ts(&self.session_start),
+            running_since: ts(&self.running_since),
+            active_secs: self.active_secs.unwrap_or(0),
+            active_total: self.active_total.unwrap_or(0),
+            elapsed_total: self.elapsed_total.unwrap_or(0),
+        }
+    }
+}
+
+pub(crate) const BLOCK_TIMER_COLUMNS: &str = "SELECT started_at, running, session_start, \
+     running_since, active_secs, active_total, elapsed_total FROM type::record('block_timers', $key)";
+
+/// A pause or stop on a block never started is dropped: there is no timer to change.
+async fn on_block_timer(
+    step: TimerStep,
     p: &BlockTimerPayload,
     event: &Event,
     db: &Database,
 ) -> Result<(), EventError> {
     let mut resp = db
-        .query("SELECT VALUE started_at FROM type::record('block_timers', $key)")
+        .query(BLOCK_TIMER_COLUMNS)
         .bind(("key", p.key()))
         .await?
         .check()?;
-    let existing: Vec<String> = resp.take(0)?;
-    if !existing.is_empty() {
-        return Ok(());
-    }
+    let existing: Option<BlockTimerRow> = resp.take::<Vec<BlockTimerRow>>(0)?.into_iter().next();
+    let (started_at, mut state) = match existing {
+        Some(row) => (row.started_at.clone(), row.state()),
+        None if step == TimerStep::Start => (event.timestamp.to_rfc3339(), TimerState::default()),
+        None => return Ok(()),
+    };
+    state.step(step, event.timestamp);
     db.query(
         "UPSERT type::record('block_timers', $key) SET
-            date = $date, block_start = $block_start, title = $title, started_at = $ts",
+            date = $date, block_start = $block_start, title = $title, started_at = $started_at,
+            running = $running, session_start = $session_start, running_since = $running_since,
+            active_secs = $active_secs, active_total = $active_total,
+            elapsed_total = $elapsed_total",
     )
     .bind(("key", p.key()))
     .bind(("date", p.date.to_string()))
     .bind(("block_start", p.block_start.to_rfc3339()))
     .bind(("title", p.title.clone()))
-    .bind(("ts", event.timestamp.to_rfc3339()))
+    .bind(("started_at", started_at))
+    .bind(("running", state.running))
+    .bind(("session_start", state.session_start.map(|t| t.to_rfc3339())))
+    .bind(("running_since", state.running_since.map(|t| t.to_rfc3339())))
+    .bind(("active_secs", state.active_secs))
+    .bind(("active_total", state.active_total))
+    .bind(("elapsed_total", state.elapsed_total))
     .await?
     .check()?;
     Ok(())

@@ -810,6 +810,7 @@ pub fn run() {
             commands::planning::plan_card,
             commands::planning::plan_view,
             commands::planning::take_block_start,
+            commands::planning::block_timer,
             commands::assistant::archive_assistant_thread,
             commands::assistant::delete_assistant_thread,
             commands::assistant::list_beliefs,

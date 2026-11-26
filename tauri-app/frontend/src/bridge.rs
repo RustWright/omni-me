@@ -5143,6 +5143,30 @@ pub async fn invoke_take_block_start() -> Result<Option<crate::types::StartedBlo
 }
 
 /// What is left of today and the rest of the week.
+/// Start, Pause or Stop on a block in the Plan view; `step` is `start`, `pause` or `stop`.
+pub async fn invoke_block_timer(
+    block_start: i64,
+    step: &str,
+) -> Result<crate::types::StartedBlock, String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = (block_start, step);
+        Ok(crate::types::StartedBlock {
+            title: "Thesis ch. 2: methods draft".into(),
+            when: "14:15–15:45".into(),
+        })
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            block_start: i64,
+            step: &'a str,
+        }
+        invoke("block_timer", &Args { block_start, step }).await
+    }
+}
+
 pub async fn invoke_plan_view() -> Result<crate::types::PlanView, String> {
     #[cfg(feature = "mock")]
     {
@@ -5834,6 +5858,7 @@ mod mock_assistant {
             title: title.into(),
             place: place.map(str::to_string),
             moved: false,
+            timer: None,
         };
         let mut out = vec![
             fixed(SlotKind::Travel, "12:15", "13:00", "Travel to Campus", None),
@@ -5858,6 +5883,7 @@ mod mock_assistant {
                 title: title.trim().into(),
                 place: None,
                 moved,
+                timer: None,
             });
         }
         out.sort_by(|a, b| a.from.cmp(&b.from));
@@ -5953,6 +5979,16 @@ mod mock_assistant {
             .count();
         slots.retain(|s| s.to.as_str() > NOW);
         let now_at = slots.iter().filter(|s| s.from.as_str() <= NOW).count();
+        // The design's moment: the block under way, its timer running (ruling 93).
+        for s in slots.iter_mut() {
+            if s.kind == crate::types::SlotKind::Block && s.from.as_str() <= NOW {
+                s.timer = Some(crate::types::SlotTimer {
+                    state: crate::types::TimerShown::Running,
+                    line: Some("40 min working · 52 min since start".into()),
+                    block_start: 0,
+                });
+            }
+        }
         let row = |day: &str, free: i64, planned: Option<i64>, due: &[&str], all_day: &[&str]| {
             let hours = match planned {
                 Some(p) => format!("{} h / {} h", p / 60, free / 60),

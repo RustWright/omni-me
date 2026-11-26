@@ -119,8 +119,11 @@ pub enum EventType {
     TravelTimeSet,
     // A day plan he accepted (ruling 98); the rest of a plan's life is its proposal.
     DayPlanAccepted,
-    // Start on a plan block's timer, from its reminder (ruling 93).
+    // A plan block's timer (ruling 93): Start from its reminder or the view, pause and stop on
+    // the view. A start after a pause resumes.
     BlockTimerStarted,
+    BlockTimerPaused,
+    BlockTimerStopped,
     // The month's goals, set by the monthly review (rulings 98, 110).
     MonthGoalsSet,
 }
@@ -200,6 +203,8 @@ impl fmt::Display for EventType {
             EventType::TravelTimeSet => "travel_time_set",
             EventType::DayPlanAccepted => "day_plan_accepted",
             EventType::BlockTimerStarted => "block_timer_started",
+            EventType::BlockTimerPaused => "block_timer_paused",
+            EventType::BlockTimerStopped => "block_timer_stopped",
             EventType::MonthGoalsSet => "month_goals_set",
         };
         write!(f, "{s}")
@@ -283,6 +288,8 @@ impl FromStr for EventType {
             "travel_time_set" => Ok(EventType::TravelTimeSet),
             "day_plan_accepted" => Ok(EventType::DayPlanAccepted),
             "block_timer_started" => Ok(EventType::BlockTimerStarted),
+            "block_timer_paused" => Ok(EventType::BlockTimerPaused),
+            "block_timer_stopped" => Ok(EventType::BlockTimerStopped),
             "month_goals_set" => Ok(EventType::MonthGoalsSet),
             other => Err(format!("unknown event type: {other}")),
         }
@@ -368,6 +375,8 @@ impl EventType {
         EventType::TravelTimeSet,
         EventType::DayPlanAccepted,
         EventType::BlockTimerStarted,
+        EventType::BlockTimerPaused,
+        EventType::BlockTimerStopped,
         EventType::MonthGoalsSet,
     ];
 
@@ -501,6 +510,8 @@ impl EventType {
             | EventType::TravelTimeSet
             | EventType::DayPlanAccepted
             | EventType::BlockTimerStarted
+            | EventType::BlockTimerPaused
+            | EventType::BlockTimerStopped
             | EventType::MonthGoalsSet => &[Feature::Planning],
 
             EventType::DataWiped
@@ -2170,7 +2181,9 @@ pub fn validate_payload(
         EventType::MonthGoalsSet => {
             serde_json::from_value::<MonthGoalsSetPayload>(payload.clone()).map(|_| ())
         }
-        EventType::BlockTimerStarted => {
+        EventType::BlockTimerStarted
+        | EventType::BlockTimerPaused
+        | EventType::BlockTimerStopped => {
             serde_json::from_value::<BlockTimerPayload>(payload.clone()).map(|_| ())
         }
         EventType::RecordTypeDeclared => {
@@ -2379,10 +2392,12 @@ mod tests {
                 | EventType::TravelTimeSet
                 | EventType::DayPlanAccepted
                 | EventType::BlockTimerStarted
+                | EventType::BlockTimerPaused
+                | EventType::BlockTimerStopped
                 | EventType::MonthGoalsSet => counted += 1,
             }
         }
-        assert_eq!(counted, 73, "EventType::ALL does not list every variant");
+        assert_eq!(counted, 75, "EventType::ALL does not list every variant");
 
         let unique: std::collections::BTreeSet<String> =
             EventType::ALL.iter().map(|t| t.to_string()).collect();
