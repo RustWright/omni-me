@@ -4,11 +4,13 @@
 live in `RULINGS.md`, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`), rationale in
 `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
-## ▶ NEXT ACTION — [0109]'s last checks, then [0127] with him
-[0125] is done and verified on the S9; [0124] is built, and dev runs it (`dev-0d29dfb-58ee6f1`).
-`e152a79` holds on the new agent image (`omni-me-private-agent:dev-58ee6f1`, pulled here).
-Next: [0124]'s rituals on the real scheduled path, by running that image across a 19:00 against
-dev (`tasks.md` [0124] says why `--ask` is not enough). Then [0127] with him.
+## ▶ NEXT ACTION — [0126], then [0116], then [0124] (his order, 11-25)
+**Dev credits pre-approved for that session** (his words, 11-25), so the [0124] run needs no ask.
+1. [0126]: a Plan view row taps through to chat (110). 2. [0116] task surfaces, incl. the view's
+pause/stop/Start ([0125] built only Start on the reminder). 3. [0124]: the rituals on the real
+scheduled path, running `omni-me-private-agent:dev-58ee6f1` (pulled here) across a 19:00 against
+dev (`tasks.md` [0124] says why `--ask` is not enough). Then [0127] with him; [0110] after.
+[0125] is done on the S9; dev runs `dev-0d29dfb-58ee6f1`; `e152a79` holds on the new agent.
 ⚠️ `omni-me-agent-dev` is still the old `dev-77610bf` image and names the box by MagicDNS, which
 failed here on 11-25; 11-25's runs used `--rm` containers on the tailnet IP instead.
 Judgment calls made unattended: overlay `DECISION_LOG_2026-11-25.md`.
