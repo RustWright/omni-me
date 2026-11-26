@@ -77,6 +77,8 @@ struct MessageRow {
     text: Option<String>,
     created_at: DateTime<Utc>,
     in_reply_to: Option<String>,
+    scheduled: bool,
+    prompt_name: Option<String>,
 }
 
 /// Every message on one thread, oldest first.
@@ -87,7 +89,7 @@ async fn thread_messages(db: &Database, thread_id: &str) -> Result<Vec<MessageRo
     let mut resp = db
         .query(
             "SELECT message_id, thread_id, role, text, <string> created_at AS created_at,
-                    in_reply_to
+                    in_reply_to, scheduled, prompt_name
              FROM assistant_messages WHERE thread_id = $thread_id ORDER BY created_at",
         )
         .bind(("thread_id", thread_id.to_string()))
@@ -100,6 +102,8 @@ async fn thread_messages(db: &Database, thread_id: &str) -> Result<Vec<MessageRo
     let texts: Vec<Option<String>> = resp.take("text").unwrap_or_default();
     let created: Vec<String> = resp.take("created_at").unwrap_or_default();
     let replies: Vec<Option<String>> = resp.take("in_reply_to").unwrap_or_default();
+    let scheduled: Vec<Option<bool>> = resp.take("scheduled").unwrap_or_default();
+    let prompts: Vec<Option<String>> = resp.take("prompt_name").unwrap_or_default();
 
     let mut rows = Vec::with_capacity(ids.len());
     for i in 0..ids.len() {
@@ -119,6 +123,8 @@ async fn thread_messages(db: &Database, thread_id: &str) -> Result<Vec<MessageRo
             text: texts.get(i).cloned().flatten(),
             created_at: ts.with_timezone(&Utc),
             in_reply_to: replies.get(i).cloned().flatten(),
+            scheduled: scheduled.get(i).copied().flatten().unwrap_or(false),
+            prompt_name: prompts.get(i).cloned().flatten(),
         });
     }
     Ok(rows)
@@ -167,14 +173,11 @@ pub async fn pending_questions(db: &Database) -> Result<Vec<PendingQuestion>, Ev
                     thread_id: row.thread_id.clone(),
                     message_id: row.message_id.clone(),
                     text: row.text.clone().unwrap_or_default(),
-                    // Neither is read back: the payload is rebuilt only far enough
-                    // to author the answer. A title is a property of the thread
-                    // row, which already has it, and `scheduled` is a fact about
-                    // how the *question* was raised that only its own event and
-                    // the message row carry — the answer does not restate it.
+                    // The thread row has the title. The agent reads the other two: the seat
+                    // (`client_for`), the ritual's fixed brief, and the morning plan's wait.
                     title: None,
-                    scheduled: false,
-                    prompt_name: None,
+                    scheduled: row.scheduled,
+                    prompt_name: row.prompt_name.clone(),
                 },
                 asked_at: row.created_at,
                 history: turns(&rows[..i]),
@@ -781,6 +784,15 @@ mod tests {
             last.is_some(),
             "the check-in must be findable as its own record"
         );
+
+        // The agent answers from this rebuild: the seat and a ritual's fixed brief read both.
+        let pending = pending_questions(&db).await.unwrap();
+        assert_eq!(pending.len(), 1);
+        assert!(pending[0].question.scheduled);
+        assert_eq!(
+            pending[0].question.prompt_name.as_deref(),
+            Some(crate::assistant::scheduled::CHECK_IN)
+        );
     }
 
     /// The mirror: an ordinary question must not look scheduled, or every answer
@@ -793,6 +805,9 @@ mod tests {
 
         let view = read_thread(&db, "t1").await.unwrap();
         assert_ne!(view.messages[0].scheduled, Some(true));
+        let pending = pending_questions(&db).await.unwrap();
+        assert!(!pending[0].question.scheduled);
+        assert_eq!(pending[0].question.prompt_name, None);
         assert!(
             crate::assistant::scheduled::last_run(&db, crate::assistant::scheduled::CHECK_IN)
                 .await

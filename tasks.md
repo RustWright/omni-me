@@ -38,10 +38,11 @@ builds follow them.
   his places seeded on live (126) on his go, by the `/planning/places` calls in that doc; on live
   also set Settings → Planning (bedtime, morning and evening routine names). [XS]
 - [0124] **Rituals, summary lines, load, goals: built** (`456814a`..`58ee6f1`, `docs/src/planning.md`
-  § The other rituals, § Goals; goals are ruling 134). Left: the real scheduled path on dev (run
-  the agent across a 19:00; `--ask` goes through the router, so the 11-25 prompt runs prove
-  little: weekly was good, evening and monthly drifted, monthly never found `goal.set`, which
-  only the planning brief names), and his read of the three prompt texts in `planning/rituals.rs`. [S]
+  § The other rituals, § Goals; goals are ruling 134). Real path ran on dev 11-26 (hour set to 0):
+  every scheduled question was routed, on the interactive seat, because `pending_questions`
+  dropped `prompt_name`; monthly went to General and said it had no `goal.set`. Fixed in the
+  commit after `c3d67c8`. Left: rerun on an agent image with the fix (evening any day, weekly
+  Sunday, monthly the 1st), then his read of the prompt texts in `planning/rituals.rs`. [S]
 - [0126] **Plan card and view: built**, row taps open chat (`docs/src/planning.md` § The card and
   the view). Left: the taps seen on the S9 with the next dev APK; clippy-clean, never run. [XS]
 - [0127] **Google connector (overlay, 133):** read-only OAuth, window snapshots, both calendars. Needs
