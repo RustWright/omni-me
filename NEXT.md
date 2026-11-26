@@ -10,13 +10,10 @@ live in `RULINGS.md`, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`
 pause/stop/Start ([0125] built only Start on the reminder). 3. [0124]: the rituals on the real
 scheduled path, running `omni-me-private-agent:dev-58ee6f1` (pulled here) across a 19:00 against
 dev (`tasks.md` [0124] says why `--ask` is not enough). Then [0127] with him; [0110] after.
-[0125] is done on the S9; dev runs `dev-0d29dfb-58ee6f1`; `e152a79` holds on the new agent.
-⚠️ `omni-me-agent-dev` is still the old `dev-77610bf` image and names the box by MagicDNS, which
-failed here on 11-25; 11-25's runs used `--rm` containers on the tailnet IP instead.
+⚠️ `omni-me-agent-dev` is the old `dev-77610bf` image on MagicDNS (failed 11-25): use `--rm` + IP.
 Judgment calls made unattended: overlay `DECISION_LOG_2026-11-25.md`.
 ⛔ Order: server before any client. A server older than its clients refuses the whole push batch
 on an unknown event type (`server/src/routes/sync.rs`), and this push adds two.
-[0127] (Google connector) waits for him: his Google Cloud setup, walked through live.
 Still to watch: [0118] when the next joined transfer's busy leg ages out
 (`~/omni-dev-tools/ws_transfer_dupes_probe.py`). [0119] and [0120] wait for the next release (46).
 
