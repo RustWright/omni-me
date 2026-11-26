@@ -1,7 +1,7 @@
 //! What the planning specialist is told (ruling 112): its rules, and each day it may plan, worked
 //! out in code. Free time is stated, never left for the model to add up.
 
-use chrono::{DateTime, Duration, NaiveDate, Utc};
+use chrono::{DateTime, Datelike, Duration, NaiveDate, Utc};
 use surrealdb::types::SurrealValue;
 
 use super::day::DayContext;
@@ -15,8 +15,9 @@ use crate::db::Database;
 pub const RULES: &str = "\n\n## Planning work\n\
 This request is about planning the user's day. The days below were worked out in code: \
 never add up minutes yourself, and never move or shorten a calendar event. Plans and goals are \
-not record types: the days, any plan already accepted, this month's goals and the open tasks due \
-are all below, so never list or describe `plan` or `goal`. Their actions, `plan.set` and \
+not record types: the days, any plan already accepted, the last 7 days' plans, last month's and \
+this month's goals and the open tasks due are all below, so never list, describe or search for \
+`plan` or `goal`. Their actions, `plan.set` and \
 `goal.set`, are proposed directly as described here. Search only for something the user names \
 that is not listed.\n\
 - Propose a plan with `propose`, action `plan.set`, args: `date` (YYYY-MM-DD), `blocks` (a \
@@ -61,6 +62,7 @@ pub async fn context(db: &Database, config: &ResolvedConfig, now: DateTime<Utc>)
             }
         }
     }
+    out.push_str(&past_week(db, tz, today).await);
     out.push_str(&goal_lines(db, today).await);
     if config.enabled(Feature::Tasks) {
         out.push_str(&open_tasks(db, today).await);
@@ -138,23 +140,65 @@ async fn waiting_lines(db: &Database, config: &ResolvedConfig, today: NaiveDate)
     out
 }
 
-/// This month's goals, so a plan can serve them and the monthly review can see what was set.
+/// Last month's goals and this month's, so a plan can serve them and the monthly review can see
+/// what was set without searching.
 async fn goal_lines(db: &Database, today: NaiveDate) -> String {
-    let month = goals::month_of(today);
-    match goals::for_month(db, &month).await {
-        Ok(Some(g)) => {
-            let mut out = format!("\n\nGoals for {month}:");
-            for goal in &g.goals {
-                out.push_str(&format!("\n- {goal}"));
+    let this = goals::month_of(today);
+    let last = goals::month_of(today.with_day(1).unwrap_or(today) - Duration::days(1));
+    let mut out = String::new();
+    for (month, verb) in [(last, "were"), (this, "are")] {
+        match goals::for_month(db, &month).await {
+            Ok(Some(g)) => {
+                out.push_str(&format!("\n\nGoals for {month}:"));
+                for goal in &g.goals {
+                    out.push_str(&format!("\n- {goal}"));
+                }
             }
-            out
-        }
-        Ok(None) => format!("\n\nNo goals are set for {month}."),
-        Err(e) => {
-            tracing::warn!(error = %e, "could not read the month's goals for the planning brief");
-            String::new()
+            Ok(None) => out.push_str(&format!("\n\nNo goals {verb} set for {month}.")),
+            Err(e) => {
+                tracing::warn!(error = %e, "could not read a month's goals for the planning brief");
+            }
         }
     }
+    out
+}
+
+/// The last seven days' accepted plans, with any time a block's timer recorded, so the weekly
+/// plan can say how the week went without searching for it.
+async fn past_week(db: &Database, tz: chrono_tz::Tz, today: NaiveDate) -> String {
+    let hm = |t: DateTime<Utc>| t.with_timezone(&tz).format("%H:%M").to_string();
+    let mut out = String::from("\n\n### The last 7 days' plans");
+    for back in (1..=7).rev() {
+        let date = today - Duration::days(back);
+        let day = date.format("%a %Y-%m-%d");
+        let p = match plan::accepted(db, date).await {
+            Ok(Some(p)) => p,
+            Ok(None) => {
+                out.push_str(&format!("\n- {day}: no plan"));
+                continue;
+            }
+            Err(e) => {
+                out.push_str(&format!("\n- {day}: could not be read ({e})"));
+                continue;
+            }
+        };
+        let mut items = Vec::new();
+        for b in &p.blocks {
+            let mut item = format!("{}-{} {}", hm(b.start), hm(b.end), b.title);
+            if let Ok(Some((_, t))) = super::reminders::timer(db, date, b.start).await {
+                let secs = t.active_total + t.active_secs;
+                item.push_str(&format!(" (timed {})", super::view::duration(secs / 60)));
+            }
+            items.push(item);
+        }
+        items.extend(
+            p.untimed
+                .iter()
+                .map(|u| format!("{} ({} min)", u.title, u.minutes)),
+        );
+        out.push_str(&format!("\n- {day}: {}", items.join("; ")));
+    }
+    out
 }
 
 fn accepted_lines(p: &plan::AcceptedPlan, tz: chrono_tz::Tz) -> String {

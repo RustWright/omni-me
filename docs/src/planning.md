@@ -252,6 +252,11 @@ occurrences by design. Each part lists at most ten. Not yet built: the hub trial
 acted against dismissed (92), and closing a course's project at term end (123), which waits on
 the LEARN feed.
 
+**The brief carries what each ritual looks back on.** The last seven days' accepted plans, one
+line a day with any time a block's timer recorded, and last month's goals beside this month's,
+are built in code. The weekly plan and the monthly review read them there rather than searching:
+without them the first weekly run spent 145k tokens looking for "a weekly plan note".
+
 **A first run waits for its own day.** A ritual that has never run is due only on its day, so
 the first weekly plan comes on a Sunday and the first monthly review on the 1st, not on the
 evening it was switched on. After that, a run the agent missed still happens when it is back.
