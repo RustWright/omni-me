@@ -4,13 +4,12 @@
 live in `RULINGS.md`, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`), rationale in
 `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
-## ▶ NEXT ACTION — [0124]'s rerun, then [0127] with him (his order, 11-25)
-**Dev credits were approved for the 11-25/26 session only**; ask again for a new one.
-1. [0124]: once he has pulled `omni-me-private-agent:dev-88999a0` here, run it `--rm` by tailnet IP
-   against dev :3001 and raise the three rituals (`tasks.md` [0124] has the script). Check the log
-   says `fixed=true` and the Batch model, and that answers use "Waiting on him".
+## ▶ NEXT ACTION — [0124]'s seat call, then [0127] with him (his order, 11-25)
+**Dev credits and dev actions were approved for the 11-25/26 session only**; ask again.
+1. [0124]: his call on the rituals' seat (`tasks.md` [0124]); rerun the weekly with
+   `~/omni-dev-tools/ritual_rerun_dev.sh`, which always stops the agent.
 2. [0116]'s remainder needs him (`tasks.md` [0116]); [0127] with him; [0110] after.
-Dev runs `dev-6284c3e-88999a0` (deployed 11-26, healthy at 365 MiB); the S9 runs 1.2.11-dev.
+Dev server runs `dev-6284c3e-88999a0` (deployed 11-26, healthy at 365 MiB); the S9 runs 1.2.11-dev.
 Judgment calls made unattended: overlay `DECISION_LOG_2026-11-26.md`.
 ⛔ Order: server before any client (`server/src/routes/sync.rs` refuses unknown event types).
 Still to watch: [0118] when the next joined transfer's busy leg ages out
@@ -22,7 +21,7 @@ the next dev APK on the S9 (the dev phone), never the release on his daily phone
 and check in a capped cgroup are fine, and the mock demo page is the one build exception.
 
 ## ⛔ Waiting on him
-- **`docker pull ghcr.io/rustwright/omni-me-private-agent:dev-88999a0`** here, for [0124] (his rule).
+- **[0124] the rituals' seat:** dev's Batch model stalls on the weekly (`tasks.md` [0124]).
 - **[0116] hub trial record (92):** how "acted" and "dismissed" are recorded is a design call.
 - **[0128] at the live release (his call, 11-25):** decide how live's startup compaction gets room
   (planned off-box compaction, a bigger box, or leave it); options in `tasks.md` [0128].

@@ -40,12 +40,11 @@ builds follow them.
   his places seeded on live (126) on his go, by the `/planning/places` calls in that doc; on live
   also set Settings → Planning (bedtime, morning and evening routine names). [XS]
 - [0124] **Rituals, summary lines, load, goals: built** (`456814a`..`58ee6f1`, `docs/src/planning.md`
-  § The other rituals, § Goals; goals are ruling 134). Real path ran on dev 11-26 (hour set to 0):
-  every scheduled question was routed, on the interactive seat, because `pending_questions`
-  dropped `prompt_name`; monthly went to General and said it had no `goal.set`. Fixed in
-  `1820d85`. Left: rerun on agent `dev-88999a0` (needs his `docker pull`): raise each ritual with
-  `~/omni-dev-tools/ritual_ask_dev.py` and its text in `state/ritual-prompts/`, which this
-  period's runs leave due dates unchanged; then his read of the prompt texts in `planning/rituals.rs`. [S]
+  § The other rituals, § Goals; goals are ruling 134). 11-26 dev runs fixed routing (`1820d85`),
+  the brief's gaps (`fc48313`..`2ee3757`) and the Batch budget (`34d2d20`); overlay decision log.
+  Left: dev's Batch seat (Qwen, ~18 tok/s) stalls on the weekly's opening call 3 runs in 4: his
+  seat call, then rerun with `~/omni-dev-tools/ritual_rerun_dev.sh <tag> weekly_plan`; then his
+  read of the prompt texts in `planning/rituals.rs`. [S]
 - [0127] **Google connector (overlay, 133):** read-only OAuth, window snapshots, both calendars. Needs
   his Google Cloud setup, walked through live when this slice starts. Also wires the server's
   15-minute read (113) through `RunConfig`, since the public server has no source, and the fresh
