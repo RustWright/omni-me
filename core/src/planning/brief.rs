@@ -63,6 +63,7 @@ pub async fn context(db: &Database, config: &ResolvedConfig, now: DateTime<Utc>)
         }
     }
     out.push_str(&past_week(db, tz, today).await);
+    out.push_str(&week_ahead(db, config, now, today).await);
     out.push_str(&goal_lines(db, today).await);
     if config.enabled(Feature::Tasks) {
         out.push_str(&open_tasks(db, today).await);
@@ -160,6 +161,41 @@ async fn goal_lines(db: &Database, today: NaiveDate) -> String {
             }
         }
     }
+    out
+}
+
+/// The next seven days' free time, worked out as the Plan view does it, so the weekly plan can
+/// say what the coming week has.
+async fn week_ahead(
+    db: &Database,
+    config: &ResolvedConfig,
+    now: DateTime<Utc>,
+    today: NaiveDate,
+) -> String {
+    let ctx = match DayContext::load(db, config, today).await {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            return format!("\n\n### Free time, the next 7 days\nIt could not be read ({e}).");
+        }
+    };
+    let mut out = String::from("\n\n### Free time, the next 7 days");
+    let mut total = 0;
+    for ahead in 1..=7 {
+        let date = today + Duration::days(ahead);
+        let day = DayContext {
+            date,
+            first_activity: None,
+            ..ctx.clone()
+        };
+        let free = day.free_time(now).map_or(0, |f| f.free_min());
+        total += free;
+        out.push_str(&format!(
+            "\n- {}: {} free",
+            date.format("%a %Y-%m-%d"),
+            super::view::duration(free)
+        ));
+    }
+    out.push_str(&format!("\nIn all: {} free.", super::view::duration(total)));
     out
 }
 

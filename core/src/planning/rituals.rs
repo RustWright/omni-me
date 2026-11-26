@@ -34,9 +34,10 @@ already a task. Do not plan tomorrow; that happens in the morning. End with one 
 time tomorrow has.";
 
 const WEEKLY_PROMPT: &str = "Run my weekly plan. Say in two lines how last week went against \
-its plans. Then ask about at most 10 open tasks that need a decision, oldest first: a day to do \
-it, keep for later, or drop. The rest wait for next week; say how many. Never decide one for me. \
-End with one line on the free time this coming week has.";
+its plans. Then ask about at most 10 items that need a decision, oldest first: my open tasks and \
+everything waiting on me. For each: a day to do it, keep for later, or drop. The rest wait for \
+next week; say how many. Never decide one for me. End with one line on the free time this \
+coming week has.";
 
 const MONTHLY_PROMPT: &str = "Run my monthly review. Show the goals set for last month, if \
 any, and ask in one line how each went. Then ask what matters this month and propose the \
