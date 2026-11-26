@@ -52,8 +52,8 @@ builds follow them.
 - [0128] **Live may OOM-loop on its next restart:** SurrealKV's startup compaction needed ~2.1 GB
   on dev's 2.2 GB volume against a 1500m cap and looped forever (dev, 11-25; fixed by compacting a
   copy off-box, `~/omni-dev-tools/state/dev-server-0128/`, old data kept as `_data.pre-0128`).
-  Live has the same cap, a 1.9 GB volume, and no restart since 11-22. Before its next deploy:
-  his go to compact a copy of live off-box the same way, or another plan. Never test on the box
+  Live has the same cap, a 1.9 GB volume, and no restart since 11-22. Discussed at the live
+  release (his call): planned off-box compaction (~1.5 h downtime), a bigger box, or leave it. Never test on the box
   (`feedback-no-memory-experiments-beside-live`). [S]
 - [0110] **People build:** mentions, facts, resolution, pickers and group cards (102–104), merge
   and unmerge reversible for every attached record from the first event, the person view and the

@@ -26,7 +26,8 @@ The dev agent runs on this machine in Docker, since the box cannot fit it beside
 between uses (ruling 45), `docker start omni-me-agent-dev` resumes it against dev :3001.
 
 ## ⛔ Waiting on him
-- **[0128] before live's next deploy:** his go to compact a copy of live off-box (`tasks.md` [0128]).
+- **[0128] at the live release (his call, 11-25):** decide how live's startup compaction gets room
+  (planned off-box compaction, a bigger box, or leave it); options in `tasks.md` [0128].
 - **[0124] prompt texts:** the evening, weekly and monthly prompts in `planning/rituals.rs` are mine.
 - **[0123] on live:** his go to seed places and set Settings → Planning (`tasks.md` [0123]).
 - **Public history:** an earlier public `NEXT.md` named part of his email and a contact; this
