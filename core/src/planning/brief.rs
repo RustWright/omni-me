@@ -14,9 +14,11 @@ use crate::db::Database;
 /// them.
 pub const RULES: &str = "\n\n## Planning work\n\
 This request is about planning the user's day. The days below were worked out in code: \
-never add up minutes yourself, and never move or shorten a calendar event. A plan is not a \
-record type: the days, any plan already accepted and the open tasks due are all below, so never \
-list or describe `plan`; search only for something the user names that is not listed.\n\
+never add up minutes yourself, and never move or shorten a calendar event. Plans and goals are \
+not record types: the days, any plan already accepted, this month's goals and the open tasks due \
+are all below, so never list or describe `plan` or `goal`. Their actions, `plan.set` and \
+`goal.set`, are proposed directly as described here. Search only for something the user names \
+that is not listed.\n\
 - Propose a plan with `propose`, action `plan.set`, args: `date` (YYYY-MM-DD), `blocks` (a \
 list, each \"HH:MM-HH:MM Title\" in local time, inside the free time) and `untimed` (a list, \
 each \"Title (N min)\"). Deep work goes in blocks, small things in the untimed list. A plan \
@@ -28,8 +30,9 @@ minute, and keep blocks to what they can start.\n\
 - Say the fit `propose` returns in one line. A plan over the free time is still proposed: say \
 so, never refuse.\n\
 - If a clash is listed, ask which event they are going to in one line.\n\
-- \"Waiting on him\" is what surfaced on its own. Ask about it; never plan, attach, drop or \
-pull one in without their answer.\n\
+- \"Waiting on the user\" is what surfaced on its own. The weekly plan asks about each item, \
+with its other decisions; anywhere else, mention one only if the user asks. Never plan, attach, \
+drop or pull one in without their answer.\n\
 - Set a month's goals with `propose`, action `goal.set`, args: `month` (YYYY-MM) and `goals` (a \
 list of at most 5 short lines). Use the user's own words. It replaces any goals already set for \
 that month, so propose the whole set.";
@@ -66,7 +69,7 @@ pub async fn context(db: &Database, config: &ResolvedConfig, now: DateTime<Utc>)
     out
 }
 
-/// Most lines each part of "Waiting on him" lists; past this it says how many more.
+/// Most lines each part of "Waiting on the user" lists; past this it says how many more.
 const MAX_WAITING: usize = 10;
 
 /// What surfaces on its own (rulings 91, 92), for a ritual to ask about.
@@ -82,7 +85,7 @@ async fn waiting_lines(db: &Database, config: &ResolvedConfig, today: NaiveDate)
         Ok(w) => w,
         Err(e) => {
             tracing::warn!(error = %e, "could not read what is waiting for the planning brief");
-            return "\n\n### Waiting on him\nThis could not be read.".to_string();
+            return "\n\n### Waiting on the user\nThis could not be read.".to_string();
         }
     };
     let mut lines: Vec<String> = Vec::new();
@@ -97,8 +100,8 @@ async fn waiting_lines(db: &Database, config: &ResolvedConfig, today: NaiveDate)
         w.hub
             .iter()
             .map(|h| match &h.due {
-                Some(d) => format!("Needs him, from {}: {}, due {d}", h.project, h.title),
-                None => format!("Needs him, from {}: {}", h.project, h.title),
+                Some(d) => format!("From the {} task list: {}, due {d}", h.project, h.title),
+                None => format!("From the {} task list: {}", h.project, h.title),
             })
             .collect(),
     );
@@ -128,7 +131,7 @@ async fn waiting_lines(db: &Database, config: &ResolvedConfig, today: NaiveDate)
     if lines.is_empty() {
         return String::new();
     }
-    let mut out = String::from("\n\n### Waiting on him");
+    let mut out = String::from("\n\n### Waiting on the user");
     for l in lines {
         out.push_str(&format!("\n- {l}"));
     }

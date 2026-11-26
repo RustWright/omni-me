@@ -242,7 +242,8 @@ too, raised at the summary hour and answered under the planning brief:
 | Monthly review (`monthly_review`) | the 1st | how last month's goals went, then this month's as a `goal.set` card |
 
 **What surfaces on its own reaches you through them** (rulings 91, 92). The planning brief ends
-with "Waiting on him", built in code: open `USER` or dated items from the project task lists
+with "Waiting on the user", built in code, which only the weekly plan asks about (any other
+answer mentions an item only when asked): open `USER` or dated items from the project task lists
 that you have not taken over, course deadlines still ahead with no task attached, one "still
 current?" line for each task list unchanged past Settings → Planning's threshold (21 days) in
 place of its items, and native tasks untouched past the other threshold (28 days), which only the
