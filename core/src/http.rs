@@ -19,6 +19,11 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 /// exists to remove.
 pub const LLM_TIMEOUT: Duration = Duration::from_secs(180);
 
+/// The Batch seat answers questions nobody is waiting on (rituals, the check-in), so it may
+/// think longer than the interactive loop. Its first weekly plans hit 180 s exactly, with about
+/// 4k reasoning tokens a call.
+pub const UNATTENDED_TIMEOUT: Duration = Duration::from_secs(300);
+
 /// Vision extraction gets its own, longer budget — measured, not guessed.
 ///
 /// Measured receipts took up to ~194 s. Never raise [`LLM_TIMEOUT`] instead: the interactive
@@ -56,6 +61,11 @@ pub fn client() -> reqwest::Client {
 /// Client for model inference calls. See [`LLM_TIMEOUT`].
 pub fn llm_client() -> reqwest::Client {
     build(LLM_TIMEOUT)
+}
+
+/// Client for the Batch seat. See [`UNATTENDED_TIMEOUT`].
+pub fn unattended_llm_client() -> reqwest::Client {
+    build(UNATTENDED_TIMEOUT)
 }
 
 /// Client for multimodal document extraction. See [`VISION_TIMEOUT`].
@@ -96,6 +106,8 @@ mod tests {
         // collapsing them back together reintroduces the intermittent timeout
         // that was measured on a real receipt.
         assert!(VISION_TIMEOUT > LLM_TIMEOUT);
+        // The interactive loop keeps the shorter budget: someone is waiting on it.
+        assert!(UNATTENDED_TIMEOUT > LLM_TIMEOUT);
     }
 
     #[test]
