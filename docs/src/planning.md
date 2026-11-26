@@ -153,6 +153,12 @@ the rest of the week as planned-against-free rows. On a Sunday the rows are the 
 Before 04:00 the view still shows the night before's day, as first activity does. The month's
 goals close the scroll.
 
+**The view is read-only, so a tapped row opens chat about it.** A block, event, due task or
+day opens the thread that day's newest plan was proposed in, since re-plans stay in their thread
+(ruling 112). A day with no plan, and a goal, start a new conversation. The composer opens
+holding "About 14:15–15:45 Thesis ch. 2: " and nothing is sent: you finish the question, so a
+tap spends no model call.
+
 ## Goals
 
 A month's goals are a few lines in your own words (ruling 134), set by the monthly review as a

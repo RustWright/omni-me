@@ -242,7 +242,7 @@ pub fn FinancesPage() -> Element {
     let mut nav_intent = crate::use_nav_intent();
     use_effect(move || {
         // Snapshot before writing — a held read guard across a set deadlocks.
-        let intent = *nav_intent.read();
+        let intent = nav_intent.read().clone();
         if intent == Some(crate::NavIntent::FinancesReview) {
             nav_intent.set(None);
             view.set(FinancesView::Overview);

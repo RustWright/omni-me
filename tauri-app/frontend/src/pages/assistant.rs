@@ -47,7 +47,28 @@ enum View {
 
 #[component]
 pub fn AssistantPage() -> Element {
-    let mut view = use_signal(|| View::Threads);
+    // A tap elsewhere asking about something (`NavIntent::Chat`). Read at mount, not in an
+    // effect, so the first frame is already the thread it names.
+    let mut nav_intent = crate::use_nav_intent();
+    let seed = use_hook(move || match nav_intent.peek().clone() {
+        Some(crate::NavIntent::Chat { thread_id, draft }) => Some((thread_id, draft)),
+        _ => None,
+    });
+    use_effect(move || {
+        if matches!(*nav_intent.peek(), Some(crate::NavIntent::Chat { .. })) {
+            nav_intent.set(None);
+        }
+    });
+    let mut view = use_signal(|| match &seed {
+        Some((Some(id), _)) => View::Thread(id.clone()),
+        _ => View::Threads,
+    });
+    // For the first composer only: cleared on any move, so backing out does not refill it.
+    let mut draft = use_signal(|| seed.map(|(_, d)| d).unwrap_or_default());
+    let mut go = move |v: View| {
+        draft.set(String::new());
+        view.set(v);
+    };
 
     // Hardware/gesture-back (#372): an open thread is one level deep.
     crate::use_page_back(
@@ -55,33 +76,36 @@ pub fn AssistantPage() -> Element {
             View::Threads => 0,
             View::Thread(_) | View::Inbox | View::Memory | View::Permissions => 1,
         },
-        move || view.set(View::Threads),
+        move || go(View::Threads),
     );
 
     let current = view.read().clone();
+    let draft = draft.peek().clone();
     match current {
         View::Threads => rsx! {
             ThreadList {
-                on_open: move |id: String| view.set(View::Thread(id)),
-                on_open_inbox: move |_| view.set(View::Inbox),
-                on_open_memory: move |_| view.set(View::Memory),
-                on_open_permissions: move |_| view.set(View::Permissions),
+                draft,
+                on_open: move |id: String| go(View::Thread(id)),
+                on_open_inbox: move |_| go(View::Inbox),
+                on_open_memory: move |_| go(View::Memory),
+                on_open_permissions: move |_| go(View::Permissions),
             }
         },
         View::Thread(id) => rsx! {
             ThreadDetail {
                 thread_id: id,
-                on_back: move |_| view.set(View::Threads),
+                draft,
+                on_back: move |_| go(View::Threads),
             }
         },
         View::Inbox => rsx! {
-            ProposalInbox { on_back: move |_| view.set(View::Threads) }
+            ProposalInbox { on_back: move |_| go(View::Threads) }
         },
         View::Memory => rsx! {
-            MemoryView { on_back: move |_| view.set(View::Threads) }
+            MemoryView { on_back: move |_| go(View::Threads) }
         },
         View::Permissions => rsx! {
-            PermissionsView { on_back: move |_| view.set(View::Threads) }
+            PermissionsView { on_back: move |_| go(View::Threads) }
         },
     }
 }
@@ -89,6 +113,7 @@ pub fn AssistantPage() -> Element {
 /// The conversation list, plus the composer that starts a new one.
 #[component]
 fn ThreadList(
+    #[props(default)] draft: String,
     on_open: EventHandler<String>,
     on_open_inbox: EventHandler<()>,
     on_open_memory: EventHandler<()>,
@@ -241,6 +266,7 @@ fn ThreadList(
 
             Composer {
                 placeholder: "Ask a question…".to_string(),
+                initial: draft,
                 on_send: move |text: String| {
                     spawn(async move {
                         match bridge::invoke_ask_assistant(&text, None).await {
@@ -731,7 +757,11 @@ fn PermissionRow(record: ActionRecord, on_changed: EventHandler<()>) -> Element 
 
 /// One conversation: the transcript, the pending state, and the follow-up box.
 #[component]
-fn ThreadDetail(thread_id: String, on_back: EventHandler<()>) -> Element {
+fn ThreadDetail(
+    thread_id: String,
+    #[props(default)] draft: String,
+    on_back: EventHandler<()>,
+) -> Element {
     let mut view = use_signal(|| None::<AssistantThreadView>);
     let mut error_msg = use_signal(|| None::<String>);
     // Milliseconds the current question has been waiting, as this screen counts
@@ -915,6 +945,7 @@ fn ThreadDetail(thread_id: String, on_back: EventHandler<()>) -> Element {
 
             Composer {
                 placeholder: "Ask a follow-up…".to_string(),
+                initial: draft,
                 on_send: move |text: String| {
                     let id = id_for_send.clone();
                     spawn(async move {
@@ -1045,8 +1076,14 @@ fn ThinkingLine(waited_ms: i64, seed: String) -> Element {
 }
 
 #[component]
-fn Composer(placeholder: String, on_send: EventHandler<String>) -> Element {
-    let mut draft = use_signal(String::new);
+fn Composer(
+    placeholder: String,
+    /// Read once, at mount.
+    #[props(default)]
+    initial: String,
+    on_send: EventHandler<String>,
+) -> Element {
+    let mut draft = use_signal(|| initial);
 
     let mut send = move || {
         let text = draft.read().trim().to_string();

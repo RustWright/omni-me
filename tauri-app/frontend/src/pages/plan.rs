@@ -1,6 +1,6 @@
-//! The read-only view beside chat (ruling 110): what is left of today, then the rest of the week
-//! as planned-against-free rows. Read-only: plans are made and changed in chat. The month's
-//! goals join when the monthly review produces them.
+//! The read-only view beside chat (ruling 110): what is left of today, the rest of the week as
+//! planned-against-free rows, then the month's goals. Plans are made and changed in chat, so a
+//! tapped row opens chat about it, in the thread that day's plan came from when there is one.
 
 use dioxus::prelude::*;
 
@@ -8,7 +8,16 @@ use crate::bridge;
 use crate::components::plan_card::{Agenda, DayLabels, Due, Fit};
 use crate::components::primitives::PageHeader;
 use crate::sync_refresh::use_sync_epoch;
-use crate::types::{StartedBlock, TodayView, WeekRow};
+use crate::types::{DueItem, PlanSlot, StartedBlock, TodayView, WeekRow};
+use crate::{NavIntent, NavTarget, Tab};
+
+/// Opens chat with `draft` in the composer, left for him to finish and send.
+fn ask(thread_id: Option<String>, draft: String) {
+    crate::request_nav(NavTarget {
+        tab: Tab::Assistant,
+        intent: Some(NavIntent::Chat { thread_id, draft }),
+    });
+}
 
 /// The last Start tap's outcome, shown at the top of the view until dismissed. Provided by `App`.
 #[derive(Clone, Copy)]
@@ -40,8 +49,16 @@ pub fn PlanPage() -> Element {
                 }
             } else {
                 ul { class: "flex flex-col gap-1.5 text-sm text-obsidian-text",
-                    for goal in v.goals.iter() {
-                        li { key: "{goal}", "{goal}" }
+                    for goal in v.goals.iter().cloned() {
+                        li {
+                            key: "{goal}",
+                            class: "cursor-pointer active:opacity-60",
+                            onclick: {
+                                let draft = format!("About my goal \"{goal}\": ");
+                                move |_| ask(None, draft.clone())
+                            },
+                            "{goal}"
+                        }
                     }
                 }
             }
@@ -104,6 +121,8 @@ fn Today(today: TodayView) -> Element {
         tail.push(format!("any time: {}", names.join(", ")));
     }
     let tail = tail.join(" · ");
+    let slot_thread = t.thread_id.clone();
+    let due_thread = t.thread_id.clone();
     rsx! {
         div { class: "flex justify-between items-baseline gap-2 border-b border-obsidian-border/20 pb-1 mb-2",
             span { class: "text-sm font-medium text-obsidian-text", "Today" }
@@ -121,13 +140,25 @@ fn Today(today: TodayView) -> Element {
             if t.slots.is_empty() {
                 div { class: "text-xs text-obsidian-text-muted", "Nothing else is timed today." }
             } else {
-                Agenda { slots: t.slots.clone(), now_at: Some(t.now_at), now: Some(t.now.clone()) }
+                Agenda {
+                    slots: t.slots.clone(),
+                    now_at: Some(t.now_at),
+                    now: Some(t.now.clone()),
+                    on_tap: move |s: PlanSlot| {
+                        ask(slot_thread.clone(), format!("About {}–{} {}: ", s.from, s.to, s.title))
+                    },
+                }
             }
             if !tail.is_empty() {
                 div { class: "text-xs text-obsidian-text-muted", "{tail}" }
             }
             if !t.due.is_empty() {
-                Due { items: t.due.clone() }
+                Due {
+                    items: t.due.clone(),
+                    on_tap: move |d: DueItem| {
+                        ask(due_thread.clone(), format!("About \"{}\", due {}: ", d.title, d.when))
+                    },
+                }
             }
         }
     }
@@ -152,8 +183,15 @@ fn WeekLine(row: WeekRow) -> Element {
         .map(|d| (format!("{d} due"), true))
         .chain(row.all_day.iter().map(|a| (a.clone(), false)))
         .collect();
+    let draft = match row.date.as_str() {
+        "" => format!("About {}: ", row.day),
+        date => format!("About {} ({date}): ", row.day),
+    };
+    let thread = row.thread_id.clone();
     rsx! {
-        div { class: "flex items-center gap-2 text-xs",
+        div {
+            class: "flex items-center gap-2 text-xs cursor-pointer active:opacity-60",
+            onclick: move |_| ask(thread.clone(), draft.clone()),
             span { class: "w-8 shrink-0 text-obsidian-text", "{row.day}" }
             div { class: "w-16 h-1.5 shrink-0 rounded bg-obsidian-border/20 overflow-hidden",
                 div { class: "h-full {fill}", style: "width: {width}%" }

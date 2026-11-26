@@ -129,7 +129,7 @@ pub struct NavRequest(pub Signal<Option<NavTarget>>);
 ///
 /// A tab alone is not a destination: "12 items waiting" must land on the 12 items, not the
 /// tab's root. Typed, because a mistyped string key would silently route to the root.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum NavIntent {
     /// Finances: draw attention to the review inbox card.
     ///
@@ -140,10 +140,16 @@ pub enum NavIntent {
     FinancesReview,
     /// Archive: open the list already narrowed to unchecked fields.
     ArchiveUnverified,
+    /// Assistant: open `thread_id`, or the new-conversation composer when `None`, with `draft`
+    /// in the composer. Never sent for him: he finishes the question.
+    Chat {
+        thread_id: Option<String>,
+        draft: String,
+    },
 }
 
 /// A tab plus where in it to land.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct NavTarget {
     pub tab: Tab,
     pub intent: Option<NavIntent>,
@@ -381,7 +387,7 @@ fn App() -> Element {
     let mut pending_nav_intent = use_signal(|| None::<NavIntent>);
     use_context_provider(|| PendingNavIntent(pending_nav_intent));
     use_effect(move || {
-        let Some(target) = *nav_request.read() else {
+        let Some(target) = nav_request.read().clone() else {
             return;
         };
         nav_request.set(None);

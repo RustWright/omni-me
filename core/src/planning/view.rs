@@ -115,6 +115,8 @@ pub struct TodayView {
     /// A plan is waiting in chat.
     pub pending: bool,
     pub due: Vec<DueItem>,
+    /// Where today's newest plan was proposed: a tapped row opens chat there.
+    pub thread_id: Option<String>,
 }
 
 /// One later day of the week: planned against free (110).
@@ -130,6 +132,8 @@ pub struct WeekRow {
     pub hours: String,
     pub all_day: Vec<String>,
     pub due: Vec<String>,
+    /// Where that day's newest plan was proposed, if one was.
+    pub thread_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -521,6 +525,7 @@ pub async fn view(
                 .filter(|(_, d)| *d == date)
                 .map(|(t, _)| t.clone())
                 .collect(),
+            thread_id: plan_thread(db, date).await?,
         });
     }
 
@@ -536,6 +541,7 @@ pub async fn view(
             free,
             pending,
             due,
+            thread_id: plan_thread(db, today).await?,
         },
         week_title: week_title.to_string(),
         week,
@@ -545,6 +551,16 @@ pub async fn view(
             .map(|g| g.goals)
             .unwrap_or_default(),
     })
+}
+
+/// The thread of the newest plan proposed for `date`, whatever became of it: re-plans stay in
+/// their thread (112), so that is where a question about the day belongs.
+async fn plan_thread(db: &Database, date: NaiveDate) -> Result<Option<String>, String> {
+    Ok(plan::proposals_for(db, date)
+        .await?
+        .into_iter()
+        .next()
+        .map(|p| p.thread_id))
 }
 
 #[cfg(test)]

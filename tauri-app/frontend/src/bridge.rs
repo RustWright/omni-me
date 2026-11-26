@@ -5966,6 +5966,7 @@ mod mock_assistant {
                 hours,
                 all_day: all_day.iter().map(|s| s.to_string()).collect(),
                 due: due.iter().map(|s| s.to_string()).collect(),
+                thread_id: None,
             }
         };
         PlanView {
@@ -5989,6 +5990,7 @@ mod mock_assistant {
                     when: "today".into(),
                     overdue: false,
                 }],
+                thread_id: all.last().map(|p| p.thread_id.clone()),
             },
             week_title: "Rest of the week".into(),
             week: vec![

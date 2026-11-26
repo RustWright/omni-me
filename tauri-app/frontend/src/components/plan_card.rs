@@ -192,7 +192,13 @@ pub fn Fit(fit: FitLine) -> Element {
 
 /// Blocks solid, calendar events and travel greyed, with a now line before slot `now_at`.
 #[component]
-pub fn Agenda(slots: Vec<PlanSlot>, now_at: Option<usize>, now: Option<String>) -> Element {
+pub fn Agenda(
+    slots: Vec<PlanSlot>,
+    now_at: Option<usize>,
+    now: Option<String>,
+    /// Set by the Plan view, where a tapped row opens chat about it; the chat card leaves it.
+    on_tap: Option<EventHandler<PlanSlot>>,
+) -> Element {
     rsx! {
         div { class: "flex flex-col gap-1",
             for (i, s) in slots.iter().enumerate() {
@@ -200,7 +206,7 @@ pub fn Agenda(slots: Vec<PlanSlot>, now_at: Option<usize>, now: Option<String>) 
                     if now_at == Some(i) {
                         NowLine { now: now.clone().unwrap_or_default() }
                     }
-                    SlotRow { slot: s.clone() }
+                    SlotRow { slot: s.clone(), on_tap }
                 }
             }
             if now_at.is_some_and(|n| n >= slots.len()) {
@@ -221,7 +227,9 @@ fn NowLine(now: String) -> Element {
 }
 
 #[component]
-fn SlotRow(slot: PlanSlot) -> Element {
+fn SlotRow(slot: PlanSlot, on_tap: Option<EventHandler<PlanSlot>>) -> Element {
+    let tap = tap_class(on_tap.is_some());
+    let tapped = slot.clone();
     let (box_class, sub) = match slot.kind {
         SlotKind::Block => (
             "bg-obsidian-accent/10 border-l-2 border-obsidian-accent text-obsidian-text",
@@ -240,7 +248,13 @@ fn SlotRow(slot: PlanSlot) -> Element {
         ),
     };
     rsx! {
-        div { class: "flex gap-2 items-start",
+        div {
+            class: "flex gap-2 items-start {tap}",
+            onclick: move |_| {
+                if let Some(h) = on_tap {
+                    h.call(tapped.clone());
+                }
+            },
             span { class: "w-[5.5rem] shrink-0 text-right text-xs text-obsidian-text-muted tabular-nums pt-1",
                 "{slot.from}–{slot.to}"
             }
@@ -274,15 +288,35 @@ pub fn Untimed(items: Vec<UntimedItem>) -> Element {
 }
 
 #[component]
-pub fn Due(items: Vec<DueItem>) -> Element {
+pub fn Due(items: Vec<DueItem>, on_tap: Option<EventHandler<DueItem>>) -> Element {
+    let tap = tap_class(on_tap.is_some());
     rsx! {
         ul { class: "flex flex-col gap-0.5",
-            for d in items.iter() {
-                li { key: "{d.title}", class: "flex justify-between gap-2 text-xs",
+            for d in items.iter().cloned() {
+                li {
+                    key: "{d.title}",
+                    class: "flex justify-between gap-2 text-xs {tap}",
+                    onclick: {
+                        let d = d.clone();
+                        move |_| {
+                            if let Some(h) = on_tap {
+                                h.call(d.clone());
+                            }
+                        }
+                    },
                     span { class: if d.overdue { "min-w-0 text-warn" } else { "min-w-0 text-obsidian-text" }, "{d.title}" }
                     span { class: "text-obsidian-text-muted shrink-0", "{d.when}" }
                 }
             }
         }
+    }
+}
+
+/// A row that opens chat when tapped looks pressable; one that does not, does not.
+fn tap_class(tappable: bool) -> &'static str {
+    if tappable {
+        "cursor-pointer active:opacity-60"
+    } else {
+        ""
     }
 }

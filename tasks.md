@@ -42,8 +42,8 @@ builds follow them.
   the agent across a 19:00; `--ask` goes through the router, so the 11-25 prompt runs prove
   little: weekly was good, evening and monthly drifted, monthly never found `goal.set`, which
   only the planning brief names), and his read of the three prompt texts in `planning/rituals.rs`. [S]
-- [0126] **Plan card and view: built**, seen on the S9 (1.2.9-dev). Left: tapping a view row opens
-  chat about it (110). [S]
+- [0126] **Plan card and view: built**, row taps open chat (`docs/src/planning.md` § The card and
+  the view). Left: the taps seen on the S9 with the next dev APK; clippy-clean, never run. [XS]
 - [0127] **Google connector (overlay, 133):** read-only OAuth, window snapshots, both calendars. Needs
   his Google Cloud setup, walked through live when this slice starts. Also wires the server's
   15-minute read (113) through `RunConfig`, since the public server has no source, and the fresh

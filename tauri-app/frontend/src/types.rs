@@ -1619,6 +1619,9 @@ pub struct TodayView {
     pub free: Option<String>,
     pub pending: bool,
     pub due: Vec<DueItem>,
+    /// Where today's newest plan was proposed; a tapped row opens chat there.
+    #[serde(default)]
+    pub thread_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1631,6 +1634,8 @@ pub struct WeekRow {
     pub hours: String,
     pub all_day: Vec<String>,
     pub due: Vec<String>,
+    #[serde(default)]
+    pub thread_id: Option<String>,
 }
 
 /// A block a reminder's Start began (ruling 93).
