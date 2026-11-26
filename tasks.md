@@ -27,7 +27,8 @@ builds follow them.
 - [0116] **Task surfaces: mostly built** (`705f9eb`, `88999a0`; `docs/src/planning.md`): view timer
   with nudge, "Waiting on him" in the brief, staleness settings, inferred ticks. Left: the hub
   trial's acted/dismissed record (92, needs a design call), courses closed at term end (123, needs
-  the LEARN feed, [0115]), and all of it seen on the S9 and in a real ritual run. [M]
+  the LEARN feed, [0115]). Pause/Stop seen on the S9 (1.2.11-dev); the nudge, the inferred mark
+  and "Waiting on him" in a ritual answer are not yet seen. [M]
 - [0109] **Planning build:** read-only calendar (96; source interface public, Google connector
   in the overlay, 133), plan records, the ritual tier and summary
   lines (98), block reminders, the load measure (99). Needs [0106]. Reminders per [0104]'s results
@@ -42,10 +43,9 @@ builds follow them.
   § The other rituals, § Goals; goals are ruling 134). Real path ran on dev 11-26 (hour set to 0):
   every scheduled question was routed, on the interactive seat, because `pending_questions`
   dropped `prompt_name`; monthly went to General and said it had no `goal.set`. Fixed in
-  `1820d85`. Left: rerun on an agent image with the fix (evening any day, weekly
-  Sunday, monthly the 1st), then his read of the prompt texts in `planning/rituals.rs`. [S]
-- [0126] **Plan card and view: built**, row taps open chat (`docs/src/planning.md` § The card and
-  the view). Left: the taps seen on the S9 with the next dev APK; clippy-clean, never run. [XS]
+  `1820d85`. Left: rerun on agent `dev-88999a0` (needs his `docker pull`): raise each ritual with
+  `~/omni-dev-tools/ritual_ask_dev.py` and its text in `state/ritual-prompts/`, which this
+  period's runs leave due dates unchanged; then his read of the prompt texts in `planning/rituals.rs`. [S]
 - [0127] **Google connector (overlay, 133):** read-only OAuth, window snapshots, both calendars. Needs
   his Google Cloud setup, walked through live when this slice starts. Also wires the server's
   15-minute read (113) through `RunConfig`, since the public server has no source, and the fresh

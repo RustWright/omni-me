@@ -4,14 +4,14 @@
 live in `RULINGS.md`, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`), rationale in
 `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
-## ▶ NEXT ACTION — [0116], then [0124]'s rerun (his order, 11-25)
-**Dev credits pre-approved** (his words, 11-25). [0126] is built (`c3d67c8`).
-1. [0116] task surfaces, incl. the view's pause/stop/Start ([0125] built only Start on the reminder).
-2. [0124]: rerun the rituals on an agent image with `1820d85` (`tasks.md` [0124] says what the
-   11-26 run found). Images were dispatched 11-26 against `1820d85`: agent `dev-1820d85`, APK
-   1.2.10-dev for the S9 (also carries [0126]'s taps to look at). Then [0127] with him; [0110] after.
-Run the agent as `docker run --rm` by tailnet IP, not the old `omni-me-agent-dev` container
-(stale image, MagicDNS). Judgment calls made unattended: overlay `DECISION_LOG_2026-11-2*.md`.
+## ▶ NEXT ACTION — [0124]'s rerun, then [0127] with him (his order, 11-25)
+**Dev credits were approved for the 11-25/26 session only**; ask again for a new one.
+1. [0124]: once he has pulled `omni-me-private-agent:dev-88999a0` here, run it `--rm` by tailnet IP
+   against dev :3001 and raise the three rituals (`tasks.md` [0124] has the script). Check the log
+   says `fixed=true` and the Batch model, and that answers use "Waiting on him".
+2. [0116]'s remainder needs him (`tasks.md` [0116]); [0127] with him; [0110] after.
+Dev runs `dev-6284c3e-88999a0` (deployed 11-26, healthy at 365 MiB); the S9 runs 1.2.11-dev.
+Judgment calls made unattended: overlay `DECISION_LOG_2026-11-26.md`.
 ⛔ Order: server before any client (`server/src/routes/sync.rs` refuses unknown event types).
 Still to watch: [0118] when the next joined transfer's busy leg ages out
 (`~/omni-dev-tools/ws_transfer_dupes_probe.py`). [0119] and [0120] wait for the next release (46).
@@ -22,8 +22,10 @@ the next dev APK on the S9 (the dev phone), never the release on his daily phone
 and check in a capped cgroup are fine, and the mock demo page is the one build exception.
 
 ## ⛔ Waiting on him
+- **`docker pull ghcr.io/rustwright/omni-me-private-agent:dev-88999a0`** here, for [0124] (his rule).
 - **[0124] first run of a weekly or monthly ritual:** with no earlier run it fires on the first
   evening it can, any weekday (`scheduled::is_due`); on live that is the release evening.
+- **[0116] hub trial record (92):** how "acted" and "dismissed" are recorded is a design call.
 - **[0128] at the live release (his call, 11-25):** decide how live's startup compaction gets room
   (planned off-box compaction, a bigger box, or leave it); options in `tasks.md` [0128].
 - **[0124] prompt texts:** the evening, weekly and monthly prompts in `planning/rituals.rs` are mine.
