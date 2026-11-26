@@ -23,8 +23,6 @@ and check in a capped cgroup are fine, and the mock demo page is the one build e
 
 ## ⛔ Waiting on him
 - **`docker pull ghcr.io/rustwright/omni-me-private-agent:dev-88999a0`** here, for [0124] (his rule).
-- **[0124] first run of a weekly or monthly ritual:** with no earlier run it fires on the first
-  evening it can, any weekday (`scheduled::is_due`); on live that is the release evening.
 - **[0116] hub trial record (92):** how "acted" and "dismissed" are recorded is a design call.
 - **[0128] at the live release (his call, 11-25):** decide how live's startup compaction gets room
   (planned off-box compaction, a bigger box, or leave it); options in `tasks.md` [0128].

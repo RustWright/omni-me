@@ -251,6 +251,10 @@ occurrences by design. Each part lists at most ten. Not yet built: the hub trial
 acted against dismissed (92), and closing a course's project at term end (123), which waits on
 the LEARN feed.
 
+**A first run waits for its own day.** A ritual that has never run is due only on its day, so
+the first weekly plan comes on a Sunday and the first monthly review on the 1st, not on the
+evening it was switched on. After that, a run the agent missed still happens when it is back.
+
 The weekly plan covers its own evening, so Sunday has no shutdown. Nothing moves without your
 answer: a moved item becomes a task scheduled for its new day, so the next morning's draft
 picks it up, and tomorrow is never planned the evening before.
