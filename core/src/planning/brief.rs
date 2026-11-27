@@ -147,15 +147,21 @@ async fn goal_lines(db: &Database, today: NaiveDate) -> String {
     let this = goals::month_of(today);
     let last = goals::month_of(today.with_day(1).unwrap_or(today) - Duration::days(1));
     let mut out = String::new();
-    for (month, verb) in [(last, "were"), (this, "are")] {
+    // Named, not just dated: given "2026-10" then "2026-11", a model read them as last month and
+    // this month one month late and asked about December.
+    let name = |m: &str| {
+        goals::parse_month(m).map_or_else(|| m.to_string(), |d| d.format("%B %Y").to_string())
+    };
+    for (month, which, verb) in [(last, "Last month", "were"), (this, "This month", "are")] {
+        let label = format!("{which} ({})", name(&month));
         match goals::for_month(db, &month).await {
             Ok(Some(g)) => {
-                out.push_str(&format!("\n\nGoals for {month}:"));
+                out.push_str(&format!("\n\n{label}, goals set:"));
                 for goal in &g.goals {
                     out.push_str(&format!("\n- {goal}"));
                 }
             }
-            Ok(None) => out.push_str(&format!("\n\nNo goals {verb} set for {month}.")),
+            Ok(None) => out.push_str(&format!("\n\n{label}: no goals {verb} set.")),
             Err(e) => {
                 tracing::warn!(error = %e, "could not read a month's goals for the planning brief");
             }

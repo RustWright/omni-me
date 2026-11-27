@@ -223,7 +223,8 @@ The morning plan is drafted when your day starts: at your first activity, or at 
 hour if nothing has happened by then. It is never drafted during quiet hours, and it is skipped
 when you have already asked for a plan that day. The agent raises it as a scheduled question
 (`morning_plan`). That question skips the router and is answered under the planning brief, on
-the scheduled-run seat.
+the interactive seat, like every ritual (ruling 135): measured against the batch seat, it never
+stalled and answered in seconds.
 
 The server sends the one silent push for it, outside quiet hours, once a day, because the
 server holds the notification channel. The same server tick closes any plan that has lapsed or

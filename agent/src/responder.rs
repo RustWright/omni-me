@@ -41,13 +41,18 @@ pub enum Stopped {
 ///
 /// `scheduled` is set by the check-in and clear on anything a person typed, so it
 /// separates a run nobody is waiting on from one where latency is the whole
-/// experience. Roles A and B are split on exactly that.
+/// experience. Roles A and B are split on exactly that, except the rituals, which the
+/// interactive seat answers: ruling 135 (RULINGS.md).
 fn client_for<'a>(
     interactive: &'a dyn LlmClient,
     batch: &'a dyn LlmClient,
     question: &AssistantQuestionAskedPayload,
 ) -> &'a dyn LlmClient {
-    if question.scheduled {
+    let ritual = question
+        .prompt_name
+        .as_deref()
+        .is_some_and(rituals::is_ritual);
+    if question.scheduled && !ritual {
         batch
     } else {
         interactive
@@ -612,6 +617,14 @@ mod tests {
         let (fast, good) = (client("role-a"), client("role-b"));
         let picked = client_for(&fast, &good, &question(true));
         assert_eq!(picked.model_name(), "role-b");
+    }
+
+    #[test]
+    fn a_ritual_is_answered_by_the_interactive_model() {
+        let (fast, good) = (client("role-a"), client("role-b"));
+        let mut q = question(true);
+        q.prompt_name = Some(rituals::WEEKLY.into());
+        assert_eq!(client_for(&fast, &good, &q).model_name(), "role-a");
     }
 
     #[test]

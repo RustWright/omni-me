@@ -25,9 +25,10 @@ const RITUAL_FAILURE: FailurePolicy = FailurePolicy {
     alert_failing_hours: None,
 };
 
+// Ruling 135 (RULINGS.md): the interactive seat, measured against Batch by `--bench-rituals`.
 const RITUAL_MODEL: ModelUse = ModelUse {
     seats: &[Seat {
-        role: LlmRole::Batch,
+        role: LlmRole::Interactive,
         purpose: "the ritual's conversation, under the planning brief",
         effort: "provider default",
     }],
@@ -288,7 +289,7 @@ pub const REGISTRY: &[JobSpec] = &[
         },
         model: Some(ModelUse {
             seats: &[Seat {
-                role: LlmRole::Batch,
+                role: LlmRole::Interactive,
                 purpose: "the day's plan, under the planning brief",
                 effort: "provider default",
             }],

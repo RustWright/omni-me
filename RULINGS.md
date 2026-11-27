@@ -402,3 +402,8 @@ edit site carries their reasoning. These are settled. Do not re-open one without
   review as one card and approved like a plan. A later set for the month replaces the earlier one.
   The view lists them read-only, with no progress line; linking a goal to something measured can
   come later as an optional field on the same record.
+- **135.** The rituals (morning plan, evening shutdown, weekly plan, monthly review) are answered by
+  the interactive seat, not Batch, though nobody is waiting. Measured on dev, 11-26
+  (`--bench-rituals`, 9 runs a seat): interactive 9/9 at a 7 s median and half the tokens; Batch
+  8/9 with a 300 s stall and a 27 s median; Batch without reasoning cost 7× the tokens and leaked
+  its internals. Other scheduled questions stay on Batch. Cost per token was not measured.

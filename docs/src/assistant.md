@@ -636,7 +636,9 @@ each of these roles earns its own, benchmarked rather than argued:
 Most seats now have a caller, which was not true when this table was written — the archive
 work gave the extractor one and the scheduled check-in gave the batch seat one. What
 separates an interactive run from a batch run is a flag on the question itself
-(`scheduled`), not a guess about intent.
+(`scheduled`), not a guess about intent. The rituals are the exception: scheduled, but answered by
+the interactive seat, because `--bench-rituals` measured the batch seat stalling on them (ruling
+135).
 
 The exception is the **document reader**, and it is worth stating plainly because an earlier
 version of this page rounded it up to "every seat". The reader answers *what is this document*

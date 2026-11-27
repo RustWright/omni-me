@@ -16,6 +16,7 @@ use omni_me_core::llm::LlmClient;
 use omni_me_core::planning::rituals;
 
 const REPEATS_ENV: &str = "OMNI_BENCH_RITUAL_REPEATS";
+const ONLY_ENV: &str = "OMNI_BENCH_RITUALS";
 
 /// Most items the weekly plan is told to ask about.
 const WEEKLY_MAX: usize = 10;
@@ -123,7 +124,18 @@ pub async fn run(
     retrievers: Retrievers<'_>,
 ) {
     let repeats = crate::bench::repeats(REPEATS_ENV);
-    let prompts: Vec<_> = rituals::prompts(config);
+    // `OMNI_BENCH_RITUALS=monthly_review` re-measures one; unset runs all three.
+    let only: Option<Vec<String>> = std::env::var(ONLY_ENV)
+        .ok()
+        .map(|v| v.split(',').map(|s| s.trim().to_string()).collect());
+    let prompts: Vec<_> = rituals::prompts(config)
+        .into_iter()
+        .filter(|p| only.as_ref().is_none_or(|o| o.iter().any(|n| n == p.name)))
+        .collect();
+    if prompts.is_empty() {
+        eprintln!("cannot bench: {ONLY_ENV} names no ritual");
+        return;
+    }
     if prompts.iter().any(|p| !p.enabled) {
         eprintln!("cannot bench: planning or the LLM feature is off");
         return;
