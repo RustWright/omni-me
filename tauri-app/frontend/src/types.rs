@@ -1691,6 +1691,71 @@ pub struct PlanView {
     pub goals: Vec<String>,
 }
 
+/// One row of the People tab. Mirror of `core::people::view::PersonRow`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PersonRow {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub provisional: bool,
+    #[serde(default)]
+    pub about: Option<String>,
+    #[serde(default)]
+    pub last: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PeopleList {
+    pub total: usize,
+    pub rows: Vec<PersonRow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FactLine {
+    pub line: String,
+    pub source: String,
+}
+
+/// What Undo or "Wrong?" does. Sent back as it came; the frontend never builds one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PersonUndo {
+    Answer { mention_id: String },
+    Wrong { mention_id: String, person_id: String },
+    Address { address: String, person_id: String },
+    Exclusion { mention_id: String, person_id: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PersonDecision {
+    pub text: String,
+    pub by: String,
+    #[serde(default)]
+    pub guessed: bool,
+    pub undo: PersonUndo,
+}
+
+/// The person view (ruling 120). Mirror of `core::people::view::PersonView`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PersonView {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub provisional: bool,
+    #[serde(default)]
+    pub also: Vec<String>,
+    #[serde(default)]
+    pub addresses: Vec<String>,
+    #[serde(default)]
+    pub last: Option<String>,
+    #[serde(default)]
+    pub facts: Vec<FactLine>,
+    #[serde(default)]
+    pub appears: Option<String>,
+    #[serde(default)]
+    pub decisions: Vec<PersonDecision>,
+}
+
 /// Something the assistant has offered to do, waiting on the user.
 ///
 /// Nothing has happened when one of these exists. The assistant has no write

@@ -63,7 +63,9 @@ builds follow them.
   names match locally; new names are spotted by role D (ruling 136). [M]
 - [0132] **Evening people questions:** picker and group cards in chat (104, 118), lapsing after one
   more day; every answer an undoable evidence event. [M]
-- [0133] **Person view and People tab** per `design/0102/` § 3 (119, 120, 129); local reads only. [M]
+- [0133] **Person view and People tab: built** (`people::view`, `pages/people.rs`), three passes in
+  the mock render. Left: a name tapped in chat or a card, and the assistant's link (119's other two
+  ways in); the mentions list behind "Appears in"; one look on the S9 with real records. [S]
 - [0134] **Assistant:** a person lookup verb and fact proposals with a citation, on a ZDR seat (107,
   128), which chat and the rituals qualify as while they are direct to DeepInfra (ruling 107).
   Contacts seed import on his go (105). [M]

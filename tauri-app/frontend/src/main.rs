@@ -30,6 +30,7 @@ use pages::assistant::AssistantPage;
 use pages::finances::FinancesPage;
 use pages::journal::JournalPage;
 use pages::notes::NotesPage;
+use pages::people::PeoplePage;
 use pages::plan::PlanPage;
 use pages::routines::RoutinesPage;
 use pages::settings::SettingsPage;
@@ -43,6 +44,7 @@ pub enum Tab {
     Notes,
     Assistant,
     Plan,
+    People,
     Routines,
     Finances,
     Archive,
@@ -59,6 +61,7 @@ impl Tab {
             Tab::Notes => "notes",
             Tab::Assistant => "assistant",
             Tab::Plan => "plan",
+            Tab::People => "people",
             Tab::Routines => "routines",
             Tab::Finances => "finances",
             Tab::Archive => "archive",
@@ -72,6 +75,7 @@ impl Tab {
             "notes" => Some(Tab::Notes),
             "assistant" => Some(Tab::Assistant),
             "plan" => Some(Tab::Plan),
+            "people" => Some(Tab::People),
             "routines" => Some(Tab::Routines),
             "finances" => Some(Tab::Finances),
             "archive" => Some(Tab::Archive),
@@ -90,6 +94,7 @@ impl Tab {
             Tab::Notes => Some(types::Feature::Notes),
             Tab::Assistant => Some(types::Feature::Llm),
             Tab::Plan => Some(types::Feature::Planning),
+            Tab::People => Some(types::Feature::People),
             Tab::Routines => Some(types::Feature::Routines),
             Tab::Finances => Some(types::Feature::Finances),
             Tab::Archive => Some(types::Feature::Documents),
@@ -1086,6 +1091,7 @@ fn App() -> Element {
                             Tab::Archive => rsx! { ArchivePage {} },
                             Tab::Assistant => rsx! { AssistantPage {} },
                             Tab::Plan => rsx! { PlanPage {} },
+                            Tab::People => rsx! { PeoplePage {} },
                             Tab::Settings => rsx! { SettingsPage {} },
                         }
                     }

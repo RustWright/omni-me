@@ -5182,6 +5182,201 @@ pub async fn invoke_plan_view() -> Result<crate::types::PlanView, String> {
     }
 }
 
+/// Everyone, most recent first, or the local matches for `query` (ruling 119).
+pub async fn invoke_people_list(query: String) -> Result<crate::types::PeopleList, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(mock_people::list(&query))
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {
+            query: String,
+        }
+        invoke("people_list", &Args { query }).await
+    }
+}
+
+pub async fn invoke_person_view(
+    person_id: String,
+) -> Result<Option<crate::types::PersonView>, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(mock_people::person(&person_id))
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {
+            person_id: String,
+        }
+        invoke("person_view", &Args { person_id }).await
+    }
+}
+
+/// Undo or "Wrong?" on one line of "How this record was built".
+pub async fn invoke_person_undo(undo: crate::types::PersonUndo) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        mock_people::undo(&undo);
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {
+            undo: crate::types::PersonUndo,
+        }
+        invoke("person_undo", &Args { undo }).await
+    }
+}
+
+/// The design's own people (`design/0102/` § 3), so the render can be held against it.
+#[cfg(feature = "mock")]
+mod mock_people {
+    use crate::types::{FactLine, PeopleList, PersonDecision, PersonRow, PersonUndo, PersonView};
+    use std::cell::RefCell;
+
+    thread_local! {
+        static UNDONE: RefCell<Vec<PersonUndo>> = const { RefCell::new(Vec::new()) };
+    }
+
+    fn row(id: &str, name: &str, provisional: bool, about: &str, last: &str) -> PersonRow {
+        PersonRow {
+            id: id.into(),
+            name: name.into(),
+            provisional,
+            about: Some(about.into()),
+            last: Some(last.into()),
+        }
+    }
+
+    fn rows() -> Vec<PersonRow> {
+        vec![
+            // Most recent first, as core orders them.
+            row("so", "Sarah Okafor", false, "Postdoc in my lab", "journal, 19 Nov"),
+            row("mg", "Marcus", true, "Climbing gym", "journal, 19 Nov"),
+            row("dl", "Dr. Lee", false, "Supervisor", "task, 18 Nov"),
+            row("rc", "Robert Chen", false, "Senior engineer at Northwind Labs", "email, 16 Nov"),
+            row("ss", "Sarah", false, "My sister", "journal, 2 Nov"),
+            row("sm", "Shanice Moore", false, "Housing office", "email, 28 Oct"),
+        ]
+    }
+
+    pub fn list(query: &str) -> PeopleList {
+        let all = rows();
+        let q = query.trim().to_lowercase();
+        let rows = all
+            .iter()
+            .filter(|r| q.is_empty() || r.name.to_lowercase().contains(&q))
+            .cloned()
+            .collect();
+        PeopleList {
+            total: all.len(),
+            rows,
+        }
+    }
+
+    pub fn person(id: &str) -> Option<PersonView> {
+        let r = rows().into_iter().find(|r| r.id == id)?;
+        let decision = |text: &str, by: &str, guessed: bool, n: &str| PersonDecision {
+            text: text.into(),
+            by: by.into(),
+            guessed,
+            undo: if guessed {
+                PersonUndo::Wrong {
+                    mention_id: n.into(),
+                    person_id: id.into(),
+                }
+            } else {
+                PersonUndo::Answer {
+                    mention_id: n.into(),
+                }
+            },
+        };
+        let (also, addresses, last, facts, appears, decisions) = if id == "rc" {
+            (
+                vec!["Bobby".to_string()],
+                vec!["rchen@northwind.example".to_string()],
+                "email \"Re: masters reference\", 16 Nov",
+                vec![
+                    FactLine {
+                        line: "Senior engineer at Northwind Labs".into(),
+                        source: "email · 3 Oct".into(),
+                    },
+                    FactLine {
+                        line: "Offered to write a masters reference".into(),
+                        source: "journal · 30 Oct".into(),
+                    },
+                    FactLine {
+                        line: "Met through Dr. Lee".into(),
+                        source: "journal · 30 Oct".into(),
+                    },
+                ],
+                "Appears in 14 emails, 3 journal entries",
+                vec![
+                    decision("\"Bobby\" in your journal is this person", "you, 30 Oct", false, "m1"),
+                    decision("An email of 14 Nov linked to them", "automatic", true, "m2"),
+                    decision("\"Bob\" is another name for them", "you, 2 Nov", false, "m3"),
+                ],
+            )
+        } else {
+            (
+                Vec::new(),
+                Vec::new(),
+                "journal \"Lunch with Sarah.\", 19 Nov",
+                Vec::new(),
+                "Appears in 1 journal entry",
+                vec![decision("\"Sarah\" in your journal is this person", "you, 19 Nov", false, "m9")],
+            )
+        };
+        // As core does: Wrong? leaves a "not this person" line with its own Undo.
+        let decisions = UNDONE.with(|u| {
+            let u = u.borrow();
+            let mut out: Vec<PersonDecision> =
+                decisions.into_iter().filter(|d| !u.contains(&d.undo)).collect();
+            for undone in u.iter() {
+                if let PersonUndo::Wrong {
+                    mention_id,
+                    person_id,
+                } = undone
+                    && person_id == id
+                {
+                    let excluded = PersonUndo::Exclusion {
+                        mention_id: mention_id.clone(),
+                        person_id: person_id.clone(),
+                    };
+                    if !u.contains(&excluded) {
+                        out.push(PersonDecision {
+                            text: "An email of 14 Nov is not this person".into(),
+                            by: "you".into(),
+                            guessed: false,
+                            undo: excluded,
+                        });
+                    }
+                }
+            }
+            out
+        });
+        Some(PersonView {
+            id: r.id,
+            name: r.name,
+            provisional: r.provisional,
+            also,
+            addresses,
+            last: Some(last.into()),
+            facts,
+            appears: Some(appears.into()),
+            decisions,
+        })
+    }
+
+    pub fn undo(undo: &PersonUndo) {
+        UNDONE.with(|u| u.borrow_mut().push(undo.clone()));
+    }
+}
+
 /// Accept or decline one proposal. Accepting is what authors the change.
 pub async fn invoke_decide_assistant_proposal(
     proposal_id: &str,

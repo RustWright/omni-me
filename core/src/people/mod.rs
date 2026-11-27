@@ -3,6 +3,7 @@
 
 pub mod matcher;
 pub mod records;
+pub mod view;
 
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
