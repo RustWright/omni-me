@@ -50,6 +50,8 @@ async-trait = { workspace = true }
 rand = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
 rust_decimal = { version = "1", default-features = false, features = ["serde-with-str"] }
 serde_with = { version = "3", default-features = false, features = ["macros", "std"] }
+# Spelling closeness for the people matcher (ruling 120). Already in the tree through darling.
+strsim = "0.11"
 ledger-parser = "6"
 ledger-utils = "0.6"
 glob = "0.3"

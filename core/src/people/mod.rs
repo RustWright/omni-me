@@ -1,6 +1,7 @@
 //! People: the mention index and confirmed facts (rulings 101, 102). The model and why it is
 //! shaped this way: `docs/src/people.md`.
 
+pub mod matcher;
 pub mod records;
 
 use chrono::NaiveDate;

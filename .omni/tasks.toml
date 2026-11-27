@@ -857,7 +857,7 @@ blocked_by = ["omni-me-0108"]
 [[task]]
 id     = "omni-me-0129"
 title  = "People records: events, projection, merge mapping"
-status = "todo"
+status = "done"
 size   = "M"
 ref    = "tasks.md § Cycle 6"
 

@@ -59,8 +59,6 @@ builds follow them.
   People tab with model-free search (118–120), per `design/0102/`; task text as a source (124);
   the fact shape (128), recall first (129). Seed and evidence: overlay `PEOPLE_PREP.md`. [L]
   Built as the slices below, in dependency order; [0110] closes when they all have.
-- [0129] **People records:** `Feature::People`; person, alias, mention, answer, fact and merge events;
-  `PeopleProjection`. Merge is a mapping applied when reading, so unmerge rewrites nothing. [M]
 - [0130] **Name matcher:** local text and spelling closeness over names and aliases, one matcher for
   the People tab and "Someone I know…" (120). No model. [S]
 - [0131] **Finding mentions** in journal lines, task text (124) and confirmed senders (103). Needs his
