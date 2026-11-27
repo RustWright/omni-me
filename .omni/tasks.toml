@@ -864,7 +864,7 @@ ref    = "tasks.md § Cycle 6"
 [[task]]
 id     = "omni-me-0130"
 title  = "People name matcher: text and spelling closeness"
-status = "todo"
+status = "done"
 size   = "S"
 ref    = "tasks.md § Cycle 6"
 blocked_by = ["omni-me-0129"]

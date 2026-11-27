@@ -4,9 +4,10 @@
 live in `RULINGS.md`, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`), rationale in
 `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
-## ▶ NEXT ACTION — [0110] People, slice by slice ([0129] then [0130]; `tasks.md` § Cycle 6)
-[0127] is built and on dev, short of his Google setup (below). [0129] (records) is written; land it
-on green CI, then [0130]'s matcher. [0131] needs his call first (below).
+## ▶ NEXT ACTION — [0133] person view and People tab (`tasks.md` § Cycle 6)
+[0129] and [0130] landed green. [0133] is the one slice not waiting on him; it is UI, so it is
+checked on the S9 over CDP, never `dx serve` here. [0131] and [0134] wait on his answers (below).
+[0127] is on dev with a deliberate stand-in calendar, short of his Google setup (below).
 **Dev credits and dev actions were approved for the 11-26/27 session only**; ask again.
 Dev agent runs go through `~/omni-dev-tools/ritual_rerun_dev.sh <tag> <ritual>` (always stops it).
 Judgment calls made unattended: overlay `DECISION_LOG_2026-11-26.md` (both sessions).
@@ -23,6 +24,7 @@ and check in a capped cgroup are fine, and the mock demo page is the one build e
 - **[0127] Google Cloud setup, walked through live:** overlay `SETUP.md` § Google Calendar.
 - **[0131] how new names are spotted:** a local pass (free, mixes in apps and places) or a ZDR model
   (107). Ask with the prep's evidence (`PEOPLE_PREP.md` § First pass).
+- **[0134] which seat sees people data (107):** only role D is recorded as ZDR (`tasks.md` [0134]).
 - **[0124] prompt texts:** the evening, weekly and monthly prompts in `planning/rituals.rs` are mine.
 - **[0116] hub trial record (92):** how "acted" and "dismissed" are recorded is a design call.
 - **[0128] at the live release (his call, 11-25):** decide how live's startup compaction gets room

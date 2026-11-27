@@ -59,15 +59,14 @@ builds follow them.
   People tab with model-free search (118–120), per `design/0102/`; task text as a source (124);
   the fact shape (128), recall first (129). Seed and evidence: overlay `PEOPLE_PREP.md`. [L]
   Built as the slices below, in dependency order; [0110] closes when they all have.
-- [0130] **Name matcher:** local text and spelling closeness over names and aliases, one matcher for
-  the People tab and "Someone I know…" (120). No model. [S]
 - [0131] **Finding mentions** in journal lines, task text (124) and confirmed senders (103). Needs his
   call on how new names are spotted: a local pass or a ZDR model (107). [M]
 - [0132] **Evening people questions:** picker and group cards in chat (104, 118), lapsing after one
   more day; every answer an undoable evidence event. [M]
 - [0133] **Person view and People tab** per `design/0102/` § 3 (119, 120, 129); local reads only. [M]
 - [0134] **Assistant:** a person lookup verb and fact proposals with a citation, on a ZDR seat (107,
-  128). Contacts seed import on his go (105). [M]
+  128). Only role D is recorded as ZDR; chat and rituals run on the interactive seat, so his
+  check of that provider, or routing people turns to D, comes first. Contacts seed on his go. [M]
 
 ## Waiting on his decision
 
