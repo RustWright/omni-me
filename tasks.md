@@ -61,7 +61,7 @@ builds follow them.
   Built as the slices below, in dependency order; [0110] closes when they all have.
 - [0131] **Finding mentions: built** (`people::finding`, a 15-minute server job; `docs/src/people.md`
   § Finding mentions): journal, task text, and person senders only (ruling 137, his call 11-27).
-  Left: a dev run on real lines; history waits for the seed import (106), his go on live. [S]
+  On dev (`9f4acfc`). Left: a real journal name seen end to end; history at the seed import. [S]
 - [0132] **Evening people questions:** picker and group cards in chat (104, 118), lapsing after one
   more day; every answer an undoable evidence event. [M]
 - [0133] **Person view and People tab: built** (`people::view`, `pages/people.rs`), three passes in
