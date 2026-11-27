@@ -4,10 +4,10 @@
 live in `RULINGS.md`, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`), rationale in
 `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
-## ▶ NEXT ACTION — [0133] person view and People tab (`tasks.md` § Cycle 6)
-[0129] and [0130] landed green. [0133] is UI: checked in the mock render (`UI_WORKFLOW.md`,
-`dx serve --features mock` in the capped cgroup), then once on the S9. Every UI change gets three
-self-review passes before he sees it (his rule). [0131] (ruling 136) and [0134] (107) follow.
+## ▶ NEXT ACTION — [0131] finding mentions (ruling 136), then [0132] and [0134] (`tasks.md`)
+[0129], [0130] and [0133] landed green; [0133]'s leftovers are in `tasks.md`. UI is checked in the
+mock render (`UI_WORKFLOW.md`; Playwright MCP has no Chrome here, so drive Playwright's bundled
+Chromium over CDP), with three self-review passes before he sees it (his rule).
 [0127] is on dev with a deliberate stand-in calendar, short of his Google setup (below).
 **Dev credits and dev actions were approved for the 11-26/27 session only**; ask again.
 Dev agent runs go through `~/omni-dev-tools/ritual_rerun_dev.sh <tag> <ritual>` (always stops it).
