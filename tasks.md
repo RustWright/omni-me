@@ -59,8 +59,8 @@ builds follow them.
   People tab with model-free search (118–120), per `design/0102/`; task text as a source (124);
   the fact shape (128), recall first (129). Seed and evidence: overlay `PEOPLE_PREP.md`. [L]
   Built as the slices below, in dependency order; [0110] closes when they all have.
-- [0131] **Finding mentions** in journal lines, task text (124) and confirmed senders (103). Needs his
-  call on how new names are spotted: a local pass or a ZDR model (107). [M]
+- [0131] **Finding mentions** in journal lines, task text (124) and confirmed senders (103). Known
+  names match locally; new names are spotted by role D (ruling 136). [M]
 - [0132] **Evening people questions:** picker and group cards in chat (104, 118), lapsing after one
   more day; every answer an undoable evidence event. [M]
 - [0133] **Person view and People tab** per `design/0102/` § 3 (119, 120, 129); local reads only. [M]

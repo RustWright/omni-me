@@ -407,3 +407,7 @@ edit site carries their reasoning. These are settled. Do not re-open one without
   (`--bench-rituals`, 9 runs a seat): interactive 9/9 at a 7 s median and half the tokens; Batch
   8/9 with a 300 s stall and a 27 s median; Batch without reasoning cost 7× the tokens and leaked
   its internals. Other scheduled questions stay on Batch. Cost per token was not measured.
+- **136.** Names that match nobody on file are spotted by role D, the zero-retention seat (107),
+  reading each new journal entry. Known names and aliases are matched locally, with no model. A
+  local capitalised-word pass was the alternative: free, but the prep found it mixes in apps,
+  places and ordinary words ("Will", "Long"), each one a tap on the evening card.
