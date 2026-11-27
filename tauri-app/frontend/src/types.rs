@@ -2618,6 +2618,7 @@ mod feature_tests {
             "feature.documents",
             "feature.tasks",
             "feature.planning",
+            "feature.people",
         ];
         let actual: Vec<&str> = ALL_FEATURES.iter().map(|f| f.key()).collect();
         assert_eq!(actual, expected);

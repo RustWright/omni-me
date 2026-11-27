@@ -1057,7 +1057,7 @@ mod tests {
             }
         }
         assert_eq!(
-            counted, 40,
+            counted, 41,
             "ALL_KEYS does not list every ConfigKey variant"
         );
 
@@ -1101,7 +1101,7 @@ mod tests {
             }
         }
         assert_eq!(
-            counted, 9,
+            counted, 10,
             "ALL_FEATURES does not list every Feature variant"
         );
 
