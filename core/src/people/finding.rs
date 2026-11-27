@@ -563,6 +563,7 @@ mod email {
             .unwrap_or("")
             .chars()
             .filter(char::is_ascii_alphanumeric)
+            .map(|c| c.to_ascii_lowercase())
             .collect();
         AUTOMATED.iter().any(|a| local.starts_with(a))
     }
