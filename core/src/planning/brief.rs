@@ -48,7 +48,8 @@ pub async fn context(db: &Database, config: &ResolvedConfig, now: DateTime<Utc>)
     {
         out.push_str(&format!(
             "\n\n### Calendar\nThe calendar has not refreshed since {}. Events added or moved \
-             since then are missing; say so in the plan.",
+             since then are missing, so free time below may be wrong. Say so in one line \
+             before anything in your reply that depends on the calendar.",
             oldest.with_timezone(&tz).format("%a %-d %b, %H:%M")
         ));
     }
