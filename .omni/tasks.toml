@@ -971,3 +971,10 @@ title  = "Transaction editor cannot hold a two-currency entry"
 status = "doing"
 size   = "S"
 ref    = "tasks.md § Bugs"
+
+[[task]]
+id     = "omni-me-0135"
+title  = "A new projection replays the whole log on first launch"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Bugs"
