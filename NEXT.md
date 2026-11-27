@@ -4,12 +4,12 @@
 live in `RULINGS.md`, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`), rationale in
 `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
-## ▶ NEXT ACTION — [0127] with him, then [0110] (his order, 11-25)
-**Dev credits and dev actions were approved for the 11-25/26 session only**; ask again.
-[0124] and [0116] are built and checked on dev; what is left of each is his (below). Dev agent runs
-go through `~/omni-dev-tools/ritual_rerun_dev.sh <tag> <ritual>`, which always stops the agent.
-Dev server runs `dev-6284c3e-88999a0` (deployed 11-26, healthy at 365 MiB); the S9 runs 1.2.11-dev.
-Judgment calls made unattended: overlay `DECISION_LOG_2026-11-26.md`.
+## ▶ NEXT ACTION — [0110] People, slice by slice ([0129] then [0130]; `tasks.md` § Cycle 6)
+[0127] is built and on dev, short of his Google setup (below). [0129] (records) is written; land it
+on green CI, then [0130]'s matcher. [0131] needs his call first (below).
+**Dev credits and dev actions were approved for the 11-26/27 session only**; ask again.
+Dev agent runs go through `~/omni-dev-tools/ritual_rerun_dev.sh <tag> <ritual>` (always stops it).
+Judgment calls made unattended: overlay `DECISION_LOG_2026-11-26.md` (both sessions).
 ⛔ Order: server before any client (`server/src/routes/sync.rs` refuses unknown event types).
 Still to watch: [0118] when the next joined transfer's busy leg ages out
 (`~/omni-dev-tools/ws_transfer_dupes_probe.py`). [0119] and [0120] wait for the next release (46).
@@ -20,6 +20,9 @@ the next dev APK on the S9 (the dev phone), never the release on his daily phone
 and check in a capped cgroup are fine, and the mock demo page is the one build exception.
 
 ## ⛔ Waiting on him
+- **[0127] Google Cloud setup, walked through live:** overlay `SETUP.md` § Google Calendar.
+- **[0131] how new names are spotted:** a local pass (free, mixes in apps and places) or a ZDR model
+  (107). Ask with the prep's evidence (`PEOPLE_PREP.md` § First pass).
 - **[0124] prompt texts:** the evening, weekly and monthly prompts in `planning/rituals.rs` are mine.
 - **[0116] hub trial record (92):** how "acted" and "dismissed" are recorded is a design call.
 - **[0128] at the live release (his call, 11-25):** decide how live's startup compaction gets room
