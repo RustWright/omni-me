@@ -1767,6 +1767,87 @@ pub struct PersonView {
     pub decisions: Vec<PersonDecision>,
 }
 
+/// The evening people questions. Mirror of `core::people::questions::Questions`.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct PeopleQuestions {
+    pub open: usize,
+    #[serde(default)]
+    pub cards: Vec<QuestionCard>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QuestionCard {
+    #[serde(default)]
+    pub key: String,
+    pub picker: bool,
+    pub heading: String,
+    pub source: String,
+    #[serde(default)]
+    pub email: bool,
+    #[serde(default)]
+    pub lapses_tonight: bool,
+    #[serde(default)]
+    pub confirms_address: bool,
+    pub rows: Vec<QuestionRow>,
+}
+
+impl QuestionCard {
+    pub fn done(&self) -> bool {
+        self.rows.iter().all(|r| r.answered.is_some())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QuestionRow {
+    pub mention_id: String,
+    pub name: String,
+    pub line: String,
+    #[serde(default)]
+    pub sender: Option<String>,
+    #[serde(default)]
+    pub candidates: Vec<PersonChoice>,
+    #[serde(default)]
+    pub answered: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PersonChoice {
+    pub person_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub context: String,
+}
+
+/// One tap on a question card. Mirror of `core::people::questions::Reply`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PeopleReply {
+    Person {
+        mention_id: String,
+        person_id: String,
+    },
+    NewPerson {
+        mention_id: String,
+    },
+    DontKnow {
+        mention_id: String,
+    },
+    Spelling {
+        mention_id: String,
+        person_id: String,
+        typo: bool,
+    },
+    Undo {
+        mention_id: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct PeopleReplyOutcome {
+    #[serde(default)]
+    pub ask_spelling: bool,
+}
+
 /// Something the assistant has offered to do, waiting on the user.
 ///
 /// Nothing has happened when one of these exists. The assistant has no write

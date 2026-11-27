@@ -46,6 +46,9 @@ pub struct Waiting {
     /// drops any its last summary listed.
     #[serde(default)]
     pub paused: BTreeMap<String, String>,
+    /// People question cards still open, by card key (ruling 104), counted on one line.
+    #[serde(default)]
+    pub people: BTreeSet<String>,
 }
 
 impl Waiting {
@@ -103,6 +106,12 @@ impl Waiting {
         let rituals = crate::planning::rituals::summary_lines(db, config, now).await?;
         w.rituals = rituals.due.into_iter().collect();
         w.paused = rituals.paused.into_iter().collect();
+        if config.enabled(Feature::People) {
+            w.people = crate::people::questions::open_keys(db, config, now)
+                .await?
+                .into_iter()
+                .collect();
+        }
         Ok(w)
     }
 
@@ -115,6 +124,7 @@ impl Waiting {
             && self.over_budget.is_none()
             && self.rituals.is_empty()
             && self.paused.is_empty()
+            && self.people.is_empty()
     }
 
     /// Whether anything is here that the last summary did not list. A changed
@@ -128,6 +138,7 @@ impl Waiting {
             || (self.over_budget.is_some() && self.over_budget != last.over_budget)
             || self.rituals.keys().any(|k| !last.rituals.contains_key(k))
             || self.paused.keys().any(|k| !last.paused.contains_key(k))
+            || !self.people.is_subset(&last.people)
     }
 
     /// Drops the pauses `last` already said: ruling 99 says each once.
@@ -146,6 +157,7 @@ impl Waiting {
             ("over_budget", usize::from(self.over_budget.is_some())),
             ("rituals", self.rituals.len()),
             ("paused", self.paused.len()),
+            ("people", self.people.len()),
         ]
         .into_iter()
         .map(|(k, v)| (k.to_string(), v as u64))
@@ -158,7 +170,10 @@ impl Waiting {
         let finances = self.batches.len() + self.unmatched.len() + self.finance_alerts.len();
         let candidates = [
             (finances, "finances"),
-            (self.suggestions.len() + self.rituals.len(), "assistant"),
+            (
+                self.suggestions.len() + self.rituals.len() + self.people.len(),
+                "assistant",
+            ),
             (self.purge.len(), "archive"),
         ];
         candidates
@@ -192,6 +207,11 @@ impl Waiting {
             lines.push(format!("Archive: {} due for purge", self.purge.len()));
         }
         lines.extend(self.rituals.values().cloned());
+        match self.people.len() {
+            0 => {}
+            1 => lines.push("People: 1 question".to_string()),
+            n => lines.push(format!("People: {n} questions")),
+        }
         lines.extend(self.alerts.values().cloned());
         lines.extend(self.over_budget.clone());
         lines.extend(self.paused.values().cloned());

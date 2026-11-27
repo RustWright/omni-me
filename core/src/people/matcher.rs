@@ -24,7 +24,7 @@ fn spellings(p: &Person) -> impl Iterator<Item = String> + '_ {
         .filter(|s| !s.is_empty())
 }
 
-fn normalise(s: &str) -> String {
+pub(crate) fn normalise(s: &str) -> String {
     s.trim()
         .trim_matches(|c: char| !c.is_alphanumeric())
         .to_lowercase()

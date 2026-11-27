@@ -88,6 +88,37 @@ An email mention carries the sender address. "Unlinked" on any mention from that
 silences it, and undoing the answer (a cleared answer) reopens it. The mention's line is the
 subject, which is what the person view shows as "Last".
 
+## Evening questions
+
+A mention with no answer is asked about in the evening (ruling 104; cards in `design/0102/` § 2).
+`people::questions` builds the cards from local records with no model, so they are asked with the
+assistant down, for the same reason the People tab works without it (ruling 119). They sit behind
+a row at the top of the Assistant tab, and the 19:00 summary counts them on one line that opens
+that tab (ruling 98). The alternative was hanging the cards off the evening shutdown's thread, but
+that thread skips Sundays, pauses after five skips (ruling 99), and exists only once the model has
+answered.
+
+**When.** Today's mentions are asked from the summary hour. Yesterday's stay up all day and lapse
+at midnight, with the line left unlinked: a source gets the evening it was written and one more day.
+Guesses are never asked. "Wrong?" on one rules that person out and opens the mention again, so it
+comes back as a question while it is still in the window.
+
+**Which card.** A mention with a candidate gets a picker: everyone on file by that spelling, plus
+the owner of an email's sender address, less anyone ruled out. Names with no candidate share one
+group card per source. A row keeps its card once answered: the person "new person" made for it, and
+an alias only that mention taught, never count as its candidates. Without that, answering would
+move the row to another card and renumber the set.
+
+| Tap | Evidence written |
+|---|---|
+| A candidate, or someone found in "Someone I know…" | link; on email, the address confirmed too |
+| New person / Someone new | a provisional person with a fixed id per mention, then a link |
+| Don't know | unlinked; on email, the sender's other mail is silenced as well (ruling 137) |
+| The typo question after picking another spelling | alias, hidden for a typo, shown otherwise |
+| Undo | cleared; the confirmed address goes too, unless another answer still names that person |
+
+Undo, then answering "new person" again, reuses the same person, so nothing is left behind.
+
 ## Mention ids
 
 A mention's id is the source, a stable hash of the line, and the name. Re-reading a line adds

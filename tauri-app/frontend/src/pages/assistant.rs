@@ -8,6 +8,7 @@ use dioxus::prelude::*;
 use crate::Tab;
 use crate::bridge;
 use crate::components::nav::{ALL_TABS, tab_label};
+use crate::components::people_questions::PeopleQuestionsView;
 use crate::components::primitives::{
     Banner, BannerKind, Button, ButtonSize, ButtonVariant, Card, PageHeader,
 };
@@ -43,6 +44,8 @@ enum View {
     Memory,
     /// What it is allowed to do without asking.
     Permissions,
+    /// Today's people questions (ruling 104).
+    People,
 }
 
 #[component]
@@ -74,7 +77,7 @@ pub fn AssistantPage() -> Element {
     crate::use_page_back(
         move || match *view.read() {
             View::Threads => 0,
-            View::Thread(_) | View::Inbox | View::Memory | View::Permissions => 1,
+            View::Thread(_) | View::Inbox | View::Memory | View::Permissions | View::People => 1,
         },
         move || go(View::Threads),
     );
@@ -89,7 +92,11 @@ pub fn AssistantPage() -> Element {
                 on_open_inbox: move |_| go(View::Inbox),
                 on_open_memory: move |_| go(View::Memory),
                 on_open_permissions: move |_| go(View::Permissions),
+                on_open_people: move |_| go(View::People),
             }
+        },
+        View::People => rsx! {
+            PeopleQuestionsView { on_back: move |_| go(View::Threads) }
         },
         View::Thread(id) => rsx! {
             ThreadDetail {
@@ -118,8 +125,12 @@ fn ThreadList(
     on_open_inbox: EventHandler<()>,
     on_open_memory: EventHandler<()>,
     on_open_permissions: EventHandler<()>,
+    on_open_people: EventHandler<()>,
 ) -> Element {
     let mut threads = use_signal(Vec::<AssistantThread>::new);
+    // Code-built, so the row shows with the assistant down. A device without People errors,
+    // and the row stays hidden.
+    let mut people_open = use_signal(|| 0usize);
     let mut waiting = use_signal(Vec::<AssistantProposal>::new);
     let mut error_msg = use_signal(|| None::<String>);
     let mut loaded = use_signal(|| false);
@@ -148,6 +159,11 @@ fn ThreadList(
             if let Ok(list) = bridge::invoke_list_assistant_proposals().await {
                 waiting.set(list);
             }
+            people_open.set(
+                bridge::invoke_people_questions()
+                    .await
+                    .map_or(0, |q| q.open),
+            );
             loaded.set(true);
         });
     });
@@ -199,6 +215,18 @@ fn ThreadList(
                         action: "Review".to_string(),
                         accent: true,
                         on_open: move |_| on_open_inbox.call(()),
+                    }
+                }
+
+                if *people_open.read() > 0 {
+                    NoticeRow {
+                        text: match *people_open.read() {
+                            1 => "1 people question".to_string(),
+                            n => format!("{n} people questions"),
+                        },
+                        action: "Answer".to_string(),
+                        accent: true,
+                        on_open: move |_| on_open_people.call(()),
                     }
                 }
 

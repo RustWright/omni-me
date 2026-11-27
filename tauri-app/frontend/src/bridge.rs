@@ -5412,6 +5412,261 @@ mod mock_people {
     }
 }
 
+/// Today's and yesterday's people questions (rulings 104, 118). No model call.
+pub async fn invoke_people_questions() -> Result<crate::types::PeopleQuestions, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(mock_questions::questions())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("people_questions", &Args {}).await
+    }
+}
+
+/// One tap on a question card, Undo included.
+pub async fn invoke_people_reply(
+    reply: crate::types::PeopleReply,
+) -> Result<crate::types::PeopleReplyOutcome, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(mock_questions::reply(&reply))
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {
+            reply: crate::types::PeopleReply,
+        }
+        invoke("people_reply", &Args { reply }).await
+    }
+}
+
+/// "Someone I know…": everyone, closest spelling first.
+pub async fn invoke_people_closest(
+    query: String,
+) -> Result<Vec<crate::types::PersonChoice>, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(mock_questions::closest(&query))
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {
+            query: String,
+        }
+        invoke("people_closest", &Args { query }).await
+    }
+}
+
+/// The design's own three questions (`design/0102/` § 2).
+#[cfg(feature = "mock")]
+mod mock_questions {
+    use crate::types::{
+        PeopleQuestions, PeopleReply, PeopleReplyOutcome, PersonChoice, QuestionCard, QuestionRow,
+    };
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    thread_local! {
+        static ANSWERED: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
+    }
+
+    fn choice(id: &str, name: &str, context: &str) -> PersonChoice {
+        PersonChoice {
+            person_id: id.into(),
+            name: name.into(),
+            context: context.into(),
+        }
+    }
+
+    fn everyone() -> Vec<PersonChoice> {
+        vec![
+            choice(
+                "so",
+                "Sarah Okafor",
+                "Postdoc in my lab. Last: \"Sarah reviewed my ch. 1 draft\", 12 Nov",
+            ),
+            choice(
+                "ss",
+                "Sarah",
+                "My sister. Last: \"Called Sarah about Christmas flights\", 2 Nov",
+            ),
+            choice(
+                "sm",
+                "Shanice Moore",
+                "Housing office. Last: email \"Your housing application\", 28 Oct",
+            ),
+            choice(
+                "rc",
+                "Robert Chen",
+                "Senior engineer at Northwind Labs. Last: \"Coffee with Bobby, he offered to write a reference\", 30 Oct",
+            ),
+            choice(
+                "dl",
+                "Dr. Lee",
+                "Supervisor. Last: task \"Send Dr. Lee the outline\", 18 Nov",
+            ),
+        ]
+    }
+
+    fn row(id: &str, name: &str, line: &str, candidates: Vec<PersonChoice>) -> QuestionRow {
+        QuestionRow {
+            mention_id: id.into(),
+            name: name.into(),
+            line: line.into(),
+            sender: None,
+            candidates,
+            answered: ANSWERED.with(|a| a.borrow().get(id).cloned()),
+        }
+    }
+
+    pub fn questions() -> PeopleQuestions {
+        let all = everyone();
+        let mut email = row(
+            "q2",
+            "Robert Chen",
+            "Hi, Bobby here, following up on the reference you asked about.",
+            vec![all[3].clone()],
+        );
+        email.sender = Some("Robert Chen <rchen@northwind.example>".into());
+        let cards = vec![
+            QuestionCard {
+                key: "q1".into(),
+                picker: true,
+                heading: "Which Sarah?".into(),
+                source: "Your journal, today".into(),
+                email: false,
+                lapses_tonight: false,
+                confirms_address: false,
+                rows: vec![row(
+                    "q1",
+                    "Sarah",
+                    "Lunch with Sarah. She's thinking about leaving the lab before spring.",
+                    all[..2].to_vec(),
+                )],
+            },
+            QuestionCard {
+                key: "q2".into(),
+                picker: true,
+                heading: "Who sent this?".into(),
+                source: "From an email · sender not yet confirmed".into(),
+                email: true,
+                lapses_tonight: false,
+                confirms_address: true,
+                rows: vec![email],
+            },
+            QuestionCard {
+                key: "journal/today".into(),
+                picker: false,
+                heading: "New names in today's journal".into(),
+                source: "Your journal, today".into(),
+                email: false,
+                lapses_tonight: false,
+                confirms_address: false,
+                rows: vec![
+                    row(
+                        "q3",
+                        "Marcus",
+                        "Marcus from the climbing gym lent me his belay device.",
+                        Vec::new(),
+                    ),
+                    row(
+                        "q4",
+                        "Shara",
+                        "Talked to Shara about the conference budget.",
+                        Vec::new(),
+                    ),
+                    row(
+                        "q5",
+                        "Priya",
+                        "Priya's talk on causal inference was the best of the day.",
+                        Vec::new(),
+                    ),
+                ],
+            },
+        ];
+        let open = cards.iter().filter(|c| !c.done()).count();
+        PeopleQuestions { open, cards }
+    }
+
+    fn name_of(id: &str) -> String {
+        everyone()
+            .into_iter()
+            .find(|c| c.person_id == id)
+            .map_or_else(|| "someone".into(), |c| c.name)
+    }
+
+    pub fn reply(reply: &PeopleReply) -> PeopleReplyOutcome {
+        let set = |id: &str, text: String| {
+            ANSWERED.with(|a| a.borrow_mut().insert(id.to_string(), text));
+        };
+        match reply {
+            PeopleReply::Person {
+                mention_id,
+                person_id,
+            } => {
+                let mut text = name_of(person_id);
+                if mention_id == "q2" {
+                    text.push_str(", address confirmed");
+                }
+                set(mention_id, text);
+                // As core does: a spelling not already theirs asks about a typo.
+                let ask = matches!(mention_id.as_str(), "q3" | "q4" | "q5");
+                PeopleReplyOutcome { ask_spelling: ask }
+            }
+            PeopleReply::NewPerson { mention_id } => {
+                set(mention_id, "new person".into());
+                PeopleReplyOutcome::default()
+            }
+            PeopleReply::DontKnow { mention_id } => {
+                set(mention_id, "don't know".into());
+                PeopleReplyOutcome::default()
+            }
+            PeopleReply::Spelling {
+                mention_id,
+                person_id,
+                typo,
+            } => {
+                let who = name_of(person_id);
+                let name = questions()
+                    .cards
+                    .into_iter()
+                    .flat_map(|c| c.rows)
+                    .find(|r| &r.mention_id == mention_id)
+                    .map(|r| r.name)
+                    .unwrap_or_default();
+                let text = if *typo {
+                    format!("{who}, a typo")
+                } else {
+                    format!("{who}, also \"{name}\"")
+                };
+                set(mention_id, text);
+                PeopleReplyOutcome::default()
+            }
+            PeopleReply::Undo { mention_id } => {
+                ANSWERED.with(|a| a.borrow_mut().remove(mention_id));
+                PeopleReplyOutcome::default()
+            }
+        }
+    }
+
+    pub fn closest(query: &str) -> Vec<PersonChoice> {
+        // Not core's Jaro-Winkler: enough to put "Sa…" names first for the render.
+        let q = query.trim().to_lowercase();
+        let mut all = everyone();
+        all.sort_by_key(|c| {
+            let n = c.name.to_lowercase();
+            let shared = n.chars().zip(q.chars()).filter(|(a, b)| a == b).count();
+            std::cmp::Reverse(shared)
+        });
+        all
+    }
+}
+
 /// Accept or decline one proposal. Accepting is what authors the change.
 pub async fn invoke_decide_assistant_proposal(
     proposal_id: &str,

@@ -251,6 +251,7 @@ const SUBSCREENS = {
   assistant: [
     { open: "What it believes about you", back: "Back" },
     { open: "What it may do without asking", back: "Back" },
+    { open: "people questions", back: "Back" },
   ],
 };
 

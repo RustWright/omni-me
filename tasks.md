@@ -115,6 +115,9 @@ builds follow them.
 - [0135] **A new projection replays the whole log through every projection on first launch**
   (verified, `projection.rs` `catch_up` takes the oldest mark): 15 min on the dev agent when
   `people` arrived (11-27). Phones pay it on the release carrying [0129]; fix or accept first. [S–M]
+- [0136] **Leaving Journal before the editor bundle loads kills the wasm** (seen in the mock render,
+  11-27): `destroyEditor` is called before `editor.rs`'s lazy inject defines it, and the app
+  panics. Guard the call on the function existing; check whether the device app can hit it. [S]
 - [0119] **A currency conversion arrived as two one-sided rows** (his report, Nov 22 USD to CAD): the
   money-transfer source reports each side per balance under one reference. Fixed: joined after dedup, target leg priced
   (overlay `a9d79e4`); next release. The Nov 22 one was merged on live by script. [XS]

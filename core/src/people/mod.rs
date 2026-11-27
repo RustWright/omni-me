@@ -3,6 +3,7 @@
 
 pub mod finding;
 pub mod matcher;
+pub mod questions;
 pub mod records;
 pub mod view;
 

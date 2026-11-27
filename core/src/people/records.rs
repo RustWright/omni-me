@@ -210,6 +210,8 @@ pub async fn everyone(db: &Database) -> Result<Vec<Person>, String> {
         .into_values()
         .filter(|p| !p.provisional || p.mentions > 0)
         .map(|mut p| {
+            // A second mention settles a new person as his confirmation does (ruling 118).
+            p.provisional &= p.mentions < 2;
             p.merged.sort();
             p.addresses.sort();
             p
@@ -337,6 +339,14 @@ mod tests {
         assert!(everyone(&db).await.unwrap().is_empty());
         answer(&w, &m, link("marcus"), false).await;
         assert_eq!(everyone(&db).await.unwrap()[0].name, "Marcus");
+        assert!(everyone(&db).await.unwrap()[0].provisional);
+
+        let again = mention(&w, "2026-11-21", "Climbed with Marcus.", "Marcus").await;
+        answer(&w, &again, link("marcus"), true).await;
+        assert!(
+            !everyone(&db).await.unwrap()[0].provisional,
+            "a second mention settles them"
+        );
     }
 
     #[tokio::test]

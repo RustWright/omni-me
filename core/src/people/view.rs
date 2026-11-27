@@ -224,6 +224,36 @@ async fn resolver(db: &Database) -> Result<impl Fn(&str) -> String, String> {
     Ok(move |id: &str| map.get(id).cloned().unwrap_or_else(|| id.to_string()))
 }
 
+/// Each person's context line on a question card (ruling 104): what they are, then where they
+/// last came up.
+pub(super) async fn contexts(
+    db: &Database,
+    people: &[Person],
+) -> Result<HashMap<String, String>, String> {
+    let all = linked(db).await?;
+    let resolve = resolver(db).await?;
+    Ok(people
+        .iter()
+        .map(|p| {
+            let last = of(p, &all, &resolve).first().map(|l| {
+                let when = l.date.map(day).unwrap_or_default();
+                let kind = match l.kind.as_str() {
+                    "journal" | "" => String::new(),
+                    k => format!("{k} "),
+                };
+                format!("Last: {kind}\"{}\", {when}", l.line.trim())
+            });
+            let line = match (about(p), last) {
+                (Some(a), Some(l)) => format!("{}. {l}", a.trim_end_matches('.')),
+                (Some(a), None) => a,
+                (None, Some(l)) => l,
+                (None, None) => "No mentions yet".to_string(),
+            };
+            (p.id.clone(), line)
+        })
+        .collect())
+}
+
 /// The People tab: everyone, most recent interaction first, or the search's order for a query.
 pub async fn list(db: &Database, query: &str) -> Result<PeopleList, String> {
     let everyone = records::everyone(db).await?;
