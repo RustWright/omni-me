@@ -5255,12 +5255,30 @@ mod mock_people {
     fn rows() -> Vec<PersonRow> {
         vec![
             // Most recent first, as core orders them.
-            row("so", "Sarah Okafor", false, "Postdoc in my lab", "journal, 19 Nov"),
+            row(
+                "so",
+                "Sarah Okafor",
+                false,
+                "Postdoc in my lab",
+                "journal, 19 Nov",
+            ),
             row("mg", "Marcus", true, "Climbing gym", "journal, 19 Nov"),
             row("dl", "Dr. Lee", false, "Supervisor", "task, 18 Nov"),
-            row("rc", "Robert Chen", false, "Senior engineer at Northwind Labs", "email, 16 Nov"),
+            row(
+                "rc",
+                "Robert Chen",
+                false,
+                "Senior engineer at Northwind Labs",
+                "email, 16 Nov",
+            ),
             row("ss", "Sarah", false, "My sister", "journal, 2 Nov"),
-            row("sm", "Shanice Moore", false, "Housing office", "email, 28 Oct"),
+            row(
+                "sm",
+                "Shanice Moore",
+                false,
+                "Housing office",
+                "email, 28 Oct",
+            ),
         ]
     }
 
@@ -5316,9 +5334,19 @@ mod mock_people {
                 ],
                 "Appears in 14 emails, 3 journal entries",
                 vec![
-                    decision("\"Bobby\" in your journal is this person", "you, 30 Oct", false, "m1"),
+                    decision(
+                        "\"Bobby\" in your journal is this person",
+                        "you, 30 Oct",
+                        false,
+                        "m1",
+                    ),
                     decision("An email of 14 Nov linked to them", "automatic", true, "m2"),
-                    decision("\"Bob\" is another name for them", "you, 2 Nov", false, "m3"),
+                    decision(
+                        "\"Bob\" is another name for them",
+                        "you, 2 Nov",
+                        false,
+                        "m3",
+                    ),
                 ],
             )
         } else {
@@ -5328,14 +5356,21 @@ mod mock_people {
                 "journal \"Lunch with Sarah.\", 19 Nov",
                 Vec::new(),
                 "Appears in 1 journal entry",
-                vec![decision("\"Sarah\" in your journal is this person", "you, 19 Nov", false, "m9")],
+                vec![decision(
+                    "\"Sarah\" in your journal is this person",
+                    "you, 19 Nov",
+                    false,
+                    "m9",
+                )],
             )
         };
         // As core does: Wrong? leaves a "not this person" line with its own Undo.
         let decisions = UNDONE.with(|u| {
             let u = u.borrow();
-            let mut out: Vec<PersonDecision> =
-                decisions.into_iter().filter(|d| !u.contains(&d.undo)).collect();
+            let mut out: Vec<PersonDecision> = decisions
+                .into_iter()
+                .filter(|d| !u.contains(&d.undo))
+                .collect();
             for undone in u.iter() {
                 if let PersonUndo::Wrong {
                     mention_id,

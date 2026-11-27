@@ -1720,10 +1720,21 @@ pub struct FactLine {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PersonUndo {
-    Answer { mention_id: String },
-    Wrong { mention_id: String, person_id: String },
-    Address { address: String, person_id: String },
-    Exclusion { mention_id: String, person_id: String },
+    Answer {
+        mention_id: String,
+    },
+    Wrong {
+        mention_id: String,
+        person_id: String,
+    },
+    Address {
+        address: String,
+        person_id: String,
+    },
+    Exclusion {
+        mention_id: String,
+        person_id: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

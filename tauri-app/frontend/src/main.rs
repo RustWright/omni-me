@@ -1170,7 +1170,7 @@ mod tab_visibility_tests {
     #[test]
     fn all_tabs_show_by_default() {
         let features = Features::default();
-        assert_eq!(components::nav::ALL_TABS.len(), 8);
+        assert_eq!(components::nav::ALL_TABS.len(), 9);
         for tab in components::nav::ALL_TABS {
             assert!(tab.visible(&features), "{} hidden by default", tab.as_key());
         }
@@ -1243,7 +1243,7 @@ mod tab_visibility_tests {
         assert_eq!(
             visible,
             vec![
-                "journal", "notes", "routines", "finances", "archive", "plan", "settings"
+                "journal", "notes", "routines", "finances", "archive", "plan", "people", "settings"
             ]
         );
     }
