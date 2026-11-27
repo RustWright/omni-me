@@ -641,8 +641,9 @@ mod email {
         sha256: Option<String>,
     }
 
-    /// Archived emails filed since `since` and not read before, their senders read off the
-    /// stored message. Mail dated before `since` (an older-mail backfill) is marked read and
+    /// Archived emails the importer fetched since `since` and not read before, their senders
+    /// read off the stored message. Never an uploaded `.eml`: its topmost header is the file's
+    /// own word, not a provider's. Mail dated before `since` (an older-mail backfill) is marked read and
     /// gets nothing: ruling 106.
     pub(super) async fn senders(
         db: &Database,
@@ -654,6 +655,7 @@ mod email {
             .query(
                 "SELECT document_id, sha256 FROM documents
                  WHERE mime_type IN ['message/rfc822', 'message/global']
+                    AND ingest_source = 'email'
                     AND parent_document_id IS NONE AND purged != true
                     AND archived_at >= type::datetime($since)",
             )

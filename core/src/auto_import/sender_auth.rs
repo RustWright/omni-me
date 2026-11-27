@@ -76,6 +76,8 @@ pub fn verdict(header: Option<&str>) -> SenderAuth {
 
 /// Whether the provider vouches for `address` itself: DMARC passed, and every `header.from` it
 /// names is that address's domain. The gate for a confident people link (ruling 103).
+/// It trusts the topmost header to be the provider's, true of Gmail; a provider that stamps none
+/// leaves a sender's forged header on top, and this would believe it.
 pub fn vouches_for(header: Option<&str>, address: &str) -> bool {
     let Some(domain) = address
         .rsplit_once('@')
@@ -83,16 +85,47 @@ pub fn vouches_for(header: Option<&str>, address: &str) -> bool {
     else {
         return false;
     };
-    let Some(clean) = header.and_then(without_comments) else {
+    let Some(raw) = header else {
         return false;
     };
-    let froms: Vec<&str> = clean
-        .split(|c: char| c.is_whitespace() || c == ';')
+    if comment_carries_structure(raw) {
+        return false;
+    }
+    let Some(clean) = without_comments(raw) else {
+        return false;
+    };
+    // Exactly one DMARC result, passing, naming this domain in its own entry.
+    let dmarc: Vec<&str> = clean
+        .split(';')
+        .map(str::trim)
+        .filter(|r| r.starts_with("dmarc"))
+        .collect();
+    let [entry] = dmarc.as_slice() else {
+        return false;
+    };
+    let froms: Vec<&str> = entry
+        .split_whitespace()
         .filter_map(|t| t.strip_prefix("header.from="))
         .collect();
     verdict(header) == SenderAuth::Authenticated
+        && results_for(entry, "dmarc") == [true]
         && !froms.is_empty()
         && froms.iter().all(|f| *f == domain)
+}
+
+/// A `;` or `"` inside a comment: provider comments carry neither, but a quoted envelope address
+/// can, and the gate fails closed on anything shaped like a breakout.
+fn comment_carries_structure(header: &str) -> bool {
+    let mut depth: usize = 0;
+    for c in header.chars() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            ';' | '"' | '\\' if depth > 0 => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 /// The header lowercased with RFC 7601 comments removed, or `None` when its parentheses do not
@@ -284,6 +317,26 @@ mod tests {
             "a@vendor.example"
         ));
         assert!(!vouches_for(None, "a@vendor.example"));
+        assert!(
+            !vouches_for(
+                Some(
+                    "mx.google.com; dmarc=pass header.from=vendor.example; \
+                      dmarc=pass header.from=vendor.example"
+                ),
+                "a@vendor.example"
+            ),
+            "two DMARC results are one too many"
+        );
+        assert!(
+            !vouches_for(
+                Some(
+                    "mx.google.com; spf=pass (domain of \"a b\"@x.example) \
+                      smtp.mailfrom=x.example; dmarc=pass header.from=vendor.example"
+                ),
+                "a@vendor.example"
+            ),
+            "a quoted address in a comment fails closed"
+        );
     }
 
     #[test]
