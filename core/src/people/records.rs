@@ -267,6 +267,7 @@ mod tests {
             source,
             line: line.into(),
             name: name.into(),
+            address: None,
         };
         append(w, EventType::MentionRecorded, &id, &p)
             .await

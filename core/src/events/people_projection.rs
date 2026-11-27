@@ -44,6 +44,9 @@ impl Projection for PeopleProjection {
              DEFINE FIELD IF NOT EXISTS date ON people_mentions TYPE string;
              DEFINE FIELD IF NOT EXISTS line ON people_mentions TYPE string;
              DEFINE FIELD IF NOT EXISTS name ON people_mentions TYPE string;
+             DEFINE FIELD IF NOT EXISTS address ON people_mentions TYPE option<string>;
+             DEFINE INDEX IF NOT EXISTS idx_people_mention_address ON people_mentions
+                 FIELDS address;
 
              -- One row per mention: the answer in force. Cleared answers are kept as rows.
              DEFINE TABLE IF NOT EXISTS people_answers SCHEMAFULL;
@@ -123,7 +126,8 @@ impl Projection for PeopleProjection {
                 };
                 db.query(
                     "UPSERT type::record('people_mentions', $id) SET source_kind = $kind,
-                        source_id = $source_id, date = $date, line = $line, name = $name",
+                        source_id = $source_id, date = $date, line = $line, name = $name,
+                        address = $address",
                 )
                 .bind(("id", p.mention_id))
                 .bind(("kind", source_kind(p.source.kind)))
@@ -131,6 +135,7 @@ impl Projection for PeopleProjection {
                 .bind(("date", p.source.date.to_string()))
                 .bind(("line", p.line))
                 .bind(("name", p.name))
+                .bind(("address", p.address.map(|a| a.trim().to_lowercase())))
                 .await?
                 .check()?;
             }

@@ -526,6 +526,7 @@ mod tests {
             source,
             line: "Robert Chen <rc@example.com>".into(),
             name: "Robert Chen".into(),
+            address: Some("rc@example.com".into()),
         };
         append(&w, EventType::MentionRecorded, "m1", &m)
             .await

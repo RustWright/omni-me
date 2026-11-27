@@ -20,6 +20,8 @@ pub enum MimeError {
 #[derive(Debug, Clone)]
 pub struct ParsedMessage {
     pub from: String,
+    /// The From display name, empty when there is none. The sender's to choose (ruling 103).
+    pub from_name: String,
     pub subject: String,
     pub date: Option<DateTime<Utc>>,
     /// Plain-text view of the body. `mail-parser` falls back from text/plain
@@ -79,6 +81,13 @@ pub fn parse_eml(bytes: &[u8]) -> Result<ParsedMessage, MimeError> {
         .and_then(|a| a.first())
         .and_then(|a| a.address())
         .unwrap_or("")
+        .to_string();
+    let from_name = msg
+        .from()
+        .and_then(|a| a.first())
+        .and_then(|a| a.name())
+        .unwrap_or("")
+        .trim()
         .to_string();
     let subject = msg.subject().unwrap_or("").to_string();
     let date = msg.date().and_then(|d| {
@@ -148,6 +157,7 @@ pub fn parse_eml(bytes: &[u8]) -> Result<ParsedMessage, MimeError> {
 
     Ok(ParsedMessage {
         from,
+        from_name,
         subject,
         date,
         body_text,
@@ -267,6 +277,7 @@ mod tests {
     fn find_attachment_is_case_insensitive() {
         let parsed = ParsedMessage {
             from: String::new(),
+            from_name: String::new(),
             subject: String::new(),
             date: None,
             body_text: String::new(),
@@ -289,6 +300,7 @@ mod tests {
     fn the_two_attachment_views_differ_on_an_inline_part() {
         let parsed = ParsedMessage {
             from: String::new(),
+            from_name: String::new(),
             subject: String::new(),
             date: None,
             body_text: String::new(),

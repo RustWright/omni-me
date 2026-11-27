@@ -53,6 +53,40 @@ Mail text, display names and signatures never make a confident match (ruling 103
 address you confirmed, on mail that passed sender authentication, links by itself. Confirming an
 address is its own event, written when you link an email mention.
 
+## Finding mentions
+
+A server job (`people::finding`) runs every 15 minutes over yesterday's and today's sources:
+journal lines, task titles and notes (ruling 124), and the senders of archived email. Each
+source line is read once, tracked by a hash of its text, so an edited line is read again as a
+new line and a guess you undid is never made again from the same line. Older sources get no
+mention here. They wait for the seed import, since a question about them would arrive after the
+evening window has closed (ruling 106).
+
+**Known names are matched locally, new names by role D** (ruling 136). The local pass takes runs
+of up to three capitalised words that name someone on file, by full name, one word of it, or an
+alias, preferring the longest. A lowercase word never matches, so "will" in prose stays a word.
+Role D, the zero-retention seat (107), reads the same lines and lists every person they name.
+A name the line does not contain is treated as invented and dropped. When exactly one person on
+file has that spelling, the mention gets a guessed link; otherwise it waits for the evening
+question. A failed model call records nothing and marks nothing read, so the lines are read
+again next run.
+
+**Email: only a person's mail is a mention** (ruling 137). The mailbox is mostly vendors, and
+asking about each of them every evening would drown the real questions.
+
+| Sender | Result |
+|---|---|
+| A confirmed address, on mail that passed sender authentication | mention, guessed link (103) |
+| A confirmed address, on mail that failed authentication | mention, asked |
+| An address silenced by "unlinked" | nothing |
+| A display name matching someone on file | mention, asked (a display name is never confident) |
+| Any other display name | role D says whether it is a person; if so, a mention, asked |
+| No display name | nothing |
+
+An email mention carries the sender address. "Unlinked" on any mention from that address
+silences it, and undoing the answer (a cleared answer) reopens it. The mention's line is the
+subject, which is what the person view shows as "Last".
+
 ## Mention ids
 
 A mention's id is the source, a stable hash of the line, and the name. Re-reading a line adds

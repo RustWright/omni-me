@@ -1,6 +1,7 @@
 //! People: the mention index and confirmed facts (rulings 101, 102). The model and why it is
 //! shaped this way: `docs/src/people.md`.
 
+pub mod finding;
 pub mod matcher;
 pub mod records;
 pub mod view;
@@ -56,6 +57,10 @@ pub struct MentionRecordedPayload {
     pub line: String,
     /// The name as written in the line.
     pub name: String,
+    /// An email's sender address, lowercased; `None` for other sources. An unlinked answer on
+    /// any mention with this address silences it (ruling 137, RULINGS.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address: Option<String>,
 }
 
 /// How a mention is resolved (ruling 104). The latest per mention wins.
@@ -173,7 +178,7 @@ pub fn mention_id(source: &SourceRef, line: &str, name: &str) -> String {
 }
 
 /// Stable across builds and platforms, unlike `DefaultHasher`: ids are stored.
-fn fnv1a(s: &str) -> u64 {
+pub(crate) fn fnv1a(s: &str) -> u64 {
     s.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| {
         (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
     })

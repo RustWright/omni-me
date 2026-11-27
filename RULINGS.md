@@ -414,3 +414,8 @@ edit site carries their reasoning. These are settled. Do not re-open one without
   reading each new journal entry. Known names and aliases are matched locally, with no model. A
   local capitalised-word pass was the alternative: free, but the prep found it mixes in apps,
   places and ordinary words ("Will", "Long"), each one a tap on the evening card.
+- **137.** An email is a people mention only when its sender is a person: a display name matching
+  someone on file, or one role D judges a person's rather than an organisation's. Vendor and
+  institution mail is never asked about, though the mailbox is mostly that. "Unlinked" on an email
+  mention silences that sender address until he undoes it. A confirmed address on mail passing
+  sender authentication links as a guess (103). Every sender asked about was the alternative.

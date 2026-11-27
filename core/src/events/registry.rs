@@ -173,7 +173,8 @@ pub fn build_projections_server() -> Vec<Box<dyn Projection>> {
     // Notes and budget: receipt import checks accounts against them, or all land in Unknown.
     // Config: skip-senders and the zone. Auto-import: the triage scorecard. Assistant: the
     // daily summary's pending count. Tasks: hub intake and the handover receipt. Routines: the
-    // journal-tick job (ruling 127). Calendar: the 15-minute read and the plans (113).
+    // journal-tick job (ruling 127). Calendar: the 15-minute read and the plans (113). People:
+    // the mention job (136).
     vec![
         Box::new(ConfigProjection),
         Box::new(AssistantProjection),
@@ -185,6 +186,7 @@ pub fn build_projections_server() -> Vec<Box<dyn Projection>> {
         Box::new(TasksProjection),
         Box::new(RoutinesProjection),
         Box::new(PlanningProjection),
+        Box::new(PeopleProjection),
     ]
 }
 
@@ -240,6 +242,10 @@ mod tests {
         assert!(
             names.contains(&PlanningProjection::NAME),
             "the calendar read diffs against its table: {names:?}"
+        );
+        assert!(
+            names.contains(&PeopleProjection::NAME),
+            "the mention job matches against people on file: {names:?}"
         );
     }
 

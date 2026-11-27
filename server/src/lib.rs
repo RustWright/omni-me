@@ -553,6 +553,51 @@ pub async fn run(cfg: RunConfig) {
             }
         });
     }
+    // People mentions in journal lines, task text and email senders. Known names match with no
+    // model; new names are role D's, so without a model only known names are found. Rulings
+    // 124, 136, 137.
+    {
+        let (db, writer, blob_dir) = (
+            (*state.db).clone(),
+            enrich_writer.clone(),
+            (*state.blob_dir).clone(),
+        );
+        let llm = (state.llm_client.model_name() != "none").then(|| state.llm_client.clone());
+        tokio::spawn(async move {
+            use omni_me_core::people::finding;
+            if let Err(e) = finding::init_schema(&db).await {
+                tracing::error!(error = %e, "people mentions: no state table; job off");
+                return;
+            }
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(15 * 60));
+            loop {
+                tick.tick().await;
+                let config = match omni_me_core::events::load_shared(&db).await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "people mentions: no config; skipped");
+                        continue;
+                    }
+                };
+                if !config.enabled(omni_me_core::config::Feature::People) {
+                    continue;
+                }
+                let tz = omni_me_core::assistant::scheduled::user_timezone(&config);
+                let today = chrono::Utc::now().with_timezone(&tz).date_naive();
+                let seat = llm.as_deref();
+                match finding::run(&db, &writer, seat, Some(blob_dir.as_path()), today, tz).await {
+                    Ok(r) if r.lines_read == 0 => {}
+                    Ok(r) => tracing::info!(
+                        lines = r.lines_read,
+                        mentions = r.mentions,
+                        guessed = r.guessed,
+                        "people mentions: sources read"
+                    ),
+                    Err(e) => tracing::warn!(error = %e, "people mentions: run failed"),
+                }
+            }
+        });
+    }
     // The calendar, read every 15 minutes. Ruling 113.
     match state.calendar.clone() {
         Some(reader) => {
