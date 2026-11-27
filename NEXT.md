@@ -4,11 +4,10 @@
 live in `RULINGS.md`, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`), rationale in
 `docs/src/` and at the edit site. ⛔ If a line here could be derived from those, cut it.
 
-## ▶ NEXT ACTION — [0124]'s seat call, then [0127] with him (his order, 11-25)
+## ▶ NEXT ACTION — [0127] with him, then [0110] (his order, 11-25)
 **Dev credits and dev actions were approved for the 11-25/26 session only**; ask again.
-1. [0124]: his call on the rituals' seat (`tasks.md` [0124]); rerun the weekly with
-   `~/omni-dev-tools/ritual_rerun_dev.sh`, which always stops the agent.
-2. [0116]'s remainder needs him (`tasks.md` [0116]); [0127] with him; [0110] after.
+[0124] and [0116] are built and checked on dev; what is left of each is his (below). Dev agent runs
+go through `~/omni-dev-tools/ritual_rerun_dev.sh <tag> <ritual>`, which always stops the agent.
 Dev server runs `dev-6284c3e-88999a0` (deployed 11-26, healthy at 365 MiB); the S9 runs 1.2.11-dev.
 Judgment calls made unattended: overlay `DECISION_LOG_2026-11-26.md`.
 ⛔ Order: server before any client (`server/src/routes/sync.rs` refuses unknown event types).
@@ -21,11 +20,10 @@ the next dev APK on the S9 (the dev phone), never the release on his daily phone
 and check in a capped cgroup are fine, and the mock demo page is the one build exception.
 
 ## ⛔ Waiting on him
-- **[0124] the rituals' seat:** dev's Batch model stalls on the weekly (`tasks.md` [0124]).
+- **[0124] prompt texts:** the evening, weekly and monthly prompts in `planning/rituals.rs` are mine.
 - **[0116] hub trial record (92):** how "acted" and "dismissed" are recorded is a design call.
 - **[0128] at the live release (his call, 11-25):** decide how live's startup compaction gets room
   (planned off-box compaction, a bigger box, or leave it); options in `tasks.md` [0128].
-- **[0124] prompt texts:** the evening, weekly and monthly prompts in `planning/rituals.rs` are mine.
 - **[0123] on live:** his go to seed places and set Settings → Planning (`tasks.md` [0123]).
 - **Public history:** an earlier public `NEXT.md` named part of his email and a contact; this
   rewrite drops both, but history keeps them. His call whether that matters.

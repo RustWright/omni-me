@@ -41,10 +41,9 @@ builds follow them.
   also set Settings → Planning (bedtime, morning and evening routine names). [XS]
 - [0124] **Rituals, summary lines, load, goals: built** (`456814a`..`58ee6f1`, `docs/src/planning.md`
   § The other rituals, § Goals; goals are ruling 134). 11-26 dev runs fixed routing (`1820d85`),
-  the brief's gaps (`fc48313`..`2ee3757`) and the Batch budget (`34d2d20`); overlay decision log.
-  Left: dev's Batch seat (Qwen, ~18 tok/s) stalls on the weekly's opening call 3 runs in 4: his
-  seat call, then rerun with `~/omni-dev-tools/ritual_rerun_dev.sh <tag> weekly_plan`; then his
-  read of the prompt texts in `planning/rituals.rs`. [S]
+  the brief's gaps (`fc48313`..`2ee3757`), and the seat: interactive, ruling 135, measured in
+  `MODEL_BENCH.md` Part 11 (`7901110`); the weekly then answered in 5 s, all 8 items asked about.
+  Left: his read of the prompt texts in `planning/rituals.rs`, and a monthly review on a real 1st. [S]
 - [0127] **Google connector (overlay, 133):** read-only OAuth, window snapshots, both calendars. Needs
   his Google Cloud setup, walked through live when this slice starts. Also wires the server's
   15-minute read (113) through `RunConfig`, since the public server has no source, and the fresh
