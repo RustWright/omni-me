@@ -88,7 +88,7 @@ pub fn vouches_for(header: Option<&str>, address: &str) -> bool {
     let Some(raw) = header else {
         return false;
     };
-    if comment_carries_structure(raw) {
+    if carries_structure(raw) {
         return false;
     }
     let Some(clean) = without_comments(raw) else {
@@ -113,15 +113,17 @@ pub fn vouches_for(header: Option<&str>, address: &str) -> bool {
         && froms.iter().all(|f| *f == domain)
 }
 
-/// A `;` or `"` inside a comment: provider comments carry neither, but a quoted envelope address
-/// can, and the gate fails closed on anything shaped like a breakout.
-fn comment_carries_structure(header: &str) -> bool {
+/// A quote or backslash anywhere, or a `;` inside a comment. The provider writes none of them,
+/// but a quoted envelope address can carry all three, in a comment or in `smtp.mailfrom`, and
+/// the gate fails closed on anything shaped like a breakout.
+fn carries_structure(header: &str) -> bool {
     let mut depth: usize = 0;
     for c in header.chars() {
         match c {
+            '"' | '\\' => return true,
             '(' => depth += 1,
             ')' => depth = depth.saturating_sub(1),
-            ';' | '"' | '\\' if depth > 0 => return true,
+            ';' if depth > 0 => return true,
             _ => {}
         }
     }
@@ -336,6 +338,16 @@ mod tests {
                 "a@vendor.example"
             ),
             "a quoted address in a comment fails closed"
+        );
+        assert!(
+            !vouches_for(
+                Some(
+                    "mx.google.com; spf=pass \
+                      smtp.mailfrom=\"x; dmarc=pass header.from=vendor.example ;\"@evil.example"
+                ),
+                "a@vendor.example"
+            ),
+            "a quoted address outside a comment fails closed too"
         );
     }
 
