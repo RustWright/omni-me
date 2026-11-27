@@ -150,7 +150,7 @@ pub struct FactRetractedPayload {
 }
 
 /// `from` now resolves to `into`, or, with `into: None`, to itself again. `aggregate_id` is
-/// `from`. Nothing attached to `from` is rewritten (`docs/src/people.md` § Merge).
+/// `from`. Nothing attached to `from` is rewritten (`docs/src/people.md` § Merge is a mapping).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PersonMergeSetPayload {
     pub from: String,
