@@ -11,6 +11,7 @@
 - [Turning features off](features.md)
 - [The assistant](assistant.md)
 - [Planning](planning.md)
+- [People](people.md)
 - [How the agents are composed](agents.md)
 - [Reading documents](extraction.md)
 - [What counts as one purchase](auto-import.md)

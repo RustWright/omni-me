@@ -835,7 +835,7 @@ blocked_by = ["omni-me-0123"]
 [[task]]
 id     = "omni-me-0127"
 title  = "Google Calendar connector in the overlay"
-status = "todo"
+status = "doing"
 size   = "M"
 ref    = "tasks.md § Cycle 6"
 
@@ -853,6 +853,53 @@ status = "todo"
 size   = "L"
 ref    = "tasks.md § Cycle 6"
 blocked_by = ["omni-me-0108"]
+
+[[task]]
+id     = "omni-me-0129"
+title  = "People records: events, projection, merge mapping"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Cycle 6"
+
+[[task]]
+id     = "omni-me-0130"
+title  = "People name matcher: text and spelling closeness"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § Cycle 6"
+blocked_by = ["omni-me-0129"]
+
+[[task]]
+id     = "omni-me-0131"
+title  = "Finding people mentions in journal, tasks, mail"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Cycle 6"
+blocked_by = ["omni-me-0130"]
+
+[[task]]
+id     = "omni-me-0132"
+title  = "Evening people questions: picker and group cards"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Cycle 6"
+blocked_by = ["omni-me-0131"]
+
+[[task]]
+id     = "omni-me-0133"
+title  = "Person view and People tab"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Cycle 6"
+blocked_by = ["omni-me-0130"]
+
+[[task]]
+id     = "omni-me-0134"
+title  = "Assistant person lookup and fact proposals"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Cycle 6"
+blocked_by = ["omni-me-0129"]
 
 [[task]]
 id     = "omni-me-0111"
