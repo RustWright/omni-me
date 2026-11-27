@@ -470,7 +470,7 @@ async fn read_tasks(
 #[cfg(feature = "auto-import")]
 mod email {
     use super::*;
-    use crate::auto_import::sender_auth::{self, SenderAuth};
+    use crate::auto_import::sender_auth;
 
     /// One email's sender, as the job reads it.
     #[derive(Debug, Clone, PartialEq)]
@@ -481,7 +481,7 @@ mod email {
         pub address: String,
         pub display_name: String,
         pub subject: String,
-        /// DMARC (or, without it, DKIM or SPF) passed at his provider (`sender_auth`).
+        /// His provider's DMARC passed for this address's own domain (`sender_auth::vouches_for`).
         pub authenticated: bool,
     }
 
@@ -691,14 +691,17 @@ mod email {
                 mark_read(db, &key).await?;
                 continue;
             }
+            let address = parsed.from.trim().to_lowercase();
             out.push(Sender {
                 document_id: row.document_id,
                 date: sent.with_timezone(&tz).date_naive(),
-                address: parsed.from.trim().to_lowercase(),
+                authenticated: sender_auth::vouches_for(
+                    parsed.authentication_results.as_deref(),
+                    &address,
+                ),
+                address,
                 display_name: parsed.from_name,
                 subject: parsed.subject,
-                authenticated: sender_auth::verdict(parsed.authentication_results.as_deref())
-                    == SenderAuth::Authenticated,
             });
         }
         Ok(out)
