@@ -41,6 +41,7 @@ pub mod llm;
 pub mod mime;
 pub mod notify;
 pub mod paths;
+pub mod people;
 pub mod planning;
 pub mod preprocess;
 pub mod purge;

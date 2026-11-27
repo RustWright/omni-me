@@ -12,8 +12,8 @@ use crate::journal_file::JournalFile;
 
 use super::{
     AssistantProjection, AutoImportProjection, BeliefsProjection, BudgetProjection,
-    ConfigProjection, DocumentsProjection, NotesProjection, PlanningProjection, Projection,
-    RecordTypeProjection, RetentionProjection, RoutinesProjection, TasksProjection,
+    ConfigProjection, DocumentsProjection, NotesProjection, PeopleProjection, PlanningProjection,
+    Projection, RecordTypeProjection, RetentionProjection, RoutinesProjection, TasksProjection,
 };
 
 /// Projections that are never feature-gated.
@@ -37,6 +37,7 @@ pub const ALL_PROJECTIONS: &[&str] = &[
     RetentionProjection::NAME,
     TasksProjection::NAME,
     PlanningProjection::NAME,
+    PeopleProjection::NAME,
 ];
 
 /// The projections a feature owns. Non-obvious entries:
@@ -59,6 +60,7 @@ pub fn owned_projections(feature: Feature) -> &'static [&'static str] {
         Feature::Documents => &[DocumentsProjection::NAME, RetentionProjection::NAME],
         Feature::Tasks => &[TasksProjection::NAME],
         Feature::Planning => &[PlanningProjection::NAME],
+        Feature::People => &[PeopleProjection::NAME],
     }
 }
 
@@ -105,6 +107,7 @@ fn all_projections(journal_path: PathBuf) -> Vec<Box<dyn Projection>> {
         Box::new(RetentionProjection),
         Box::new(TasksProjection),
         Box::new(PlanningProjection),
+        Box::new(PeopleProjection),
     ]
 }
 
@@ -290,6 +293,7 @@ mod tests {
             RetentionProjection.name(),
             TasksProjection.name(),
             PlanningProjection.name(),
+            PeopleProjection.name(),
         ];
         let listed: BTreeSet<&str> = ALL_PROJECTIONS.iter().copied().collect();
         let actual: BTreeSet<&str> = live.iter().copied().collect();

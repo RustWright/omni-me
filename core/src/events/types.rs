@@ -128,6 +128,16 @@ pub enum EventType {
     BlockTimerStopped,
     // The month's goals, set by the monthly review (rulings 98, 110).
     MonthGoalsSet,
+    // People: the mention index, answers about it, and confirmed facts (rulings 102-104, 128).
+    PersonAdded,
+    PersonUpdated,
+    MentionRecorded,
+    MentionAnswered,
+    MentionExcluded,
+    AddressConfirmed,
+    FactRecorded,
+    FactRetracted,
+    PersonMergeSet,
 }
 
 impl fmt::Display for EventType {
@@ -209,6 +219,15 @@ impl fmt::Display for EventType {
             EventType::BlockTimerPaused => "block_timer_paused",
             EventType::BlockTimerStopped => "block_timer_stopped",
             EventType::MonthGoalsSet => "month_goals_set",
+            EventType::PersonAdded => "person_added",
+            EventType::PersonUpdated => "person_updated",
+            EventType::MentionRecorded => "mention_recorded",
+            EventType::MentionAnswered => "mention_answered",
+            EventType::MentionExcluded => "mention_excluded",
+            EventType::AddressConfirmed => "address_confirmed",
+            EventType::FactRecorded => "fact_recorded",
+            EventType::FactRetracted => "fact_retracted",
+            EventType::PersonMergeSet => "person_merge_set",
         };
         write!(f, "{s}")
     }
@@ -295,6 +314,15 @@ impl FromStr for EventType {
             "block_timer_paused" => Ok(EventType::BlockTimerPaused),
             "block_timer_stopped" => Ok(EventType::BlockTimerStopped),
             "month_goals_set" => Ok(EventType::MonthGoalsSet),
+            "person_added" => Ok(EventType::PersonAdded),
+            "person_updated" => Ok(EventType::PersonUpdated),
+            "mention_recorded" => Ok(EventType::MentionRecorded),
+            "mention_answered" => Ok(EventType::MentionAnswered),
+            "mention_excluded" => Ok(EventType::MentionExcluded),
+            "address_confirmed" => Ok(EventType::AddressConfirmed),
+            "fact_recorded" => Ok(EventType::FactRecorded),
+            "fact_retracted" => Ok(EventType::FactRetracted),
+            "person_merge_set" => Ok(EventType::PersonMergeSet),
             other => Err(format!("unknown event type: {other}")),
         }
     }
@@ -383,6 +411,15 @@ impl EventType {
         EventType::BlockTimerPaused,
         EventType::BlockTimerStopped,
         EventType::MonthGoalsSet,
+        EventType::PersonAdded,
+        EventType::PersonUpdated,
+        EventType::MentionRecorded,
+        EventType::MentionAnswered,
+        EventType::MentionExcluded,
+        EventType::AddressConfirmed,
+        EventType::FactRecorded,
+        EventType::FactRetracted,
+        EventType::PersonMergeSet,
     ];
 
     /// Every event type a set of features owns, for a scoped wipe.
@@ -519,6 +556,16 @@ impl EventType {
             | EventType::BlockTimerPaused
             | EventType::BlockTimerStopped
             | EventType::MonthGoalsSet => &[Feature::Planning],
+
+            EventType::PersonAdded
+            | EventType::PersonUpdated
+            | EventType::MentionRecorded
+            | EventType::MentionAnswered
+            | EventType::MentionExcluded
+            | EventType::AddressConfirmed
+            | EventType::FactRecorded
+            | EventType::FactRetracted
+            | EventType::PersonMergeSet => &[Feature::People],
 
             EventType::DataWiped
             | EventType::FeedbackCaptured
@@ -2200,6 +2247,41 @@ pub fn validate_payload(
         EventType::MonthGoalsSet => {
             serde_json::from_value::<MonthGoalsSetPayload>(payload.clone()).map(|_| ())
         }
+        EventType::PersonAdded => {
+            serde_json::from_value::<crate::people::PersonAddedPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::PersonUpdated => {
+            serde_json::from_value::<crate::people::PersonUpdatedPayload>(payload.clone())
+                .map(|_| ())
+        }
+        EventType::MentionRecorded => {
+            serde_json::from_value::<crate::people::MentionRecordedPayload>(payload.clone())
+                .map(|_| ())
+        }
+        EventType::MentionAnswered => {
+            serde_json::from_value::<crate::people::MentionAnsweredPayload>(payload.clone())
+                .map(|_| ())
+        }
+        EventType::MentionExcluded => {
+            serde_json::from_value::<crate::people::MentionExcludedPayload>(payload.clone())
+                .map(|_| ())
+        }
+        EventType::AddressConfirmed => {
+            serde_json::from_value::<crate::people::AddressConfirmedPayload>(payload.clone())
+                .map(|_| ())
+        }
+        EventType::FactRecorded => {
+            serde_json::from_value::<crate::people::FactRecordedPayload>(payload.clone())
+                .map(|_| ())
+        }
+        EventType::FactRetracted => {
+            serde_json::from_value::<crate::people::FactRetractedPayload>(payload.clone())
+                .map(|_| ())
+        }
+        EventType::PersonMergeSet => {
+            serde_json::from_value::<crate::people::PersonMergeSetPayload>(payload.clone())
+                .map(|_| ())
+        }
         EventType::BlockTimerStarted
         | EventType::BlockTimerPaused
         | EventType::BlockTimerStopped => {
@@ -2414,10 +2496,19 @@ mod tests {
                 | EventType::BlockTimerStarted
                 | EventType::BlockTimerPaused
                 | EventType::BlockTimerStopped
-                | EventType::MonthGoalsSet => counted += 1,
+                | EventType::MonthGoalsSet
+                | EventType::PersonAdded
+                | EventType::PersonUpdated
+                | EventType::MentionRecorded
+                | EventType::MentionAnswered
+                | EventType::MentionExcluded
+                | EventType::AddressConfirmed
+                | EventType::FactRecorded
+                | EventType::FactRetracted
+                | EventType::PersonMergeSet => counted += 1,
             }
         }
-        assert_eq!(counted, 76, "EventType::ALL does not list every variant");
+        assert_eq!(counted, 85, "EventType::ALL does not list every variant");
 
         let unique: std::collections::BTreeSet<String> =
             EventType::ALL.iter().map(|t| t.to_string()).collect();

@@ -27,6 +27,7 @@ pub enum ConfigKey {
     FeatureDocuments,
     FeatureTasks,
     FeaturePlanning,
+    FeaturePeople,
     AppearanceTheme,
     AppearanceAccent,
     AssistantEmbedModel,
@@ -98,6 +99,7 @@ pub const ALL_KEYS: &[ConfigKey] = &[
     ConfigKey::FeatureDocuments,
     ConfigKey::FeatureTasks,
     ConfigKey::FeaturePlanning,
+    ConfigKey::FeaturePeople,
     ConfigKey::AppearanceTheme,
     ConfigKey::AppearanceAccent,
     ConfigKey::AssistantEmbedModel,
@@ -179,6 +181,7 @@ impl fmt::Display for ConfigKey {
             ConfigKey::FeatureDocuments => "feature.documents",
             ConfigKey::FeatureTasks => "feature.tasks",
             ConfigKey::FeaturePlanning => "feature.planning",
+            ConfigKey::FeaturePeople => "feature.people",
             ConfigKey::AppearanceTheme => "appearance.theme",
             ConfigKey::AppearanceAccent => "appearance.accent",
             ConfigKey::AssistantEmbedModel => "assistant.embed_model",
@@ -229,6 +232,7 @@ impl FromStr for ConfigKey {
             "feature.documents" => Ok(ConfigKey::FeatureDocuments),
             "feature.tasks" => Ok(ConfigKey::FeatureTasks),
             "feature.planning" => Ok(ConfigKey::FeaturePlanning),
+            "feature.people" => Ok(ConfigKey::FeaturePeople),
             "appearance.theme" => Ok(ConfigKey::AppearanceTheme),
             "appearance.accent" => Ok(ConfigKey::AppearanceAccent),
             "assistant.embed_model" => Ok(ConfigKey::AssistantEmbedModel),
@@ -383,7 +387,8 @@ impl ConfigKey {
             | ConfigKey::FeatureLlm
             | ConfigKey::FeatureDocuments
             | ConfigKey::FeatureTasks
-            | ConfigKey::FeaturePlanning => ConfigValue::Bool(true),
+            | ConfigKey::FeaturePlanning
+            | ConfigKey::FeaturePeople => ConfigValue::Bool(true),
             ConfigKey::AppearanceTheme => ConfigValue::Text("dark".to_string()),
             ConfigKey::AppearanceAccent => ConfigValue::Text("blue".to_string()),
             // 384 dimensions and 133 MB: the largest embedder that leaves room for
@@ -490,6 +495,7 @@ impl ConfigKey {
             | ConfigKey::FeatureDocuments
             | ConfigKey::FeatureTasks
             | ConfigKey::FeaturePlanning
+            | ConfigKey::FeaturePeople
             | ConfigKey::AssistantRerank
             | ConfigKey::AssistantCheckIn
             | ConfigKey::NotifyChargesAtNight => ValueKind::Bool,
@@ -572,6 +578,7 @@ impl ConfigKey {
             | ConfigKey::FeatureDocuments
             | ConfigKey::FeatureTasks
             | ConfigKey::FeaturePlanning
+            | ConfigKey::FeaturePeople
             // Models are loaded once at startup and held resident. Reloading one
             // mid-run would stall every question for the length of a download.
             | ConfigKey::AssistantEmbedModel
@@ -592,6 +599,7 @@ impl ConfigKey {
             ConfigKey::FeatureDocuments => "Documents",
             ConfigKey::FeatureTasks => "Tasks",
             ConfigKey::FeaturePlanning => "Planning",
+            ConfigKey::FeaturePeople => "People",
             ConfigKey::AppearanceTheme => "Theme",
             ConfigKey::AppearanceAccent => "Accent",
             ConfigKey::AssistantEmbedModel => "Embedding model",
@@ -645,6 +653,7 @@ impl ConfigKey {
             ConfigKey::FeatureDocuments => Some(Feature::Documents),
             ConfigKey::FeatureTasks => Some(Feature::Tasks),
             ConfigKey::FeaturePlanning => Some(Feature::Planning),
+            ConfigKey::FeaturePeople => Some(Feature::People),
             ConfigKey::AppearanceTheme
             | ConfigKey::AppearanceAccent
             // Not a `Feature`: these own no projection, no tab and no scheduler.
@@ -696,7 +705,8 @@ impl ConfigKey {
             | ConfigKey::FeatureLlm
             | ConfigKey::FeatureDocuments
             | ConfigKey::FeatureTasks
-            | ConfigKey::FeaturePlanning => ConfigGroup::Features,
+            | ConfigKey::FeaturePlanning
+            | ConfigKey::FeaturePeople => ConfigGroup::Features,
             ConfigKey::AppearanceTheme | ConfigKey::AppearanceAccent => ConfigGroup::Appearance,
             ConfigKey::AssistantEmbedModel
             | ConfigKey::AssistantRerank
@@ -845,6 +855,7 @@ pub enum Feature {
     Documents,
     Tasks,
     Planning,
+    People,
 }
 
 /// Every feature, in the order [`ALL_KEYS`] lists their switches.
@@ -858,6 +869,7 @@ pub const ALL_FEATURES: &[Feature] = &[
     Feature::Documents,
     Feature::Tasks,
     Feature::Planning,
+    Feature::People,
 ];
 
 impl Feature {
@@ -873,6 +885,7 @@ impl Feature {
             Feature::Documents => ConfigKey::FeatureDocuments,
             Feature::Tasks => ConfigKey::FeatureTasks,
             Feature::Planning => ConfigKey::FeaturePlanning,
+            Feature::People => ConfigKey::FeaturePeople,
         }
     }
 
@@ -1009,6 +1022,7 @@ mod tests {
                 | ConfigKey::FeatureDocuments
                 | ConfigKey::FeatureTasks
                 | ConfigKey::FeaturePlanning
+                | ConfigKey::FeaturePeople
                 | ConfigKey::AppearanceTheme
                 | ConfigKey::AppearanceAccent
                 | ConfigKey::AssistantEmbedModel
@@ -1082,7 +1096,8 @@ mod tests {
                 | Feature::Llm
                 | Feature::Documents
                 | Feature::Tasks
-                | Feature::Planning => counted += 1,
+                | Feature::Planning
+                | Feature::People => counted += 1,
             }
         }
         assert_eq!(

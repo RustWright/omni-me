@@ -432,6 +432,7 @@ pub enum Feature {
     Documents,
     Tasks,
     Planning,
+    People,
 }
 
 pub const ALL_FEATURES: &[Feature] = &[
@@ -444,6 +445,7 @@ pub const ALL_FEATURES: &[Feature] = &[
     Feature::Documents,
     Feature::Tasks,
     Feature::Planning,
+    Feature::People,
 ];
 
 impl Feature {
@@ -458,6 +460,7 @@ impl Feature {
             Feature::Documents => "feature.documents",
             Feature::Tasks => "feature.tasks",
             Feature::Planning => "feature.planning",
+            Feature::People => "feature.people",
         }
     }
 
