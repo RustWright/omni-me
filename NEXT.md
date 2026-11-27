@@ -6,8 +6,8 @@ live in `RULINGS.md`, open work in `tasks.md` (ids `[NNNN]` = `.omni/tasks.toml`
 
 ## ▶ NEXT ACTION — [0133] person view and People tab (`tasks.md` § Cycle 6)
 [0129] and [0130] landed green. [0133] is UI: checked in the mock render (`UI_WORKFLOW.md`,
-`dx serve --features mock` in the capped cgroup), then once on the S9. [0131] is ruled (136);
-[0134] waits on his seat answer (below).
+`dx serve --features mock` in the capped cgroup), then once on the S9. Every UI change gets three
+self-review passes before he sees it (his rule). [0131] (ruling 136) and [0134] (107) follow.
 [0127] is on dev with a deliberate stand-in calendar, short of his Google setup (below).
 **Dev credits and dev actions were approved for the 11-26/27 session only**; ask again.
 Dev agent runs go through `~/omni-dev-tools/ritual_rerun_dev.sh <tag> <ritual>` (always stops it).
@@ -23,7 +23,6 @@ and check in a capped cgroup are fine, and the mock demo page is the one build e
 
 ## ⛔ Waiting on him
 - **[0127] Google Cloud setup, walked through live:** overlay `SETUP.md` § Google Calendar.
-- **[0134] which seat sees people data (107):** only role D is recorded as ZDR (`tasks.md` [0134]).
 - **[0124] prompt texts:** the evening, weekly and monthly prompts in `planning/rituals.rs` are mine.
 - **[0116] hub trial record (92):** how "acted" and "dismissed" are recorded is a design call.
 - **[0128] at the live release (his call, 11-25):** decide how live's startup compaction gets room

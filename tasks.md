@@ -65,8 +65,8 @@ builds follow them.
   more day; every answer an undoable evidence event. [M]
 - [0133] **Person view and People tab** per `design/0102/` § 3 (119, 120, 129); local reads only. [M]
 - [0134] **Assistant:** a person lookup verb and fact proposals with a citation, on a ZDR seat (107,
-  128). Only role D is recorded as ZDR; chat and rituals run on the interactive seat, so his
-  check of that provider, or routing people turns to D, comes first. Contacts seed on his go. [M]
+  128), which chat and the rituals qualify as while they are direct to DeepInfra (ruling 107).
+  Contacts seed import on his go (105). [M]
 
 ## Waiting on his decision
 
