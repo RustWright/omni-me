@@ -1082,6 +1082,7 @@ async fn run(args: Args) -> Result<(), String> {
     // here it would sit in the middle of the ask-to-answer path. See
     // `PULL_INTERVAL_ENV`.
     let pull_interval = Duration::from_millis(env_u64(PULL_INTERVAL_ENV, DEFAULT_PULL_INTERVAL_MS));
+    let calendar_client = sync_client.clone();
     let (pull_scheduler, _pull) = PullScheduler::spawn_with(
         sync_client,
         db.clone(),
@@ -1148,6 +1149,10 @@ async fn run(args: Args) -> Result<(), String> {
         "agent running; answering questions"
     );
 
+    let calendar = sync::ServerCalendar {
+        client: calendar_client,
+        pulls: pull_scheduler.clone(),
+    };
     let responder = responder::Responder {
         db: &db,
         config: &config,
@@ -1156,6 +1161,7 @@ async fn run(args: Args) -> Result<(), String> {
         writer,
         retrievers,
         horizon,
+        calendar: &calendar,
     };
     // Beside the responder rather than spawned: both borrow the embedder, which
     // lives in this scope. Only the responder ends the agent.

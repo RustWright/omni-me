@@ -62,6 +62,7 @@ pub async fn start_server() -> (String, tokio::task::JoinHandle<()>) {
         instance: None,
         purge_ticket: Default::default(),
         wipe_ticket: Default::default(),
+        calendar: None,
     };
 
     let app = Router::new()
@@ -201,6 +202,7 @@ async fn boot_full_server(
         instance,
         purge_ticket: Default::default(),
         wipe_ticket: Default::default(),
+        calendar: None,
     };
 
     let app = omni_me_server::build_app(state, updates_dir, auth_token);

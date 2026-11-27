@@ -10,8 +10,8 @@ use super::projection::Projection;
 use super::store::{Event, EventError};
 use super::tasks_projection::{TimerState, TimerStep};
 use super::types::{
-    BlockTimerPayload, CalendarAnsweredPayload, CalendarChangedPayload, DayPlanAcceptedPayload,
-    MonthGoalsSetPayload, PlaceSetPayload, TravelTimeSetPayload,
+    BlockTimerPayload, CalendarAnsweredPayload, CalendarChangedPayload, CalendarReadPayload,
+    DayPlanAcceptedPayload, MonthGoalsSetPayload, PlaceSetPayload, TravelTimeSetPayload,
 };
 
 /// Projection over the calendar as read in, his answers about it, his places and his accepted
@@ -32,6 +32,7 @@ impl Projection for PlanningProjection {
     }
 
     /// 2 added `day_plans`, 3 `block_timers`, 4 `month_goals`, 5 the timer on `block_timers`.
+    /// `calendar_reads` took no bump: no event predates it, and a bump rebuilds every device.
     fn version(&self) -> u32 {
         5
     }
@@ -91,7 +92,14 @@ impl Projection for PlanningProjection {
              DEFINE TABLE IF NOT EXISTS month_goals SCHEMAFULL;
              DEFINE FIELD IF NOT EXISTS month ON month_goals TYPE string;
              DEFINE FIELD IF NOT EXISTS body ON month_goals TYPE string;
-             DEFINE FIELD IF NOT EXISTS set_at ON month_goals TYPE datetime;",
+             DEFINE FIELD IF NOT EXISTS set_at ON month_goals TYPE datetime;
+
+             -- One row per calendar source: its latest read status, written only on a change.
+             DEFINE TABLE IF NOT EXISTS calendar_reads SCHEMAFULL;
+             DEFINE FIELD IF NOT EXISTS source ON calendar_reads TYPE string;
+             DEFINE FIELD IF NOT EXISTS ok ON calendar_reads TYPE bool;
+             DEFINE FIELD IF NOT EXISTS error ON calendar_reads TYPE option<string>;
+             DEFINE FIELD IF NOT EXISTS changed_at ON calendar_reads TYPE datetime;",
         )
         .await?
         .check()?;
@@ -102,7 +110,7 @@ impl Projection for PlanningProjection {
         db.query(
             "DELETE FROM calendar_events; DELETE FROM calendar_answers;
              DELETE FROM planning_places; DELETE FROM planning_travel; DELETE FROM day_plans;
-             DELETE FROM block_timers; DELETE FROM month_goals;",
+             DELETE FROM block_timers; DELETE FROM month_goals; DELETE FROM calendar_reads;",
         )
         .await?
         .check()?;
@@ -125,6 +133,23 @@ impl Projection for PlanningProjection {
                     )
                     .bind(("key", p.answer.key()))
                     .bind(("body", body))
+                    .bind(("ts", event.timestamp.to_rfc3339()))
+                    .await?
+                    .check()?;
+                    Ok(())
+                }
+                None => Ok(()),
+            },
+            "calendar_read" => match payload::<CalendarReadPayload>(event) {
+                Some(p) => {
+                    db.query(
+                        "UPSERT type::record('calendar_reads', $source) SET
+                            source = $source, ok = $ok, error = $error,
+                            changed_at = type::datetime($ts)",
+                    )
+                    .bind(("source", p.source))
+                    .bind(("ok", p.ok))
+                    .bind(("error", p.error))
                     .bind(("ts", event.timestamp.to_rfc3339()))
                     .await?
                     .check()?;

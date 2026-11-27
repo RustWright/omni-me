@@ -23,13 +23,24 @@ Fetching eight weeks for one person is a page or two per calendar, so the snapsh
 get right. Recorded events before the window are kept as history: the window moving forward is
 not a deletion.
 
-**A failed read changes nothing.** A source reports failure as an error, never as an empty
-list. An empty list would mean every event inside the window had been deleted.
+**A failed read changes no events, but it is recorded.** A source reports failure as an error,
+never as an empty list. An empty list would mean every event inside the window had been deleted.
+A `calendar_read` event is written when a source's reads start failing, and again when they
+recover, never on every read. So the latest one per source is its state, and a failing one's
+timestamp says since when. The plan card shows "Calendar: couldn't refresh since …" while a
+source is failing, and the planning brief tells the model its events may be out of date.
+
+**The server reads; every other device asks it to.** Only the server holds the source. It reads
+every 15 minutes, and on `POST /calendar/refresh`. The agent calls that route before any planning
+answer, the morning ritual included, then pulls and applies the result before the brief is built.
+One lock per source keeps the loop and a refresh from diffing against the same record at once.
+The route answers 404 when the server has no source, which a device treats as "nothing fresher",
+the same answer a server built before the route gives.
 
 **The public engine ships no connector.** It holds the provider-neutral event, the trait and
 everything planning does with the result. The Google Calendar connector belongs to the
-deployment's own composition root, as bank drivers do (ruling 133). To use another calendar,
-implement the trait in your own server crate.
+deployment's own composition root, as bank drivers do (ruling 133): pass it as
+`RunConfig::calendar`. To use another calendar, implement the trait in your own server crate.
 
 ### What a day holds
 

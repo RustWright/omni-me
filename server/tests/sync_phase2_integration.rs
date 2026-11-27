@@ -62,6 +62,7 @@ async fn start_server_on_port(
         instance: None,
         purge_ticket: Default::default(),
         wipe_ticket: Default::default(),
+        calendar: None,
     };
 
     let app = make_router(state);
@@ -109,6 +110,7 @@ async fn start_server_ephemeral() -> (u16, omni_me_core::db::Database, tokio::ta
         instance: None,
         purge_ticket: Default::default(),
         wipe_ticket: Default::default(),
+        calendar: None,
     };
     let app = make_router(state);
 

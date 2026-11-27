@@ -43,6 +43,15 @@ pub async fn context(db: &Database, config: &ResolvedConfig, now: DateTime<Utc>)
     let tz = config.user_zone();
     let today = now.with_timezone(&tz).date_naive();
     let mut out = String::new();
+    if let Ok(down) = crate::calendar::sync::failing(db).await
+        && let Some(oldest) = down.iter().map(|f| f.since).min()
+    {
+        out.push_str(&format!(
+            "\n\n### Calendar\nThe calendar has not refreshed since {}. Events added or moved \
+             since then are missing; say so in the plan.",
+            oldest.with_timezone(&tz).format("%a %-d %b, %H:%M")
+        ));
+    }
     for date in [today, today + Duration::days(1)] {
         match DayContext::load(db, config, date).await {
             Ok(ctx) => {

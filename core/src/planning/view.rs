@@ -231,6 +231,18 @@ fn hm(t: DateTime<Utc>, tz: Tz) -> String {
     t.with_timezone(&tz).format("%H:%M").to_string()
 }
 
+/// The card's line for a calendar that has stopped refreshing: the time alone on the plan's
+/// own day, the weekday and date before it.
+fn calendar_line(since: DateTime<Utc>, date: NaiveDate, tz: Tz) -> String {
+    let local = since.with_timezone(&tz);
+    let when = if local.date_naive() == date {
+        local.format("%H:%M").to_string()
+    } else {
+        local.format("%a %-d %b, %H:%M").to_string()
+    };
+    format!("Calendar: couldn't refresh since {when}.")
+}
+
 fn head(ctx: &DayContext) -> DayHead {
     let tz = ctx.shape.tz;
     let day = ctx.day();
@@ -456,6 +468,10 @@ pub async fn card(
             Vec::new()
         }
     };
+    match crate::calendar::sync::failing(db).await {
+        Ok(down) => unread.extend(down.iter().map(|f| calendar_line(f.since, p.date, tz))),
+        Err(e) => tracing::warn!(error = %e, "could not read the calendar's read status"),
+    }
 
     Ok(Some(PlanCard {
         proposal_id: p.proposal_id.clone(),
@@ -659,6 +675,19 @@ mod tests {
 
     fn at(s: &str) -> DateTime<Utc> {
         s.parse().unwrap()
+    }
+
+    #[test]
+    fn a_stale_calendar_says_since_when() {
+        let date: NaiveDate = "2026-11-26".parse().unwrap();
+        assert_eq!(
+            calendar_line(at("2026-11-26T12:05:00Z"), date, TZ),
+            "Calendar: couldn't refresh since 07:05."
+        );
+        assert_eq!(
+            calendar_line(at("2026-11-25T03:30:00Z"), date, TZ),
+            "Calendar: couldn't refresh since Tue 24 Nov, 22:30."
+        );
     }
 
     #[test]

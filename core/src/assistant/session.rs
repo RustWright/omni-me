@@ -214,6 +214,9 @@ pub struct Session<'a> {
     /// A specialist chosen by the caller, skipping the router: a scheduled job that is
     /// always about one domain (the morning plan, ruling 112).
     fixed: Option<super::specialist::Specialist>,
+    /// Read the calendar fresh before a planning brief (ruling 113). Without one the brief reads
+    /// what is recorded.
+    calendar: Option<&'a dyn crate::calendar::sync::Refresh>,
 }
 
 impl<'a> Session<'a> {
@@ -244,7 +247,16 @@ impl<'a> Session<'a> {
             retrievers: Retrievers::default(),
             specialists: false,
             fixed: None,
+            calendar: None,
         })
+    }
+
+    pub fn with_calendar_refresh(
+        mut self,
+        calendar: &'a dyn crate::calendar::sync::Refresh,
+    ) -> Self {
+        self.calendar = Some(calendar);
+        self
     }
 
     /// Give `search` a meaning-based retriever alongside keyword matching.
@@ -336,6 +348,14 @@ impl<'a> Session<'a> {
         let system = match who {
             Some(who) => {
                 tracing::info!(specialist = ?who, fixed = self.fixed.is_some(), "routed");
+                if who == super::specialist::Specialist::Planning
+                    && let Some(calendar) = self.calendar
+                    && let Err(e) = calendar.refresh().await
+                {
+                    // The server records a failed read itself; the brief says the calendar is
+                    // stale once that record has synced.
+                    tracing::warn!(error = %e, "calendar refresh before planning failed");
+                }
                 let brief = super::specialist::brief(self.db, self.config, who).await;
                 format!("{system}{brief}")
             }

@@ -34,5 +34,6 @@ fn main() {
     };
     runtime.block_on(run(RunConfig {
         source_builder: Box::new(config_sources),
+        calendar: None,
     }));
 }

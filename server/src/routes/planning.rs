@@ -18,6 +18,40 @@ pub fn planning_routes() -> Router<AppState> {
     Router::new()
         .route("/planning/places", get(list).post(set_place))
         .route("/planning/travel", post(set_travel))
+        .route("/calendar/refresh", post(refresh_calendar))
+}
+
+#[derive(Debug, Serialize)]
+pub struct RefreshView {
+    pub upserted: usize,
+    pub removed: usize,
+}
+
+/// Reads the calendar now, before a plan (ruling 113). 404 with no source, so a device treats a
+/// server without one, and one built before this route, the same way.
+async fn refresh_calendar(
+    State(state): State<AppState>,
+) -> Result<Json<RefreshView>, (StatusCode, String)> {
+    use omni_me_core::calendar::sync::SyncOutcome;
+    let Some(reader) = state.calendar.clone() else {
+        return Err((StatusCode::NOT_FOUND, "no calendar source".to_string()));
+    };
+    match reader
+        .read(&state.db, &writer(&state), chrono::Utc::now())
+        .await
+    {
+        Ok(SyncOutcome::Unchanged) => Ok(Json(RefreshView {
+            upserted: 0,
+            removed: 0,
+        })),
+        Ok(SyncOutcome::Recorded { upserted, removed }) => {
+            Ok(Json(RefreshView { upserted, removed }))
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "calendar: refresh failed");
+            Err((StatusCode::BAD_GATEWAY, e))
+        }
+    }
 }
 
 fn writer(state: &AppState) -> EventWriter {

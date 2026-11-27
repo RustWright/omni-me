@@ -206,6 +206,8 @@ pub struct AppState {
     /// unconfirmed preview rather than let one be redeemed against an archive that
     /// has moved on.
     pub purge_ticket: Arc<tokio::sync::Mutex<Option<routes::PurgeTicket>>>,
+    /// `None` when [`RunConfig::calendar`] is.
+    pub calendar: Option<Arc<omni_me_core::calendar::sync::Reader>>,
 }
 
 /// The shared runtime handles [`run`] hands a [`SourceBuilder`] so it can
@@ -237,6 +239,9 @@ pub type SourceBuilder = Box<dyn FnOnce(SourceCtx) -> SourceFuture + Send>;
 /// intentionally absent here.
 pub struct RunConfig {
     pub source_builder: SourceBuilder,
+    /// The calendar this server reads every 15 minutes and on `POST /calendar/refresh`
+    /// (ruling 113). The public binary has none; a deployment supplies its own (133).
+    pub calendar: Option<Arc<dyn omni_me_core::calendar::CalendarSource>>,
 }
 
 /// Boot the public server: run all generic startup, delegate source
@@ -392,6 +397,9 @@ pub async fn run(cfg: RunConfig) {
         instance,
         purge_ticket: Arc::new(tokio::sync::Mutex::new(None)),
         wipe_ticket: Arc::new(tokio::sync::Mutex::new(None)),
+        calendar: cfg
+            .calendar
+            .map(|s| Arc::new(omni_me_core::calendar::sync::Reader::new(s))),
     };
 
     // Auto-import: the engine owns the store/projections/device_id but not the
@@ -544,6 +552,24 @@ pub async fn run(cfg: RunConfig) {
                 }
             }
         });
+    }
+    // The calendar, read every 15 minutes. Ruling 113.
+    match state.calendar.clone() {
+        Some(reader) => {
+            let (db, writer) = ((*state.db).clone(), enrich_writer.clone());
+            tokio::spawn(async move {
+                let mut tick = tokio::time::interval(std::time::Duration::from_secs(15 * 60));
+                loop {
+                    tick.tick().await;
+                    match reader.read(&db, &writer, chrono::Utc::now()).await {
+                        Ok(omni_me_core::calendar::sync::SyncOutcome::Unchanged) => {}
+                        Ok(outcome) => tracing::info!(?outcome, "calendar read"),
+                        Err(e) => tracing::warn!(error = %e, "calendar: read failed"),
+                    }
+                }
+            });
+        }
+        None => tracing::info!("no calendar source; the calendar read is off"),
     }
     // Coursework deadlines from the LEARN feed, when its address is configured. Ruling 122.
     if let Some(url) = state.secrets.get("learn_feed_url").cloned() {

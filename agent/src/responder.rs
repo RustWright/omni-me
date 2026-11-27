@@ -71,6 +71,8 @@ pub struct Responder<'a> {
     /// Questions older than this are closed without a model call. See
     /// [`Responder::adjudicate`].
     pub horizon: Duration,
+    /// Read fresh before every planning answer (ruling 113).
+    pub calendar: &'a dyn omni_me_core::calendar::sync::Refresh,
 }
 
 impl Responder<'_> {
@@ -399,6 +401,7 @@ impl Responder<'_> {
                 return;
             }
         };
+        let session = session.with_calendar_refresh(self.calendar);
         let session = match self.retrievers.semantic {
             Some(s) => session.with_semantic_search(s),
             None => session,

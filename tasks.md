@@ -44,11 +44,10 @@ builds follow them.
   the brief's gaps (`fc48313`..`2ee3757`), and the seat: interactive, ruling 135, measured in
   `MODEL_BENCH.md` Part 11 (`7901110`); the weekly then answered in 5 s, all 8 items asked about.
   Left: his read of the prompt texts in `planning/rituals.rs`, and a monthly review on a real 1st. [S]
-- [0127] **Google connector (overlay, 133):** read-only OAuth, window snapshots, both calendars. Needs
-  his Google Cloud setup, walked through live when this slice starts. Also wires the server's
-  15-minute read (113) through `RunConfig`, since the public server has no source, and the fresh
-  read before each plan (113): until then the brief and `propose` read the stored calendar. A
-  failed read should leave a record, so the plan card can say "Calendar: couldn't refresh" (117). [M]
+- [0127] **Calendar read: built** (`docs/src/planning.md` § Calendar; overlay `src/google_calendar.rs`):
+  15-minute read, `POST /calendar/refresh` before every planning answer, `calendar_read` status on
+  the card and brief. Tested against Google's documented shapes only. Left: his Google Cloud setup
+  and first real read (overlay `SETUP.md` § Google Calendar, walked through live). [USER]
 - [0128] **Live may OOM-loop on its next restart:** SurrealKV's startup compaction needed ~2.1 GB
   on dev's 2.2 GB volume against a 1500m cap and looped forever (dev, 11-25; fixed by compacting a
   copy off-box, `~/omni-dev-tools/state/dev-server-0128/`, old data kept as `_data.pre-0128`).

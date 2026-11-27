@@ -112,6 +112,13 @@ impl PullScheduler {
         self.inner.trigger.notify_one();
     }
 
+    /// Pull and apply now, returning when done. Unlike [`trigger`](Self::trigger), a caller that
+    /// must see what the server just wrote can rely on it: a pull already in flight may have
+    /// started before the write.
+    pub async fn pull_now(&self) {
+        pull_once(&self.inner).await;
+    }
+
     /// Subscribe to pull outcomes.
     pub fn subscribe(&self) -> broadcast::Receiver<PullEvent> {
         self.inner.outcomes.subscribe()

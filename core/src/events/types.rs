@@ -115,6 +115,8 @@ pub enum EventType {
     // Planning: the calendar as read in (ruling 96), and his answers about it.
     CalendarChanged,
     CalendarAnswered,
+    // A source's reads started or stopped failing (117).
+    CalendarRead,
     PlaceSet,
     TravelTimeSet,
     // A day plan he accepted (ruling 98); the rest of a plan's life is its proposal.
@@ -199,6 +201,7 @@ impl fmt::Display for EventType {
             EventType::DeadlineFeedReceived => "deadline_feed_received",
             EventType::CalendarChanged => "calendar_changed",
             EventType::CalendarAnswered => "calendar_answered",
+            EventType::CalendarRead => "calendar_read",
             EventType::PlaceSet => "place_set",
             EventType::TravelTimeSet => "travel_time_set",
             EventType::DayPlanAccepted => "day_plan_accepted",
@@ -284,6 +287,7 @@ impl FromStr for EventType {
             "deadline_feed_received" => Ok(EventType::DeadlineFeedReceived),
             "calendar_changed" => Ok(EventType::CalendarChanged),
             "calendar_answered" => Ok(EventType::CalendarAnswered),
+            "calendar_read" => Ok(EventType::CalendarRead),
             "place_set" => Ok(EventType::PlaceSet),
             "travel_time_set" => Ok(EventType::TravelTimeSet),
             "day_plan_accepted" => Ok(EventType::DayPlanAccepted),
@@ -371,6 +375,7 @@ impl EventType {
         EventType::DeadlineFeedReceived,
         EventType::CalendarChanged,
         EventType::CalendarAnswered,
+        EventType::CalendarRead,
         EventType::PlaceSet,
         EventType::TravelTimeSet,
         EventType::DayPlanAccepted,
@@ -506,6 +511,7 @@ impl EventType {
 
             EventType::CalendarChanged
             | EventType::CalendarAnswered
+            | EventType::CalendarRead
             | EventType::PlaceSet
             | EventType::TravelTimeSet
             | EventType::DayPlanAccepted
@@ -1918,6 +1924,16 @@ pub struct CalendarChangedPayload {
     pub removed: Vec<String>,
 }
 
+/// A source's read status changed. Written only on a change, so the latest per source is its
+/// state and a failing one's timestamp is when it started failing. `aggregate_id` is the source.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CalendarReadPayload {
+    pub source: String,
+    pub ok: bool,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
 /// One of his answers about the calendar. `aggregate_id` is [`CalendarAnswer::key`]; a later
 /// answer to the same key replaces the earlier one.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2169,6 +2185,9 @@ pub fn validate_payload(
         EventType::CalendarAnswered => {
             serde_json::from_value::<CalendarAnsweredPayload>(payload.clone()).map(|_| ())
         }
+        EventType::CalendarRead => {
+            serde_json::from_value::<CalendarReadPayload>(payload.clone()).map(|_| ())
+        }
         EventType::PlaceSet => {
             serde_json::from_value::<PlaceSetPayload>(payload.clone()).map(|_| ())
         }
@@ -2388,6 +2407,7 @@ mod tests {
                 | EventType::DeadlineFeedReceived
                 | EventType::CalendarChanged
                 | EventType::CalendarAnswered
+                | EventType::CalendarRead
                 | EventType::PlaceSet
                 | EventType::TravelTimeSet
                 | EventType::DayPlanAccepted
@@ -2397,7 +2417,7 @@ mod tests {
                 | EventType::MonthGoalsSet => counted += 1,
             }
         }
-        assert_eq!(counted, 75, "EventType::ALL does not list every variant");
+        assert_eq!(counted, 76, "EventType::ALL does not list every variant");
 
         let unique: std::collections::BTreeSet<String> =
             EventType::ALL.iter().map(|t| t.to_string()).collect();

@@ -1,4 +1,5 @@
 mod accelerator;
+mod calendar;
 mod client;
 mod diagnostics;
 mod network;
@@ -8,6 +9,7 @@ mod retry;
 mod status;
 
 pub use accelerator::wire as wire_accelerator;
+pub use calendar::ServerCalendar;
 pub use client::{
     PullOutcome, PullRequest, PullResponse, PushOutcome, PushRequest, PushResponse, SyncClient,
     SyncError, SyncResult,
