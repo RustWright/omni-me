@@ -563,6 +563,11 @@ pub async fn run(cfg: RunConfig) {
             (*state.blob_dir).clone(),
         );
         let llm = (state.llm_client.model_name() != "none").then(|| state.llm_client.clone());
+        let own: Vec<String> = creds
+            .imap
+            .values()
+            .map(|a| a.account.trim().to_lowercase())
+            .collect();
         tokio::spawn(async move {
             use omni_me_core::people::finding;
             if let Err(e) = finding::init_schema(&db).await {
@@ -584,8 +589,11 @@ pub async fn run(cfg: RunConfig) {
                 }
                 let tz = omni_me_core::assistant::scheduled::user_timezone(&config);
                 let today = chrono::Utc::now().with_timezone(&tz).date_naive();
-                let seat = llm.as_deref();
-                match finding::run(&db, &writer, seat, Some(blob_dir.as_path()), today, tz).await {
+                let mail = finding::Mailbox {
+                    blob_dir: &blob_dir,
+                    own_addresses: &own,
+                };
+                match finding::run(&db, &writer, llm.as_deref(), Some(mail), today, tz).await {
                     Ok(r) if r.lines_read == 0 => {}
                     Ok(r) => tracing::info!(
                         lines = r.lines_read,

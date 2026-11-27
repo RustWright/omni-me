@@ -76,11 +76,12 @@ asking about each of them every evening would drown the real questions.
 
 | Sender | Result |
 |---|---|
+| A mailbox's own address, or an automated one (`noreply`, `notifications`, `alerts`…) | nothing |
 | A confirmed address, on mail that passed sender authentication | mention, guessed link (103) |
 | A confirmed address, on mail that failed authentication | mention, asked |
 | An address silenced by "unlinked" | nothing |
 | A display name matching someone on file | mention, asked (a display name is never confident) |
-| Any other display name | role D says whether it is a person; if so, a mention, asked |
+| Any other display name | role D, shown name and address, says whether a person is writing; if so, a mention, asked |
 | No display name | nothing |
 
 An email mention carries the sender address. "Unlinked" on any mention from that address

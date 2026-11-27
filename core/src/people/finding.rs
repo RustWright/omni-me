@@ -496,7 +496,15 @@ mod email {
     /// Only a person's mail is a mention. A confirmed address on authenticated mail links as a
     /// guess (103); a confirmed one on other mail, or a display name on file, is a mention left
     /// for his answer; any other display name goes to role D; the rest is skipped.
-    pub(super) fn sender_step(people: &[Person], s: &Sender, is_silenced: bool) -> SenderStep {
+    pub(super) fn sender_step(
+        people: &[Person],
+        own: &[String],
+        s: &Sender,
+        is_silenced: bool,
+    ) -> SenderStep {
+        if own.contains(&s.address) || automated(&s.address) {
+            return SenderStep::Skip;
+        }
         let owner = people
             .iter()
             .find(|p| p.addresses.iter().any(|a| a == &s.address));
@@ -533,15 +541,42 @@ mod email {
         }
     }
 
-    fn prompt(names: &[&str]) -> String {
+    /// Mailboxes no person writes from. Services relay someone's action under that person's
+    /// display name (a code host's notifications carried his own name), so the name alone
+    /// misleads. Generic local parts only: never a vendor list.
+    const AUTOMATED: [&str; 8] = [
+        "noreply",
+        "donotreply",
+        "notification",
+        "notify",
+        "mailerdaemon",
+        "postmaster",
+        "bounce",
+        "alerts",
+    ];
+
+    fn automated(address: &str) -> bool {
+        let local = address.split('@').next().unwrap_or("");
+        let local: String = local
+            .split('+')
+            .next()
+            .unwrap_or("")
+            .chars()
+            .filter(char::is_ascii_alphanumeric)
+            .collect();
+        AUTOMATED.iter().any(|a| local.starts_with(a))
+    }
+
+    fn prompt(senders: &[(&str, &str)]) -> String {
         let mut p = String::from(
-            "Below are numbered display names of email senders. Say which are one person's \
-             name. A company, a shop, a service, a team, a department or a role (\"Support\", \
-             \"no-reply\", \"Admissions Office\") is not a person; a person at a company is \
-             (\"Sam at Acme\" is a person, \"Acme Team\" is not).\n\n",
+            "Below are numbered email senders, as name and address. Say which are one person \
+             writing. A company, a shop, a service, a team, a department or a role (\"Support\", \
+             \"Admissions Office\") is not a person; a person at a company is (\"Sam at Acme\" is \
+             a person, \"Acme Team\" is not). A person's name on a service's automated address, \
+             an app relaying something someone did, is not a person writing.\n\n",
         );
-        for (i, name) in names.iter().enumerate() {
-            p.push_str(&format!("{}. {}\n", i + 1, name));
+        for (i, (name, address)) in senders.iter().enumerate() {
+            p.push_str(&format!("{}. {} <{}>\n", i + 1, name, address));
         }
         p
     }
@@ -596,6 +631,7 @@ mod email {
         writer: &EventWriter,
         llm: Option<&dyn LlmClient>,
         people: &[Person],
+        own: &[String],
         senders: Vec<Sender>,
     ) -> Result<Report, String> {
         let mut report = Report::default();
@@ -603,7 +639,7 @@ mod email {
         for s in senders {
             let key = format!("email/{}", s.document_id);
             let is_silenced = silenced(db, &s.address).await?;
-            match sender_step(people, &s, is_silenced) {
+            match sender_step(people, own, &s, is_silenced) {
                 SenderStep::Record(f) => {
                     report += record(db, writer, f).await?;
                     report.lines_read += 1;
@@ -619,12 +655,15 @@ mod email {
         let Some(llm) = llm.filter(|_| !ask.is_empty()) else {
             return Ok(report);
         };
-        let names: Vec<&str> = ask.iter().map(|(_, f)| f.name.as_str()).collect();
+        let senders: Vec<(&str, &str)> = ask
+            .iter()
+            .map(|(_, f)| (f.name.as_str(), f.address.as_deref().unwrap_or("")))
+            .collect();
         let answer = llm
-            .complete_json(&prompt(&names), &schema())
+            .complete_json(&prompt(&senders), &schema())
             .await
             .map_err(|e| e.to_string())?;
-        let persons = person_indices(&answer, names.len());
+        let persons = person_indices(&answer, senders.len());
         for (i, (key, f)) in ask.into_iter().enumerate() {
             if persons.contains(&i) {
                 report += record(db, writer, f).await?;
@@ -716,15 +755,15 @@ async fn read_email(
     writer: &EventWriter,
     llm: Option<&dyn LlmClient>,
     people: &[Person],
-    blob_dir: Option<&std::path::Path>,
+    mail: Option<Mailbox<'_>>,
     since: DateTime<Utc>,
     tz: Tz,
 ) -> Result<Report, String> {
-    let Some(dir) = blob_dir else {
+    let Some(mail) = mail else {
         return Ok(Report::default());
     };
-    let senders = email::senders(db, dir, since, tz).await?;
-    email::read_senders(db, writer, llm, people, senders).await
+    let senders = email::senders(db, mail.blob_dir, since, tz).await?;
+    email::read_senders(db, writer, llm, people, mail.own_addresses, senders).await
 }
 
 #[cfg(not(feature = "auto-import"))]
@@ -733,21 +772,29 @@ async fn read_email(
     _writer: &EventWriter,
     _llm: Option<&dyn LlmClient>,
     _people: &[Person],
-    _blob_dir: Option<&std::path::Path>,
+    _mail: Option<Mailbox<'_>>,
     _since: DateTime<Utc>,
     _tz: Tz,
 ) -> Result<Report, String> {
     Ok(Report::default())
 }
 
+/// Where archived email is, and whose it is.
+#[derive(Debug, Clone, Copy)]
+pub struct Mailbox<'a> {
+    pub blob_dir: &'a std::path::Path,
+    /// The mailboxes' own addresses, lowercased: he is never a mention.
+    pub own_addresses: &'a [String],
+}
+
 /// Read every source of yesterday and today in `tz` not read before, and record the mentions
 /// in them. The window is the evening question's (ruling 106): older sources wait for the
-/// seed import. `blob_dir` is where archived email lives; without it email is not read.
+/// seed import. Without `mail`, email is not read.
 pub async fn run(
     db: &Database,
     writer: &EventWriter,
     llm: Option<&dyn LlmClient>,
-    blob_dir: Option<&std::path::Path>,
+    mail: Option<Mailbox<'_>>,
     today: NaiveDate,
     tz: Tz,
 ) -> Result<Report, String> {
@@ -760,7 +807,7 @@ pub async fn run(
 
     let mut report = read_journal(db, writer, llm, &people, &dates).await?;
     report += read_tasks(db, writer, llm, &people, since, tz).await?;
-    report += read_email(db, writer, llm, &people, blob_dir, since, tz).await?;
+    report += read_email(db, writer, llm, &people, mail, since, tz).await?;
     Ok(report)
 }
 
@@ -862,7 +909,8 @@ mod tests {
             authenticated,
         };
         let all = people();
-        let step = |s: &Sender, silenced| sender_step(&all, s, silenced);
+        let own = ["me@mail.example".to_string()];
+        let step = |s: &Sender, silenced| sender_step(&all, &own, s, silenced);
 
         let robert = sender("rchen@northwind.example", "Robert Chen", true);
         let SenderStep::Record(f) = step(&robert, false) else {
@@ -891,6 +939,23 @@ mod tests {
         assert_eq!(
             step(&sender("noreply@shop.example", "", true), false),
             SenderStep::Skip
+        );
+        assert_eq!(
+            step(&sender("notifications@code.example", "Sarah", true), false),
+            SenderStep::Skip,
+            "a service relaying someone's action under their name"
+        );
+        assert_eq!(
+            step(
+                &sender("No-Reply+x@shop.example", "Robert Chen", true),
+                false
+            ),
+            SenderStep::Skip
+        );
+        assert_eq!(
+            step(&sender("me@mail.example", "Me", true), false),
+            SenderStep::Skip,
+            "he is never a mention"
         );
         assert_eq!(
             person_indices(&json!({"people": [2, 0, 9]}), 3),
