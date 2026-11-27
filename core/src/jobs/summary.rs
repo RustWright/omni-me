@@ -106,11 +106,12 @@ impl Waiting {
         let rituals = crate::planning::rituals::summary_lines(db, config, now).await?;
         w.rituals = rituals.due.into_iter().collect();
         w.paused = rituals.paused.into_iter().collect();
+        // A failed people read leaves its line out, never the whole summary.
         if config.enabled(Feature::People) {
-            w.people = crate::people::questions::open_keys(db, config, now)
-                .await?
-                .into_iter()
-                .collect();
+            match crate::people::questions::open_keys(db, config, now).await {
+                Ok(keys) => w.people = keys.into_iter().collect(),
+                Err(e) => tracing::warn!(error = %e, "summary: people questions unreadable"),
+            }
         }
         Ok(w)
     }
@@ -484,6 +485,22 @@ mod tests {
             w.message(),
             "Finances: 3 to review, 1 unmatched\nArchive: 2 due for purge"
         );
+    }
+
+    #[test]
+    fn people_questions_are_one_line_that_opens_the_assistant() {
+        let w = Waiting {
+            batches: set(&["a"]),
+            people: set(&["journal/2026-11-27", "journal/2026-11-27/0/sarah"]),
+            ..Default::default()
+        };
+        assert_eq!(w.message(), "Finances: 1 to review\nPeople: 2 questions");
+        assert_eq!(w.tab(), "assistant");
+        let earlier = Waiting {
+            people: set(&["journal/2026-11-27"]),
+            ..Default::default()
+        };
+        assert!(w.has_new_since(&earlier), "a new card is news");
     }
 
     #[test]
