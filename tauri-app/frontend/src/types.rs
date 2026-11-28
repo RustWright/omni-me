@@ -306,6 +306,11 @@ pub struct CompletionEntry {
     pub date: String,
     pub skipped: bool,
     pub reason: Option<String>,
+    /// Ticked from a journal line (ruling 127); undone like any tick.
+    #[serde(default)]
+    pub inferred: Option<bool>,
+    #[serde(default)]
+    pub source_line: Option<String>,
 }
 
 /// Result of a manual sync operation.
@@ -407,6 +412,8 @@ pub enum ConfigGroup {
     Archive,
     /// When alerts may interrupt.
     Notifications,
+    /// The day's shape the planner works from.
+    Planning,
 }
 
 /// A feature that can be switched off whole. Mirror of `core::config::Feature`.
@@ -424,6 +431,8 @@ pub enum Feature {
     Llm,
     Documents,
     Tasks,
+    Planning,
+    People,
 }
 
 pub const ALL_FEATURES: &[Feature] = &[
@@ -435,6 +444,8 @@ pub const ALL_FEATURES: &[Feature] = &[
     Feature::Llm,
     Feature::Documents,
     Feature::Tasks,
+    Feature::Planning,
+    Feature::People,
 ];
 
 impl Feature {
@@ -448,6 +459,8 @@ impl Feature {
             Feature::Llm => "feature.llm",
             Feature::Documents => "feature.documents",
             Feature::Tasks => "feature.tasks",
+            Feature::Planning => "feature.planning",
+            Feature::People => "feature.people",
         }
     }
 
@@ -863,7 +876,7 @@ pub struct AutoImportSourceView {
     /// `kind` as active.
     #[serde(default)]
     pub auth_state: serde_json::Value,
-    /// Whether the source supports interactive re-auth (only the WS subprocess
+    /// Whether the source supports interactive re-auth (only the brokerage subprocess
     /// source does today). Gates whether the Reconnect button/OTP field render.
     #[serde(default)]
     pub reauth_capable: bool,
@@ -1512,6 +1525,331 @@ pub struct AssistantAsked {
     pub message_id: String,
 }
 
+/// Where a day plan stands (rulings 98, 117). `Other` is a state a newer build added.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanStatus {
+    Proposed,
+    Accepted,
+    Superseded,
+    Skipped,
+    Lapsed,
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SlotKind {
+    Block,
+    Event,
+    Travel,
+    #[serde(other)]
+    Other,
+}
+
+/// One row of a day's timeline; times are local `HH:MM`, formatted by core.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlanSlot {
+    pub kind: SlotKind,
+    pub from: String,
+    pub to: String,
+    pub title: String,
+    #[serde(default)]
+    pub place: Option<String>,
+    #[serde(default)]
+    pub moved: bool,
+    /// The Plan view only, on today's blocks (ruling 93).
+    #[serde(default)]
+    pub timer: Option<SlotTimer>,
+}
+
+/// A block's timer as core worked it out; the view only lays it out.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SlotTimer {
+    pub state: TimerShown,
+    #[serde(default)]
+    pub line: Option<String>,
+    /// Unix seconds, sent back by the controls.
+    pub block_start: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TimerShown {
+    Ready,
+    Running,
+    Paused,
+    Stopped,
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FitLine {
+    pub text: String,
+    pub over: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DueItem {
+    pub title: String,
+    pub when: String,
+    pub overdue: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UntimedItem {
+    pub title: String,
+    pub minutes: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DayHead {
+    pub date: String,
+    pub weekday: String,
+    pub label: String,
+    #[serde(default)]
+    pub window: Option<String>,
+    #[serde(default)]
+    pub all_day: Vec<String>,
+    #[serde(default)]
+    pub notices: Vec<String>,
+}
+
+/// What the chat shows for one `plan.set` proposal (ruling 117).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlanCard {
+    pub proposal_id: String,
+    pub status: PlanStatus,
+    pub drafted: String,
+    #[serde(default)]
+    pub until: Option<String>,
+    #[serde(default)]
+    pub replaced_at: Option<String>,
+    pub day: DayHead,
+    pub slots: Vec<PlanSlot>,
+    pub untimed: Vec<UntimedItem>,
+    #[serde(default)]
+    pub fit: Option<FitLine>,
+    pub coming_due: Vec<DueItem>,
+    #[serde(default)]
+    pub unread: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TodayView {
+    pub day: DayHead,
+    pub now: String,
+    pub slots: Vec<PlanSlot>,
+    pub now_at: usize,
+    pub blocks_done: usize,
+    pub untimed: Vec<UntimedItem>,
+    #[serde(default)]
+    pub fit: Option<FitLine>,
+    #[serde(default)]
+    pub free: Option<String>,
+    pub pending: bool,
+    pub due: Vec<DueItem>,
+    /// Where today's newest plan was proposed; a tapped row opens chat there.
+    #[serde(default)]
+    pub thread_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WeekRow {
+    pub date: String,
+    pub day: String,
+    pub free_min: i64,
+    #[serde(default)]
+    pub planned_min: Option<i64>,
+    pub hours: String,
+    pub all_day: Vec<String>,
+    pub due: Vec<String>,
+    #[serde(default)]
+    pub thread_id: Option<String>,
+}
+
+/// A block a reminder's Start began (ruling 93).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StartedBlock {
+    pub title: String,
+    /// `14:15–15:45`, local.
+    pub when: String,
+}
+
+/// The read-only view beside chat (ruling 110).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlanView {
+    pub today: TodayView,
+    pub week_title: String,
+    pub week: Vec<WeekRow>,
+    /// "November goals".
+    #[serde(default)]
+    pub goals_title: String,
+    #[serde(default)]
+    pub goals: Vec<String>,
+}
+
+/// One row of the People tab. Mirror of `core::people::view::PersonRow`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PersonRow {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub provisional: bool,
+    #[serde(default)]
+    pub about: Option<String>,
+    #[serde(default)]
+    pub last: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PeopleList {
+    pub total: usize,
+    pub rows: Vec<PersonRow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FactLine {
+    pub line: String,
+    pub source: String,
+}
+
+/// What Undo or "Wrong?" does. Sent back as it came; the frontend never builds one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PersonUndo {
+    Answer {
+        mention_id: String,
+    },
+    Wrong {
+        mention_id: String,
+        person_id: String,
+    },
+    Address {
+        address: String,
+        person_id: String,
+    },
+    Exclusion {
+        mention_id: String,
+        person_id: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PersonDecision {
+    pub text: String,
+    pub by: String,
+    #[serde(default)]
+    pub guessed: bool,
+    pub undo: PersonUndo,
+}
+
+/// The person view (ruling 120). Mirror of `core::people::view::PersonView`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PersonView {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub provisional: bool,
+    #[serde(default)]
+    pub also: Vec<String>,
+    #[serde(default)]
+    pub addresses: Vec<String>,
+    #[serde(default)]
+    pub last: Option<String>,
+    #[serde(default)]
+    pub facts: Vec<FactLine>,
+    #[serde(default)]
+    pub appears: Option<String>,
+    #[serde(default)]
+    pub decisions: Vec<PersonDecision>,
+}
+
+/// The evening people questions. Mirror of `core::people::questions::Questions`.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct PeopleQuestions {
+    pub open: usize,
+    #[serde(default)]
+    pub cards: Vec<QuestionCard>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QuestionCard {
+    #[serde(default)]
+    pub key: String,
+    pub picker: bool,
+    pub heading: String,
+    pub source: String,
+    #[serde(default)]
+    pub email: bool,
+    #[serde(default)]
+    pub lapses_tonight: bool,
+    #[serde(default)]
+    pub confirms_address: bool,
+    pub rows: Vec<QuestionRow>,
+}
+
+impl QuestionCard {
+    pub fn done(&self) -> bool {
+        self.rows.iter().all(|r| r.answered.is_some())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QuestionRow {
+    pub mention_id: String,
+    pub name: String,
+    pub line: String,
+    #[serde(default)]
+    pub sender: Option<String>,
+    #[serde(default)]
+    pub candidates: Vec<PersonChoice>,
+    #[serde(default)]
+    pub answered: Option<String>,
+    #[serde(default)]
+    pub more: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PersonChoice {
+    pub person_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub context: String,
+}
+
+/// One tap on a question card. Mirror of `core::people::questions::Reply`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PeopleReply {
+    Person {
+        mention_id: String,
+        person_id: String,
+    },
+    NewPerson {
+        mention_id: String,
+    },
+    DontKnow {
+        mention_id: String,
+    },
+    Spelling {
+        mention_id: String,
+        person_id: String,
+        typo: bool,
+    },
+    Undo {
+        mention_id: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct PeopleReplyOutcome {
+    #[serde(default)]
+    pub ask_spelling: bool,
+}
+
 /// Something the assistant has offered to do, waiting on the user.
 ///
 /// Nothing has happened when one of these exists. The assistant has no write
@@ -1643,6 +1981,11 @@ impl AssistantProposal {
             "transaction.clear" => match arg("statement_source") {
                 Some(s) => format!("Mark a transaction reconciled against {s}"),
                 None => "Mark a transaction reconciled".to_string(),
+            },
+            // Ruling 134: the whole set for the month, replacing any before it.
+            "goal.set" => match arg("month").and_then(month_name) {
+                Some(month) => format!("Set the goals for {month}"),
+                None => "Set the month's goals".to_string(),
             },
             other => other.to_string(),
         }
@@ -1797,6 +2140,11 @@ impl AssistantProposal {
             // The category is in the summary and the identities are opaque ULIDs
             // that mean nothing to a reader; the rationale is what carries this.
             "transaction.categorize" => return None,
+            "goal.set" => {
+                let goals = self.args.get("goals")?.as_array()?;
+                let lines: Vec<&str> = goals.iter().filter_map(|g| g.as_str()).collect();
+                return (!lines.is_empty()).then(|| lines.join("\n"));
+            }
             _ => {}
         }
         // An action this build does not know: show its arguments verbatim so the
@@ -1811,6 +2159,13 @@ impl AssistantProposal {
             .collect();
         (!rendered.is_empty()).then(|| rendered.join("\n"))
     }
+}
+
+/// `2026-12` as "December 2026"; `None` for anything else.
+fn month_name(month: &str) -> Option<String> {
+    chrono::NaiveDate::parse_from_str(&format!("{month}-01"), "%Y-%m-%d")
+        .ok()
+        .map(|d| d.format("%B %Y").to_string())
 }
 
 /// A routine frequency as a person says it.
@@ -2046,6 +2401,25 @@ mod proposal_tests {
             created_at: "2026-09-10T00:00:00Z".into(),
             decision: None,
         }
+    }
+
+    #[test]
+    fn a_goals_card_names_the_month_and_lists_the_goals() {
+        let p = proposal(
+            "goal.set",
+            serde_json::json!({ "month": "2026-12", "goals": ["Thesis ch. 3", "Run twice a week"] }),
+        );
+        assert_eq!(p.summary(), "Set the goals for December 2026");
+        assert_eq!(
+            p.detail().as_deref(),
+            Some("Thesis ch. 3\nRun twice a week")
+        );
+        let odd = proposal(
+            "goal.set",
+            serde_json::json!({ "month": "Dec", "goals": [] }),
+        );
+        assert_eq!(odd.summary(), "Set the month's goals");
+        assert_eq!(odd.detail(), None);
     }
 
     #[test]
@@ -2402,6 +2776,8 @@ mod feature_tests {
             "feature.llm",
             "feature.documents",
             "feature.tasks",
+            "feature.planning",
+            "feature.people",
         ];
         let actual: Vec<&str> = ALL_FEATURES.iter().map(|f| f.key()).collect();
         assert_eq!(actual, expected);

@@ -7,6 +7,7 @@ use std::time::Duration;
 use omni_me_core::assistant::chat_tidy;
 use omni_me_core::assistant::conversation::{PendingQuestion, pending_questions};
 use omni_me_core::assistant::scheduled::{self, ScheduledPrompt};
+use omni_me_core::assistant::specialist::Specialist;
 use omni_me_core::assistant::{
     Retrievers, Session, answer_payload, inbox, promotion, proposals, skipped_payload,
 };
@@ -17,6 +18,7 @@ use omni_me_core::events::{
     ProposalDecision,
 };
 use omni_me_core::llm::LlmClient;
+use omni_me_core::planning::{ritual, rituals};
 use omni_me_core::sync::{PullEvent, PullScheduler};
 use tokio::sync::broadcast::error::RecvError;
 
@@ -39,13 +41,18 @@ pub enum Stopped {
 ///
 /// `scheduled` is set by the check-in and clear on anything a person typed, so it
 /// separates a run nobody is waiting on from one where latency is the whole
-/// experience. Roles A and B are split on exactly that.
+/// experience. Roles A and B are split on exactly that, except the rituals, which the
+/// interactive seat answers: ruling 135 (RULINGS.md).
 fn client_for<'a>(
     interactive: &'a dyn LlmClient,
     batch: &'a dyn LlmClient,
     question: &AssistantQuestionAskedPayload,
 ) -> &'a dyn LlmClient {
-    if question.scheduled {
+    let ritual = question
+        .prompt_name
+        .as_deref()
+        .is_some_and(rituals::is_ritual);
+    if question.scheduled && !ritual {
         batch
     } else {
         interactive
@@ -64,6 +71,8 @@ pub struct Responder<'a> {
     /// Questions older than this are closed without a model call. See
     /// [`Responder::adjudicate`].
     pub horizon: Duration,
+    /// Read fresh before every planning answer (ruling 113).
+    pub calendar: &'a dyn omni_me_core::calendar::sync::Refresh,
 }
 
 impl Responder<'_> {
@@ -144,6 +153,40 @@ impl Responder<'_> {
                 self.maybe_run(&prompt).await;
             }
         }
+        self.maybe_run_morning_plan(&config).await;
+        self.maybe_run_rituals(&config).await;
+    }
+
+    /// The evening shutdown, weekly plan and monthly review (ruling 98): due like any scheduled
+    /// prompt, except on a day the ritual has off or once it has paused itself (99).
+    async fn maybe_run_rituals(&self, config: &ResolvedConfig) {
+        for prompt in rituals::prompts(config) {
+            if !prompt.enabled {
+                continue;
+            }
+            if !rituals::runs_today(&prompt) {
+                continue;
+            }
+            match rituals::paused(self.db, prompt.name).await {
+                Ok(false) => self.maybe_run(&prompt).await,
+                Ok(true) => {}
+                Err(e) => {
+                    tracing::warn!(prompt = prompt.name, error = %e, "could not read its runs; skipping this tick")
+                }
+            }
+        }
+    }
+
+    /// The morning plan (ruling 98): due on his first activity, not at an hour, so it has its own
+    /// due-check and is then raised like any scheduled prompt.
+    async fn maybe_run_morning_plan(&self, config: &ResolvedConfig) {
+        match ritual::draft_due_now(self.db, config).await {
+            Ok(Some(_)) => self.raise(&ritual::as_prompt(config)).await,
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(error = %e, "could not check the morning plan; skipping this tick")
+            }
+        }
     }
 
     async fn maybe_run(&self, prompt: &ScheduledPrompt) {
@@ -161,7 +204,11 @@ impl Responder<'_> {
         if !scheduled::is_due_now(prompt, last) {
             return;
         }
+        self.raise(prompt).await;
+    }
 
+    /// Author the prompt's question, then tidy its earlier threads.
+    async fn raise(&self, prompt: &ScheduledPrompt) {
         let thread_id = ulid::Ulid::new().to_string();
         let message_id = ulid::Ulid::new().to_string();
         let payload = AssistantQuestionAskedPayload {
@@ -330,6 +377,15 @@ impl Responder<'_> {
 
         let llm = client_for(self.llm, self.batch, &question);
         let session = match Session::new(self.db, config, llm) {
+            // The rituals are planning by definition, so they skip the router (ruling 112).
+            Ok(s)
+                if question
+                    .prompt_name
+                    .as_deref()
+                    .is_some_and(rituals::is_ritual) =>
+            {
+                s.with_specialist(Specialist::Planning)
+            }
             Ok(s) => s.with_specialists(),
             Err(e) => {
                 // A session that cannot even be built is a configuration fault,
@@ -345,6 +401,7 @@ impl Responder<'_> {
                 return;
             }
         };
+        let session = session.with_calendar_refresh(self.calendar);
         let session = match self.retrievers.semantic {
             Some(s) => session.with_semantic_search(s),
             None => session,
@@ -563,6 +620,14 @@ mod tests {
         let (fast, good) = (client("role-a"), client("role-b"));
         let picked = client_for(&fast, &good, &question(true));
         assert_eq!(picked.model_name(), "role-b");
+    }
+
+    #[test]
+    fn a_ritual_is_answered_by_the_interactive_model() {
+        let (fast, good) = (client("role-a"), client("role-b"));
+        let mut q = question(true);
+        q.prompt_name = Some(rituals::WEEKLY.into());
+        assert_eq!(client_for(&fast, &good, &q).model_name(), "role-a");
     }
 
     #[test]

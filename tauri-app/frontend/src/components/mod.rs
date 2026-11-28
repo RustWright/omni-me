@@ -11,6 +11,8 @@ pub mod search_pick;
 #[allow(dead_code)]
 pub mod icon;
 pub mod nav;
+pub mod people_questions;
+pub mod plan_card;
 pub mod primitives;
 pub mod privacy_eye;
 pub mod proposal_card;

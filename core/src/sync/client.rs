@@ -184,6 +184,11 @@ impl SyncClient {
         &self.server_url
     }
 
+    /// The authenticated HTTP client, for the other server routes a device calls.
+    pub(super) fn http(&self) -> &reqwest::Client {
+        &self.http
+    }
+
     /// Perform a full sync: pull remote events, then push local events.
     /// Preserved for backward compatibility with integration tests and the
     /// `trigger_sync` Tauri command.

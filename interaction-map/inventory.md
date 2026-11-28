@@ -10,17 +10,20 @@ What the columns mean, and where this is wrong: the script's header.
 | handler | label nearby | effect |
 |---|---|---|
 | `onclick` |  | STATE |
-| `on_done` | Filed. It reads as a receipt, so it is also waiting in Finan | STATE, VIEW |
-| `on_extracted` | Filed in the archive. | STATE, VIEW |
+| `on_done` |  | STATE, VIEW |
+| `on_extracted` | Filed. It reads as a receipt, so it is also waiting in Finan | CALL trigger_sync, STATE |
 | `on_back` |  | STATE, VIEW |
 | `on_purged` |  | STATE, VIEW |
+| `on_back` |  | STATE, VIEW |
+| `on_corrected` |  | STATE |
+| `on_open` |  | STATE, VIEW |
+| `on_delete` |  | STATE, VIEW |
 | `on_back` | Archive | STATE, VIEW |
-| `on_corrected` | Archive | STATE |
-| `on_open` | Archive | STATE, VIEW |
+| `on_purged` | Archive | STATE, VIEW |
 | `onclick` | + Photo | STATE, VIEW |
 | `onclick` | + PDF | STATE, VIEW |
-| `onchange` | All kinds | STATE |
-| `onchange` | All tags | STATE |
+| `on_pick` | reciept | STATE |
+| `on_pick` | Purge… | STATE |
 | `onclick` | Purge \"{tag}\"… | STATE, VIEW |
 | `onclick` |  | STATE, VIEW |
 | `onclick` |  | STATE |
@@ -33,7 +36,7 @@ What the columns mean, and where this is wrong: the script's header.
 
 | handler | label nearby | effect |
 |---|---|---|
-| `onclick` | {doc.display_name()} | VIEW |
+| `onclick` | {crate::money::text(&doc.display_name())} | VIEW |
 
 ### DocumentDetail
 
@@ -43,7 +46,8 @@ What the columns mean, and where this is wrong: the script's header.
 | `on_open` |  | VIEW |
 | `on_open` | The file for this entry hasn't arrived on this device yet. | VIEW |
 | `on_saved` |  | STATE |
-| `on_saved` |  | STATE |
+| `on_saved` |  | STATE, VIEW |
+| `onclick` | Delete document… | — |
 
 ### ParentLink
 
@@ -55,15 +59,16 @@ What the columns mean, and where this is wrong: the script's header.
 
 | handler | label nearby | effect |
 |---|---|---|
-| `onclick` | {kid.display_name()} | VIEW |
+| `onclick` | {crate::money::text(&kid.display_name())} | VIEW |
 
 ### RetentionPanel
 
 | handler | label nearby | effect |
 |---|---|---|
-| `onchange` | Pick a tag… | STATE |
+| `on_pick` | keep for | STATE |
 | `onclick` | give a number of days, at least 1 | STATE |
 | `onclick` | Keep forever | — |
+| `onclick` | No timer | — |
 | `onclick` | Review {group.count}… | — |
 
 ### PurgeGroup
@@ -72,6 +77,7 @@ What the columns mean, and where this is wrong: the script's header.
 |---|---|---|
 | `onclick` | ← Archive | VIEW |
 | `onchange` |  | — |
+| `onclick` | Done | — |
 | `onclick` |  | CALL confirm_document_purge, STATE |
 
 ### TagPanel
@@ -87,14 +93,24 @@ What the columns mean, and where this is wrong: the script's header.
 |---|---|---|
 | `onclick` | Confirming… | — |
 | `on_saved` |  | — |
+| `on_saved` |  | — |
+
+### AddFieldRow
+
+| handler | label nearby | effect |
+|---|---|---|
+| `onclick` | Saving… | — |
+| `onclick` | Cancel | STATE |
+| `onclick` | + Add a value | STATE |
 
 ### FieldRow
 
 | handler | label nearby | effect |
 |---|---|---|
 | `onclick` | Saving… | — |
+| `onclick` | Remove | — |
 | `onclick` | Cancel | STATE |
-| `onclick` | {field.value} | STATE |
+| `onclick` | {crate::money::text(&field.value)} | STATE |
 | `onclick` |  | — |
 
 ## `pages/assistant.rs`
@@ -144,7 +160,7 @@ What the columns mean, and where this is wrong: the script's header.
 
 | handler | label nearby | effect |
 |---|---|---|
-| `onclick` | {title} | VIEW |
+| `onclick` | {crate::money::text(&title)} | VIEW |
 | `onclick` | Restore | — |
 | `onclick` | Delete? | STATE |
 
@@ -181,6 +197,7 @@ What the columns mean, and where this is wrong: the script's header.
 | handler | label nearby | effect |
 |---|---|---|
 | `onclick` | Back | VIEW |
+| `onclick` | Retry | STATE |
 | `on_decided` |  | CALL read_thread_proposals, STATE |
 | `on_send` |  | CALL ask_assistant, CALL read_assistant_thread, STATE, VIEW |
 
@@ -375,20 +392,23 @@ What the columns mean, and where this is wrong: the script's header.
 | handler | label nearby | effect |
 |---|---|---|
 | `onclick` | ← Back | VIEW |
-| `on_decided` | Auto-import review | STATE |
+| `on_decided` |  | STATE |
 
 ### BatchListView
 
 | handler | label nearby | effect |
 |---|---|---|
 | `onclick` | ← Back | VIEW |
+| `on_cancel` |  | STATE |
+| `on_confirm` | Commit {verified.len()} verified batches… | — |
+| `onclick` | Commit {verified.len()} verified batches… | STATE |
 | `on_open` |  | — |
 
 ### BatchListRow
 
 | handler | label nearby | effect |
 |---|---|---|
-| `onclick` | {headline} | VIEW |
+| `onclick` | {money::text(&headline)} | VIEW |
 
 ### SourceEmailPanel
 
@@ -412,7 +432,7 @@ What the columns mean, and where this is wrong: the script's header.
 | `on_cancel` | + Add transaction | STATE |
 | `onclick` | + Add transaction | STATE |
 | `onclick` |  | — |
-| `onclick` | Dismiss failed: {e} | CALL dismiss_batch, STATE, VIEW |
+| `onclick` | Dismiss failed: {e} | CALL dismiss_batch, STATE |
 
 ### DraftRow
 
@@ -518,7 +538,7 @@ What the columns mean, and where this is wrong: the script's header.
 | `onclick` | + Add posting | STATE |
 | `on_input` |  | STATE |
 | `onclick` | Remove | STATE |
-| `on_save` | {msg} | STATE |
+| `on_save` | Saves with {priced} | STATE |
 | `onclick` | Cancel | — |
 | `onclick` | Saving… | — |
 
@@ -659,7 +679,7 @@ What the columns mean, and where this is wrong: the script's header.
 | handler | label nearby | effect |
 |---|---|---|
 | `onchange` | {account_for_classes} | — |
-| `on_input` | {txn.date} · {txn.description} | — |
+| `on_input` | {txn.date} · {money::text(&txn.description)} | — |
 
 ## `pages/import_export.rs`
 
@@ -686,6 +706,20 @@ What the columns mean, and where this is wrong: the script's header.
 | `onclick` | Overwrite and export | CALL export_obsidian, STATE |
 | `onclick` | Cancel | STATE |
 | `onclick` | Done | STATE |
+
+## `pages/jobs.rs`
+
+### JobsSection
+
+| handler | label nearby | effect |
+|---|---|---|
+| `onclick` | Hide | STATE |
+
+### JobRow
+
+| handler | label nearby | effect |
+|---|---|---|
+| `onclick` | {job.title} | CALL list_job_runs, STATE |
 
 ## `pages/journal.rs`
 
@@ -791,6 +825,14 @@ What the columns mean, and where this is wrong: the script's header.
 | `on_add` |  | — |
 | `on_remove` |  | — |
 | `onclick` | Raw properties | STATE |
+
+## `pages/plan.rs`
+
+### PlanPage
+
+| handler | label nearby | effect |
+|---|---|---|
+| `onclick` | Plan | STATE |
 
 ## `pages/routines.rs`
 
@@ -909,6 +951,12 @@ What the columns mean, and where this is wrong: the script's header.
 | handler | label nearby | effect |
 |---|---|---|
 | `on_select` | Applies to the note and journal editors. Takes effect immedi | — |
+
+### PrivacySection
+
+| handler | label nearby | effect |
+|---|---|---|
+| `on_select` | {note} | — |
 
 ### BaseCurrencySection
 
@@ -1037,7 +1085,7 @@ What the columns mean, and where this is wrong: the script's header.
 
 ## `components/proposal_card.rs`
 
-### ProposalCard
+### GenericProposalCard
 
 | handler | label nearby | effect |
 |---|---|---|
@@ -1050,6 +1098,7 @@ What the columns mean, and where this is wrong: the script's header.
 
 | handler | label nearby | effect |
 |---|---|---|
+| `onclick` | Show this document | STATE |
 | `onclick` | ⤢ Full screen and zoom | STATE |
 | `onclick` |  | STATE |
 | `on_close` | true | STATE |
@@ -1076,4 +1125,4 @@ What the columns mean, and where this is wrong: the script's header.
 | `onclick` | Cancel | — |
 | `onclick` | Sending… | — |
 
-_467 handlers._
+_487 handlers._

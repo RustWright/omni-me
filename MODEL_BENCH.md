@@ -2432,3 +2432,37 @@ attempted a new conclusion or a wrong retirement. The gpt-oss pair reviewed in p
 nothing, which is the abstain-by-silence shape key 2 exists to catch. V4-Flash cannot win on a
 re-run: its valid run already carries a wrongful act. **Verdict: Qwen3.6-35B-A3B, clear of the
 noise floor by three acts; to be switched on dev only.**
+
+## Part 11 — Rituals' opening turn (roles A and B) · `--bench-rituals`
+
+**▶ BUILT and run 2026-11-26; decided by him the same day (ruling 135).** The rituals were
+specified for seat B. Their first real runs on dev stalled on B's weekly opening call 3 times in
+4, so this compares the seats on the rituals' own prompts.
+
+**What it runs.** The evening shutdown, weekly plan and monthly review prompts from
+`planning/rituals.rs`, each through the responder's path (Planning brief fixed, production
+retrievers) on three arms: seat A, seat B, and seat B with `enable_thinking: false`. Runs are
+interleaved so a slow spell at the provider lands on every arm. Nothing is written. Data: a pulled
+copy of dev (no plans but one test day, 4 native tasks, 5 waiting hub items, no goals).
+
+**Scored in code:** answered or failed, wall time, tokens, proposals outside the ritual's actions,
+lookups for `plan` or `goal` (the brief states both), and coverage: the weekly names each item it
+should ask about (at most 10), and the monthly names last month. ⚠️ **These criteria were mine,
+chosen before the run, not ruled by him first** as Part 10's were. Text errors were counted after
+reading every answer.
+
+**Run 1** (`~/omni-dev-tools/state/agent-logs/bench-rituals-dev-026deb1-*.log`, 3 runs each):
+
+| arm | answered | median / max | tokens | covered | wasted | errors read in the text |
+|---|---|---|---|---|---|---|
+| A, DeepSeek-V4-Pro | **9/9** | **7 s / 11 s** | **44,691** | 24/27 | 0 | monthly asked about December 3/3; one evening called yesterday "today" |
+| B, Qwen3.6-35B-A3B | 8/9 | 27 s / 300 s | 92,773 | 15/27 | 3 | one stall at the 300 s budget |
+| B, reasoning off | 9/9 | 38 s / 112 s | 340,498 | 25/27 | 17 | leaked "system prompt" and raw task ids twice |
+
+**Run 2, monthly only, after naming the months in the brief** (`7901110`, 5 runs each): A named
+October 4/5 at a 7 s median, B 0/5 at 30 s, B without reasoning 0/5. A still says "December",
+and now says why: on the 26th, "November is almost over, so we're effectively setting goals for
+December". An artefact of benching on the 26th: the real review runs on the 1st.
+
+**Verdict, his:** the rituals go to seat A (ruling 135). Not measured: cost per token (nothing reads
+the provider's `estimated_cost`, R4b), and a monthly review benched on the 1st.

@@ -237,7 +237,11 @@ pub async fn decide(
             .ok_or_else(|| DecideError::UnknownAction(proposal.action.clone()))?;
         // Resolved against the record as it stands now, before anything is
         // built. See [`resolve_args`].
-        let args = resolve_args(db, action, &proposal.args).await?;
+        let args = if action.kind == actions::ActionKind::PlanSet {
+            resolve_plan(db, config, &proposal).await?
+        } else {
+            resolve_args(db, action, &proposal.args).await?
+        };
         // Re-validated against the live declaration, deliberately. A proposal may
         // be approved long after it was made, by a build whose action has moved;
         // carrying out arguments that no longer validate is worse than refusing
@@ -323,6 +327,56 @@ async fn resolve_args(
     // `ParamSource::ResolvedAtApproval`.
     if let Some(obj) = out.as_object_mut() {
         obj.insert("raw_text".to_string(), serde_json::json!(resolved));
+    }
+    Ok(out)
+}
+
+/// A plan is approved only while it is the day's current proposal (ruling 117): a re-plan or its
+/// first block starting closes it. Its block instants are worked out here, against the day as it
+/// stands, and carried in `resolved`. Rejecting it is never gated.
+async fn resolve_plan(
+    db: &Database,
+    config: &ResolvedConfig,
+    proposal: &Proposal,
+) -> Result<serde_json::Value, DecideError> {
+    use crate::planning::plan::{self, PlanStatus};
+    let unreadable = |e: String| DecideError::Invalid(format!("could not read the day: {e}"));
+    let date = proposal
+        .args
+        .get("date")
+        .and_then(|d| d.as_str())
+        .and_then(|d| d.parse().ok())
+        .ok_or_else(|| DecideError::Invalid("the plan names no date".to_string()))?;
+    let same_day = plan::proposals_for(db, date).await.map_err(unreadable)?;
+    let me = same_day
+        .iter()
+        .find(|p| p.proposal_id == proposal.proposal_id)
+        .ok_or_else(|| DecideError::NotFound(proposal.proposal_id.clone()))?;
+    match plan::current_status(db, config, me, Utc::now())
+        .await
+        .map_err(unreadable)?
+    {
+        PlanStatus::Proposed => {}
+        PlanStatus::Superseded => {
+            return Err(DecideError::RecordMoved(
+                "A newer plan for this day replaced this one.".to_string(),
+            ));
+        }
+        PlanStatus::Lapsed => {
+            return Err(DecideError::RecordMoved(
+                "This plan lapsed when its first block was due. Ask for a fresh one.".to_string(),
+            ));
+        }
+        PlanStatus::Accepted | PlanStatus::Skipped => {
+            return Err(DecideError::AlreadyDecided(proposal.proposal_id.clone()));
+        }
+    }
+    let resolved = plan::resolve_for_approval(db, config, &proposal.args)
+        .await
+        .map_err(unreadable)?;
+    let mut out = proposal.args.clone();
+    if let Some(obj) = out.as_object_mut() {
+        obj.insert("resolved".to_string(), serde_json::json!(resolved));
     }
     Ok(out)
 }
@@ -496,6 +550,79 @@ mod tests {
 
     fn good_args() -> serde_json::Value {
         serde_json::json!({ "title": "Renew passport", "body": "Expires May." })
+    }
+
+    /// Ruling 117 (RULINGS.md): a re-plan refuses the old card's approval, and the current one
+    /// records its blocks as instants. Rejecting the old card still works.
+    #[tokio::test]
+    async fn a_replaced_plan_cannot_be_approved_and_the_current_one_is_recorded() {
+        let db = crate::db::test_db().await;
+        let config = ResolvedConfig::new(ConfigMap::new(), ConfigMap::new());
+        let store: Arc<dyn EventStore> = Arc::new(SurrealEventStore::new(db.clone()));
+        let projections = ProjectionRunner::new(
+            db.clone(),
+            vec![
+                Box::new(crate::events::AssistantProjection),
+                Box::new(crate::events::PlanningProjection),
+                Box::new(RoutinesProjection),
+            ],
+        );
+        projections.init_all().await.expect("init projections");
+        let writer = EventWriter::from_config(store, projections, &config, "phone");
+        // Far ahead, so no block has started; the zone is UTC by default.
+        let args = |title: &str| {
+            serde_json::json!({
+                "date": "2099-01-05",
+                "blocks": [format!("12:00-13:00 {title}")],
+                "untimed": ["Email the TA (10 min)"],
+            })
+        };
+        propose_action(&writer, "plan-a", "plan.set", args("Essay")).await;
+        propose_action(&writer, "plan-b", "plan.set", args("Reading")).await;
+
+        let err = decide(
+            &db,
+            &config,
+            &writer,
+            "plan-a",
+            ProposalDecision::Approved,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, DecideError::RecordMoved(_)), "{err:?}");
+
+        decide(
+            &db,
+            &config,
+            &writer,
+            "plan-b",
+            ProposalDecision::Approved,
+            None,
+        )
+        .await
+        .expect("the current plan is approved");
+        let plan = crate::planning::plan::accepted(&db, "2099-01-05".parse().unwrap())
+            .await
+            .unwrap()
+            .expect("the accepted plan is recorded");
+        assert_eq!(plan.blocks[0].title, "Reading");
+        assert_eq!(
+            plan.blocks[0].start,
+            "2099-01-05T12:00:00Z".parse::<DateTime<Utc>>().unwrap()
+        );
+        assert_eq!(plan.untimed[0].minutes, 10);
+
+        decide(
+            &db,
+            &config,
+            &writer,
+            "plan-a",
+            ProposalDecision::Rejected,
+            None,
+        )
+        .await
+        .expect("a replaced plan can still be declined");
     }
 
     async fn note_titles(db: &Database) -> Vec<String> {

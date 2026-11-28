@@ -112,6 +112,32 @@ pub enum EventType {
     TaskProjectClosed,
     HubIndexReceived,
     DeadlineFeedReceived,
+    // Planning: the calendar as read in (ruling 96), and his answers about it.
+    CalendarChanged,
+    CalendarAnswered,
+    // A source's reads started or stopped failing (117).
+    CalendarRead,
+    PlaceSet,
+    TravelTimeSet,
+    // A day plan he accepted (ruling 98); the rest of a plan's life is its proposal.
+    DayPlanAccepted,
+    // A plan block's timer (ruling 93): Start from its reminder or the view, pause and stop on
+    // the view. A start after a pause resumes.
+    BlockTimerStarted,
+    BlockTimerPaused,
+    BlockTimerStopped,
+    // The month's goals, set by the monthly review (rulings 98, 110).
+    MonthGoalsSet,
+    // People: the mention index, answers about it, and confirmed facts (rulings 102-104, 128).
+    PersonAdded,
+    PersonUpdated,
+    MentionRecorded,
+    MentionAnswered,
+    MentionExcluded,
+    AddressConfirmed,
+    FactRecorded,
+    FactRetracted,
+    PersonMergeSet,
 }
 
 impl fmt::Display for EventType {
@@ -183,6 +209,25 @@ impl fmt::Display for EventType {
             EventType::TaskProjectClosed => "task_project_closed",
             EventType::HubIndexReceived => "hub_index_received",
             EventType::DeadlineFeedReceived => "deadline_feed_received",
+            EventType::CalendarChanged => "calendar_changed",
+            EventType::CalendarAnswered => "calendar_answered",
+            EventType::CalendarRead => "calendar_read",
+            EventType::PlaceSet => "place_set",
+            EventType::TravelTimeSet => "travel_time_set",
+            EventType::DayPlanAccepted => "day_plan_accepted",
+            EventType::BlockTimerStarted => "block_timer_started",
+            EventType::BlockTimerPaused => "block_timer_paused",
+            EventType::BlockTimerStopped => "block_timer_stopped",
+            EventType::MonthGoalsSet => "month_goals_set",
+            EventType::PersonAdded => "person_added",
+            EventType::PersonUpdated => "person_updated",
+            EventType::MentionRecorded => "mention_recorded",
+            EventType::MentionAnswered => "mention_answered",
+            EventType::MentionExcluded => "mention_excluded",
+            EventType::AddressConfirmed => "address_confirmed",
+            EventType::FactRecorded => "fact_recorded",
+            EventType::FactRetracted => "fact_retracted",
+            EventType::PersonMergeSet => "person_merge_set",
         };
         write!(f, "{s}")
     }
@@ -259,6 +304,25 @@ impl FromStr for EventType {
             "task_project_closed" => Ok(EventType::TaskProjectClosed),
             "hub_index_received" => Ok(EventType::HubIndexReceived),
             "deadline_feed_received" => Ok(EventType::DeadlineFeedReceived),
+            "calendar_changed" => Ok(EventType::CalendarChanged),
+            "calendar_answered" => Ok(EventType::CalendarAnswered),
+            "calendar_read" => Ok(EventType::CalendarRead),
+            "place_set" => Ok(EventType::PlaceSet),
+            "travel_time_set" => Ok(EventType::TravelTimeSet),
+            "day_plan_accepted" => Ok(EventType::DayPlanAccepted),
+            "block_timer_started" => Ok(EventType::BlockTimerStarted),
+            "block_timer_paused" => Ok(EventType::BlockTimerPaused),
+            "block_timer_stopped" => Ok(EventType::BlockTimerStopped),
+            "month_goals_set" => Ok(EventType::MonthGoalsSet),
+            "person_added" => Ok(EventType::PersonAdded),
+            "person_updated" => Ok(EventType::PersonUpdated),
+            "mention_recorded" => Ok(EventType::MentionRecorded),
+            "mention_answered" => Ok(EventType::MentionAnswered),
+            "mention_excluded" => Ok(EventType::MentionExcluded),
+            "address_confirmed" => Ok(EventType::AddressConfirmed),
+            "fact_recorded" => Ok(EventType::FactRecorded),
+            "fact_retracted" => Ok(EventType::FactRetracted),
+            "person_merge_set" => Ok(EventType::PersonMergeSet),
             other => Err(format!("unknown event type: {other}")),
         }
     }
@@ -337,6 +401,25 @@ impl EventType {
         EventType::TaskProjectClosed,
         EventType::HubIndexReceived,
         EventType::DeadlineFeedReceived,
+        EventType::CalendarChanged,
+        EventType::CalendarAnswered,
+        EventType::CalendarRead,
+        EventType::PlaceSet,
+        EventType::TravelTimeSet,
+        EventType::DayPlanAccepted,
+        EventType::BlockTimerStarted,
+        EventType::BlockTimerPaused,
+        EventType::BlockTimerStopped,
+        EventType::MonthGoalsSet,
+        EventType::PersonAdded,
+        EventType::PersonUpdated,
+        EventType::MentionRecorded,
+        EventType::MentionAnswered,
+        EventType::MentionExcluded,
+        EventType::AddressConfirmed,
+        EventType::FactRecorded,
+        EventType::FactRetracted,
+        EventType::PersonMergeSet,
     ];
 
     /// Every event type a set of features owns, for a scoped wipe.
@@ -462,6 +545,27 @@ impl EventType {
             | EventType::TaskProjectClosed
             | EventType::HubIndexReceived
             | EventType::DeadlineFeedReceived => &[Feature::Tasks],
+
+            EventType::CalendarChanged
+            | EventType::CalendarAnswered
+            | EventType::CalendarRead
+            | EventType::PlaceSet
+            | EventType::TravelTimeSet
+            | EventType::DayPlanAccepted
+            | EventType::BlockTimerStarted
+            | EventType::BlockTimerPaused
+            | EventType::BlockTimerStopped
+            | EventType::MonthGoalsSet => &[Feature::Planning],
+
+            EventType::PersonAdded
+            | EventType::PersonUpdated
+            | EventType::MentionRecorded
+            | EventType::MentionAnswered
+            | EventType::MentionExcluded
+            | EventType::AddressConfirmed
+            | EventType::FactRecorded
+            | EventType::FactRetracted
+            | EventType::PersonMergeSet => &[Feature::People],
 
             EventType::DataWiped
             | EventType::FeedbackCaptured
@@ -1855,6 +1959,96 @@ pub type HubIndexReceivedPayload = crate::tasks::hub::HubIndex;
 /// A read of a deadline feed (LEARN), parsed. `aggregate_id` is the feed's source name.
 pub type DeadlineFeedReceivedPayload = crate::tasks::deadlines::DeadlineFeed;
 
+/// What one read of a calendar source changed. `aggregate_id` is the source's name.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CalendarChangedPayload {
+    pub source: String,
+    /// New and changed occurrences, whole.
+    #[serde(default)]
+    pub upserted: Vec<crate::calendar::CalendarEvent>,
+    /// Uids no longer in the calendar.
+    #[serde(default)]
+    pub removed: Vec<String>,
+}
+
+/// A source's read status changed. Written only on a change, so the latest per source is its
+/// state and a failing one's timestamp is when it started failing. `aggregate_id` is the source.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CalendarReadPayload {
+    pub source: String,
+    pub ok: bool,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+/// One of his answers about the calendar. `aggregate_id` is [`CalendarAnswer::key`]; a later
+/// answer to the same key replaces the earlier one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CalendarAnsweredPayload {
+    pub answer: CalendarAnswer,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CalendarAnswer {
+    /// Whether an all-day event or series takes the day (111).
+    TakesDay { series: String, takes_day: bool },
+    /// The place a series happens at (126).
+    Place { series: String, place: String },
+    /// Which of two clashing events he is going to, that day only (116).
+    Clash {
+        day: chrono::NaiveDate,
+        a: String,
+        b: String,
+        going_to: String,
+    },
+}
+
+/// A named place, created or replaced whole. `aggregate_id` is its name.
+pub type PlaceSetPayload = crate::planning::places::Place;
+
+/// A day plan he accepted, blocks resolved to instants. `aggregate_id` is its date.
+pub type DayPlanAcceptedPayload = crate::planning::plan::AcceptedPlan;
+
+/// A month's goals, replacing any set before. `aggregate_id` is the month, `YYYY-MM`.
+pub type MonthGoalsSetPayload = crate::planning::goals::MonthGoals;
+
+/// A timer action on a block of an accepted plan; the time is the event's timestamp.
+/// `aggregate_id` is [`BlockTimerPayload::key`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockTimerPayload {
+    pub date: chrono::NaiveDate,
+    pub block_start: chrono::DateTime<chrono::Utc>,
+    pub title: String,
+}
+
+impl BlockTimerPayload {
+    /// The plan's date and the block's start, which no other block of that plan shares.
+    pub fn key(&self) -> String {
+        format!("{}/{}", self.date, self.block_start.timestamp())
+    }
+}
+
+/// His estimate of the trip between two places, either direction. `aggregate_id` is the pair.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TravelTimeSetPayload {
+    pub a: String,
+    pub b: String,
+    pub minutes: u32,
+}
+
+impl CalendarAnswer {
+    pub fn key(&self) -> String {
+        match self {
+            CalendarAnswer::TakesDay { series, .. } => format!("takes_day:{series}"),
+            CalendarAnswer::Place { series, .. } => format!("place:{series}"),
+            CalendarAnswer::Clash { day, a, b, .. } => {
+                format!("clash:{day}:{}", crate::calendar::day::pair_key(a, b))
+            }
+        }
+    }
+}
+
 /// Keys the projection hoists into columns. See [`DocumentFieldsExtractedPayload::fields`].
 pub const DOCUMENT_KIND_KEY: &str = "kind";
 pub const DOCUMENT_TITLE_KEY: &str = "title";
@@ -2031,6 +2225,67 @@ pub fn validate_payload(
         }
         EventType::DeadlineFeedReceived => {
             serde_json::from_value::<DeadlineFeedReceivedPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::CalendarChanged => {
+            serde_json::from_value::<CalendarChangedPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::CalendarAnswered => {
+            serde_json::from_value::<CalendarAnsweredPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::CalendarRead => {
+            serde_json::from_value::<CalendarReadPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::PlaceSet => {
+            serde_json::from_value::<PlaceSetPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::TravelTimeSet => {
+            serde_json::from_value::<TravelTimeSetPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::DayPlanAccepted => {
+            serde_json::from_value::<DayPlanAcceptedPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::MonthGoalsSet => {
+            serde_json::from_value::<MonthGoalsSetPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::PersonAdded => {
+            serde_json::from_value::<crate::people::PersonAddedPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::PersonUpdated => {
+            serde_json::from_value::<crate::people::PersonUpdatedPayload>(payload.clone())
+                .map(|_| ())
+        }
+        EventType::MentionRecorded => {
+            serde_json::from_value::<crate::people::MentionRecordedPayload>(payload.clone())
+                .map(|_| ())
+        }
+        EventType::MentionAnswered => {
+            serde_json::from_value::<crate::people::MentionAnsweredPayload>(payload.clone())
+                .map(|_| ())
+        }
+        EventType::MentionExcluded => {
+            serde_json::from_value::<crate::people::MentionExcludedPayload>(payload.clone())
+                .map(|_| ())
+        }
+        EventType::AddressConfirmed => {
+            serde_json::from_value::<crate::people::AddressConfirmedPayload>(payload.clone())
+                .map(|_| ())
+        }
+        EventType::FactRecorded => {
+            serde_json::from_value::<crate::people::FactRecordedPayload>(payload.clone())
+                .map(|_| ())
+        }
+        EventType::FactRetracted => {
+            serde_json::from_value::<crate::people::FactRetractedPayload>(payload.clone())
+                .map(|_| ())
+        }
+        EventType::PersonMergeSet => {
+            serde_json::from_value::<crate::people::PersonMergeSetPayload>(payload.clone())
+                .map(|_| ())
+        }
+        EventType::BlockTimerStarted
+        | EventType::BlockTimerPaused
+        | EventType::BlockTimerStopped => {
+            serde_json::from_value::<BlockTimerPayload>(payload.clone()).map(|_| ())
         }
         EventType::RecordTypeDeclared => {
             serde_json::from_value::<RecordTypeDeclaredPayload>(payload.clone()).map(|_| ())
@@ -2231,10 +2486,29 @@ mod tests {
                 | EventType::TaskProjectCreated
                 | EventType::TaskProjectClosed
                 | EventType::HubIndexReceived
-                | EventType::DeadlineFeedReceived => counted += 1,
+                | EventType::DeadlineFeedReceived
+                | EventType::CalendarChanged
+                | EventType::CalendarAnswered
+                | EventType::CalendarRead
+                | EventType::PlaceSet
+                | EventType::TravelTimeSet
+                | EventType::DayPlanAccepted
+                | EventType::BlockTimerStarted
+                | EventType::BlockTimerPaused
+                | EventType::BlockTimerStopped
+                | EventType::MonthGoalsSet
+                | EventType::PersonAdded
+                | EventType::PersonUpdated
+                | EventType::MentionRecorded
+                | EventType::MentionAnswered
+                | EventType::MentionExcluded
+                | EventType::AddressConfirmed
+                | EventType::FactRecorded
+                | EventType::FactRetracted
+                | EventType::PersonMergeSet => counted += 1,
             }
         }
-        assert_eq!(counted, 66, "EventType::ALL does not list every variant");
+        assert_eq!(counted, 85, "EventType::ALL does not list every variant");
 
         let unique: std::collections::BTreeSet<String> =
             EventType::ALL.iter().map(|t| t.to_string()).collect();

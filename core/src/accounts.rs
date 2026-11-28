@@ -207,6 +207,52 @@ pub fn imbalances(postings: &[Posting]) -> Vec<(String, Decimal)> {
         .collect()
 }
 
+/// A two-currency entry priced so it balances, as hledger infers a conversion.
+#[derive(Debug, Clone)]
+pub struct InferredPrice {
+    /// The currency whose postings now carry the rate.
+    pub commodity: String,
+    /// Its net amount across the entry.
+    pub amount: Decimal,
+    pub fx: FxRate,
+}
+
+/// Price a two-currency entry that does not balance, so it does (ruling 132, RULINGS.md).
+///
+/// Applies only when no posting is priced yet and exactly two currencies are off, in opposite
+/// directions; anything else is left for [`imbalances`] to refuse. The non-base currency is priced
+/// in `base` when one of the two is base, else the received side in the given side.
+pub fn price_two_currencies(postings: &mut [Posting], base: Option<&str>) -> Option<InferredPrice> {
+    if postings.iter().any(|p| p.fx_rate.is_some()) {
+        return None;
+    }
+    let off = imbalances(postings);
+    let [(c1, s1), (c2, s2)] = off.as_slice() else {
+        return None;
+    };
+    if s1.is_sign_negative() == s2.is_sign_negative() {
+        return None;
+    }
+    let ((priced, priced_sum), (quote, quote_sum)) = match base {
+        Some(b) if c1 == b => ((c2, s2), (c1, s1)),
+        Some(b) if c2 == b => ((c1, s1), (c2, s2)),
+        _ if s1.is_sign_positive() => ((c1, s1), (c2, s2)),
+        _ => ((c2, s2), (c1, s1)),
+    };
+    let fx = FxRate {
+        quote_commodity: quote.clone(),
+        rate: -*quote_sum / *priced_sum,
+    };
+    for p in postings.iter_mut().filter(|p| &p.commodity == priced) {
+        p.fx_rate = Some(fx.clone());
+    }
+    Some(InferredPrice {
+        commodity: priced.clone(),
+        amount: *priced_sum,
+        fx,
+    })
+}
+
 /// Stable predicate so query / projection code reads `is_unmatched(p)` instead
 /// of repeating the string comparison. Centralizes "what counts as Unmatched"
 /// — important if we ever sub-namespace (`Unmatched:Northwind`, `Unmatched:Globepay`, etc).
@@ -243,6 +289,70 @@ mod tests {
             fx_rate: None,
             tags: vec![],
         }
+    }
+
+    /// A USD to CAD conversion with a fee, entered as the bank shows it.
+    #[test]
+    fn a_conversion_is_priced_in_the_base_currency() {
+        let mut ps = vec![
+            leg("Assets:NonRegistered:USD", "-200.00", "USD"),
+            leg("Expenses:Fees", "0.50", "USD"),
+            leg("Assets:NonRegistered:CAD", "272.30", "CAD"),
+        ];
+        let got = price_two_currencies(&mut ps, Some("CAD")).unwrap();
+        assert_eq!(got.commodity, "USD");
+        assert_eq!(got.amount, Decimal::from_str("-199.50").unwrap());
+        assert_eq!(got.fx.quote_commodity, "CAD");
+        assert!(imbalances(&ps).is_empty(), "{:?}", imbalances(&ps));
+        // Both USD postings carry the rate; the base leg carries none.
+        assert!(ps[0].fx_rate.is_some() && ps[1].fx_rate.is_some() && ps[2].fx_rate.is_none());
+    }
+
+    #[test]
+    fn a_trade_prices_the_units_in_base_whichever_way_it_goes() {
+        for (units, cash) in [("10", "-22.50"), ("-10", "22.50")] {
+            let mut ps = vec![
+                leg("Assets:TFSA:ABC", units, "ABC"),
+                leg("Assets:TFSA:CAD", cash, "CAD"),
+            ];
+            let got = price_two_currencies(&mut ps, Some("CAD")).unwrap();
+            assert_eq!(got.commodity, "ABC");
+            assert_eq!(got.fx.rate, Decimal::from_str("2.25").unwrap());
+            assert!(imbalances(&ps).is_empty());
+        }
+    }
+
+    #[test]
+    fn with_no_base_among_them_the_received_side_is_priced() {
+        let mut ps = vec![
+            leg("Assets:NonRegistered:USD", "-100", "USD"),
+            leg("Assets:NonRegistered:EUR", "92", "EUR"),
+        ];
+        let got = price_two_currencies(&mut ps, Some("CAD")).unwrap();
+        assert_eq!(got.commodity, "EUR");
+        assert_eq!(got.fx.quote_commodity, "USD");
+        assert!(imbalances(&ps).is_empty());
+    }
+
+    /// Only the two-currency conversion shape is inferred; everything else is still refused.
+    #[test]
+    fn anything_else_is_left_unpriced() {
+        let three = &mut [
+            leg("A:USD", "-1", "USD"),
+            leg("A:CAD", "1", "CAD"),
+            leg("A:EUR", "1", "EUR"),
+        ];
+        assert!(price_two_currencies(three, Some("CAD")).is_none());
+        let same_side = &mut [leg("A:USD", "1", "USD"), leg("A:CAD", "1", "CAD")];
+        assert!(price_two_currencies(same_side, Some("CAD")).is_none());
+        let one = &mut [leg("A:CAD", "1", "CAD"), leg("B:CAD", "-0.5", "CAD")];
+        assert!(price_two_currencies(one, Some("CAD")).is_none());
+        let balanced = &mut [leg("A:CAD", "1", "CAD"), leg("B:CAD", "-1", "CAD")];
+        assert!(price_two_currencies(balanced, Some("CAD")).is_none());
+        let mut priced = vec![leg("A:USD", "-1", "USD"), leg("A:CAD", "1.4", "CAD")];
+        priced[0].fx_rate = Some(fx_rate_into_base(Decimal::from_str("1.3").unwrap(), "CAD"));
+        assert!(price_two_currencies(&mut priced, Some("CAD")).is_none());
+        assert!(priced[1].fx_rate.is_none());
     }
 
     #[test]

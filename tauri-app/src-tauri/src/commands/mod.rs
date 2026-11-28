@@ -20,6 +20,8 @@ pub mod jobs;
 pub mod journal_import;
 pub mod llm;
 pub mod notes;
+pub mod people;
+pub mod planning;
 pub mod record_types;
 pub mod routines;
 pub mod settings;

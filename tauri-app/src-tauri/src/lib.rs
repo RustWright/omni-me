@@ -1,4 +1,5 @@
 mod auto_close_scheduler;
+mod block_reminders;
 mod commands;
 mod recurring_scanner;
 
@@ -438,6 +439,7 @@ pub fn run() {
     #[cfg(mobile)]
     {
         builder = builder.plugin(tauri_plugin_deep_link::init());
+        builder = builder.plugin(tauri_plugin_notification::init());
     }
 
     builder
@@ -735,6 +737,10 @@ pub fn run() {
                     last_journal_import_path: tokio::sync::Mutex::new(None),
                     journal_cache: tokio::sync::RwLock::new(None),
                 });
+
+                // After `manage`: it reads AppState.
+                #[cfg(mobile)]
+                block_reminders::spawn(handle.clone());
             });
 
             Ok(())
@@ -801,6 +807,16 @@ pub fn run() {
             commands::assistant::list_finance_proposals,
             commands::assistant::read_thread_proposals,
             commands::assistant::decide_assistant_proposal,
+            commands::planning::plan_card,
+            commands::planning::plan_view,
+            commands::planning::take_block_start,
+            commands::planning::block_timer,
+            commands::people::people_list,
+            commands::people::person_view,
+            commands::people::person_undo,
+            commands::people::people_questions,
+            commands::people::people_reply,
+            commands::people::people_closest,
             commands::assistant::archive_assistant_thread,
             commands::assistant::delete_assistant_thread,
             commands::assistant::list_beliefs,
@@ -825,6 +841,7 @@ pub fn run() {
             // Budget — transactions
             commands::budget::record_transaction,
             commands::budget::update_transaction,
+            commands::budget::preview_postings,
             commands::budget::categorize_transaction,
             commands::budget::tag_transaction,
             commands::budget::delete_transaction,

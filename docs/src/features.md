@@ -22,11 +22,14 @@ app, switching a feature off and on again would mean losing what it held.
 | LLM | `feature.llm` | Extracting structure from documents, photos and email |
 | Documents | `feature.documents` | The document archive — files you scan or upload, and what was read out of them |
 | Tasks | `feature.tasks` | Your own tasks and projects, the tasks your project repos list, and coursework deadlines |
+| Planning | `feature.planning` | Your calendar as read in, and the plans made against it |
+| People | `feature.people` | The people your records mention, your answers about who is who, and the facts you confirmed |
 
 Journal, Notes, Routines, Finances and Documents each own a tab. Auto-import and the
 LLM do not: they appear as flows inside Finances, so switching either off removes those
 flows and its settings section but no tab. Tasks has no tab either: tasks are made and
 changed in chat, and switching it off removes them from what the assistant can see and do.
+Planning has no tab: plans are made in chat.
 
 Documents is deliberately its own feature rather than part of Finances. The archive
 holds tax notices, paystubs and leases as readily as bank statements, so filing it

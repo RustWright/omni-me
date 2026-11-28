@@ -427,6 +427,19 @@ async fn propose(db: &Database, config: &ResolvedConfig, args: &Value) -> Value 
             Err(refusal) => return refusal,
         }
     }
+    // Ruling 112 (RULINGS.md): a plan the day cannot hold goes back to the model, never to him.
+    let mut fit = None;
+    if action.name == crate::planning::plan::PLAN_SET {
+        match crate::planning::plan::check_proposal(db, config, &validated, chrono::Utc::now())
+            .await
+        {
+            Ok(checked) => {
+                warning = checked.over.clone();
+                fit = Some(checked.fit);
+            }
+            Err(why) => return json!({ "error": why }),
+        }
+    }
     // Ruling 8 (RULINGS.md) covers moving an entry's date as much as recording one.
     if action.name == "transaction.update"
         && let Some(date) = validated.get("date").and_then(Value::as_str)
@@ -448,6 +461,9 @@ async fn propose(db: &Database, config: &ResolvedConfig, args: &Value) -> Value 
     if let Some(w) = warning {
         // The loop puts this on the card; the model is told so it can say why.
         out["warning"] = json!(w);
+    }
+    if let Some(f) = fit {
+        out["fit"] = json!({ "planned_min": f.planned_min, "free_min": f.free_min });
     }
     out
 }

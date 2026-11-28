@@ -819,6 +819,12 @@ mod tests {
         // user wrote. Recall with provenance and confidence is Phase E's job.
         // `the_catalog_does_not_expose_conversations` holds this line.
         "assistant",
+        // The calendar as read in, places and plans: reached through the planning tools, which
+        // own the free-time arithmetic, so the model never sums minutes itself (ruling 112).
+        "planning",
+        // Other people's data reaches a model only on a ZDR seat (ruling 107), through the
+        // person lookup verb [0134] will add, never through generic search.
+        "people",
     ];
 
     #[test]

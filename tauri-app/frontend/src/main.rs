@@ -30,6 +30,8 @@ use pages::assistant::AssistantPage;
 use pages::finances::FinancesPage;
 use pages::journal::JournalPage;
 use pages::notes::NotesPage;
+use pages::people::PeoplePage;
+use pages::plan::PlanPage;
 use pages::routines::RoutinesPage;
 use pages::settings::SettingsPage;
 use screen_context::{ScreenContext, ScreenReport};
@@ -41,6 +43,8 @@ pub enum Tab {
     Journal,
     Notes,
     Assistant,
+    Plan,
+    People,
     Routines,
     Finances,
     Archive,
@@ -56,6 +60,8 @@ impl Tab {
             Tab::Journal => "journal",
             Tab::Notes => "notes",
             Tab::Assistant => "assistant",
+            Tab::Plan => "plan",
+            Tab::People => "people",
             Tab::Routines => "routines",
             Tab::Finances => "finances",
             Tab::Archive => "archive",
@@ -68,6 +74,8 @@ impl Tab {
             "journal" => Some(Tab::Journal),
             "notes" => Some(Tab::Notes),
             "assistant" => Some(Tab::Assistant),
+            "plan" => Some(Tab::Plan),
+            "people" => Some(Tab::People),
             "routines" => Some(Tab::Routines),
             "finances" => Some(Tab::Finances),
             "archive" => Some(Tab::Archive),
@@ -85,6 +93,8 @@ impl Tab {
             Tab::Journal => Some(types::Feature::Journal),
             Tab::Notes => Some(types::Feature::Notes),
             Tab::Assistant => Some(types::Feature::Llm),
+            Tab::Plan => Some(types::Feature::Planning),
+            Tab::People => Some(types::Feature::People),
             Tab::Routines => Some(types::Feature::Routines),
             Tab::Finances => Some(types::Feature::Finances),
             Tab::Archive => Some(types::Feature::Documents),
@@ -124,7 +134,7 @@ pub struct NavRequest(pub Signal<Option<NavTarget>>);
 ///
 /// A tab alone is not a destination: "12 items waiting" must land on the 12 items, not the
 /// tab's root. Typed, because a mistyped string key would silently route to the root.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum NavIntent {
     /// Finances: draw attention to the review inbox card.
     ///
@@ -135,10 +145,16 @@ pub enum NavIntent {
     FinancesReview,
     /// Archive: open the list already narrowed to unchecked fields.
     ArchiveUnverified,
+    /// Assistant: open `thread_id`, or the new-conversation composer when `None`, with `draft`
+    /// in the composer. Never sent for him: he finishes the question.
+    Chat {
+        thread_id: Option<String>,
+        draft: String,
+    },
 }
 
 /// A tab plus where in it to land.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct NavTarget {
     pub tab: Tab,
     pub intent: Option<NavIntent>,
@@ -376,7 +392,7 @@ fn App() -> Element {
     let mut pending_nav_intent = use_signal(|| None::<NavIntent>);
     use_context_provider(|| PendingNavIntent(pending_nav_intent));
     use_effect(move || {
-        let Some(target) = *nav_request.read() else {
+        let Some(target) = nav_request.read().clone() else {
             return;
         };
         nav_request.set(None);
@@ -839,6 +855,36 @@ fn App() -> Element {
         }
     });
 
+    // Start on a block reminder: taken at mount (the tap launched the app) and on each
+    // `omni:block-start` from MainActivity (it was running). The outcome opens the Plan view.
+    let block_start_signal = use_signal(|| None);
+    let block_start_note = use_context_provider(|| pages::plan::BlockStartNote(block_start_signal));
+    use_hook(move || {
+        let (tx, mut rx) = futures::channel::mpsc::unbounded::<()>();
+        let _ = tx.unbounded_send(());
+        bridge::listen_window_event("omni:block-start", move || {
+            let _ = tx.unbounded_send(());
+        });
+        let mut note = block_start_note.0;
+        spawn(async move {
+            while rx.next().await.is_some() {
+                let outcome = match bridge::invoke_take_block_start().await {
+                    Ok(None) => continue,
+                    Ok(Some(b)) => Ok(b),
+                    Err(e) => Err(e),
+                };
+                share_claimed_tab.set(true);
+                while feature_set.peek().is_none() {
+                    timer::sleep_ms(20).await;
+                }
+                note.set(Some(outcome));
+                if Tab::Plan.visible(&feature_set.peek().clone().unwrap_or_default()) {
+                    active_tab.set(Tab::Plan);
+                }
+            }
+        });
+    });
+
     // `omni-me://<tab>` from a notification tap: taken at mount (a cold start) and
     // on each `deep-link:open` (the app was running). A tab this launch does not
     // render is ignored, as a share intent's is.
@@ -1044,6 +1090,8 @@ fn App() -> Element {
                             Tab::Finances => rsx! { FinancesPage {} },
                             Tab::Archive => rsx! { ArchivePage {} },
                             Tab::Assistant => rsx! { AssistantPage {} },
+                            Tab::Plan => rsx! { PlanPage {} },
+                            Tab::People => rsx! { PeoplePage {} },
                             Tab::Settings => rsx! { SettingsPage {} },
                         }
                     }
@@ -1122,7 +1170,7 @@ mod tab_visibility_tests {
     #[test]
     fn all_tabs_show_by_default() {
         let features = Features::default();
-        assert_eq!(components::nav::ALL_TABS.len(), 7);
+        assert_eq!(components::nav::ALL_TABS.len(), 9);
         for tab in components::nav::ALL_TABS {
             assert!(tab.visible(&features), "{} hidden by default", tab.as_key());
         }
@@ -1195,7 +1243,7 @@ mod tab_visibility_tests {
         assert_eq!(
             visible,
             vec![
-                "journal", "notes", "routines", "finances", "archive", "settings"
+                "journal", "notes", "routines", "finances", "archive", "plan", "people", "settings"
             ]
         );
     }

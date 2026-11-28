@@ -26,6 +26,8 @@ pub enum ConfigKey {
     FeatureLlm,
     FeatureDocuments,
     FeatureTasks,
+    FeaturePlanning,
+    FeaturePeople,
     AppearanceTheme,
     AppearanceAccent,
     AssistantEmbedModel,
@@ -51,6 +53,12 @@ pub enum ConfigKey {
     NotifyLargeCharge,
     NotifyTierLargeCharge,
     NotifyChargesAtNight,
+    PlanningBedtime,
+    PlanningMorningRoutine,
+    PlanningEveningRoutine,
+    PlanningFallbackHour,
+    PlanningIndexStaleDays,
+    PlanningTaskStaleDays,
 }
 
 /// The tiers an alert kind can be set to. Review lists it in the daily summary.
@@ -75,6 +83,11 @@ pub fn backfill_before(value: &str) -> Option<chrono::NaiveDate> {
     chrono::NaiveDate::parse_from_str(value.trim(), "%Y-%m-%d").ok()
 }
 
+/// The time in a `planning.bedtime` value (`HH:MM`, 24-hour), or `None`.
+pub fn clock_time(value: &str) -> Option<chrono::NaiveTime> {
+    chrono::NaiveTime::parse_from_str(value.trim(), "%H:%M").ok()
+}
+
 /// Display / persistence order, and the order the settings screen renders.
 pub const ALL_KEYS: &[ConfigKey] = &[
     ConfigKey::FeatureJournal,
@@ -85,6 +98,8 @@ pub const ALL_KEYS: &[ConfigKey] = &[
     ConfigKey::FeatureLlm,
     ConfigKey::FeatureDocuments,
     ConfigKey::FeatureTasks,
+    ConfigKey::FeaturePlanning,
+    ConfigKey::FeaturePeople,
     ConfigKey::AppearanceTheme,
     ConfigKey::AppearanceAccent,
     ConfigKey::AssistantEmbedModel,
@@ -110,6 +125,12 @@ pub const ALL_KEYS: &[ConfigKey] = &[
     ConfigKey::NotifyLargeCharge,
     ConfigKey::NotifyTierLargeCharge,
     ConfigKey::NotifyChargesAtNight,
+    ConfigKey::PlanningBedtime,
+    ConfigKey::PlanningMorningRoutine,
+    ConfigKey::PlanningEveningRoutine,
+    ConfigKey::PlanningFallbackHour,
+    ConfigKey::PlanningIndexStaleDays,
+    ConfigKey::PlanningTaskStaleDays,
 ];
 
 /// The theme values `appearance.theme` accepts. `System` follows
@@ -159,6 +180,8 @@ impl fmt::Display for ConfigKey {
             ConfigKey::FeatureLlm => "feature.llm",
             ConfigKey::FeatureDocuments => "feature.documents",
             ConfigKey::FeatureTasks => "feature.tasks",
+            ConfigKey::FeaturePlanning => "feature.planning",
+            ConfigKey::FeaturePeople => "feature.people",
             ConfigKey::AppearanceTheme => "appearance.theme",
             ConfigKey::AppearanceAccent => "appearance.accent",
             ConfigKey::AssistantEmbedModel => "assistant.embed_model",
@@ -184,6 +207,12 @@ impl fmt::Display for ConfigKey {
             ConfigKey::NotifyLargeCharge => "notify.large_charge",
             ConfigKey::NotifyTierLargeCharge => "notify.tier.large_charge",
             ConfigKey::NotifyChargesAtNight => "notify.charges_at_night",
+            ConfigKey::PlanningBedtime => "planning.bedtime",
+            ConfigKey::PlanningMorningRoutine => "planning.morning_routine",
+            ConfigKey::PlanningEveningRoutine => "planning.evening_routine",
+            ConfigKey::PlanningFallbackHour => "planning.fallback_hour",
+            ConfigKey::PlanningIndexStaleDays => "planning.index_stale_days",
+            ConfigKey::PlanningTaskStaleDays => "planning.task_stale_days",
         };
         write!(f, "{s}")
     }
@@ -202,6 +231,8 @@ impl FromStr for ConfigKey {
             "feature.llm" => Ok(ConfigKey::FeatureLlm),
             "feature.documents" => Ok(ConfigKey::FeatureDocuments),
             "feature.tasks" => Ok(ConfigKey::FeatureTasks),
+            "feature.planning" => Ok(ConfigKey::FeaturePlanning),
+            "feature.people" => Ok(ConfigKey::FeaturePeople),
             "appearance.theme" => Ok(ConfigKey::AppearanceTheme),
             "appearance.accent" => Ok(ConfigKey::AppearanceAccent),
             "assistant.embed_model" => Ok(ConfigKey::AssistantEmbedModel),
@@ -227,6 +258,12 @@ impl FromStr for ConfigKey {
             "notify.large_charge" => Ok(ConfigKey::NotifyLargeCharge),
             "notify.tier.large_charge" => Ok(ConfigKey::NotifyTierLargeCharge),
             "notify.charges_at_night" => Ok(ConfigKey::NotifyChargesAtNight),
+            "planning.bedtime" => Ok(ConfigKey::PlanningBedtime),
+            "planning.morning_routine" => Ok(ConfigKey::PlanningMorningRoutine),
+            "planning.evening_routine" => Ok(ConfigKey::PlanningEveningRoutine),
+            "planning.fallback_hour" => Ok(ConfigKey::PlanningFallbackHour),
+            "planning.index_stale_days" => Ok(ConfigKey::PlanningIndexStaleDays),
+            "planning.task_stale_days" => Ok(ConfigKey::PlanningTaskStaleDays),
             other => Err(format!("unknown config key: {other}")),
         }
     }
@@ -318,6 +355,8 @@ pub enum ConfigGroup {
     Archive,
     /// When alerts may interrupt. Read by the server, which sends them.
     Notifications,
+    /// The day's shape the planner works from (ruling 114).
+    Planning,
 }
 
 /// Which layer supplied the value that is actually in effect.
@@ -347,7 +386,9 @@ impl ConfigKey {
             | ConfigKey::FeatureAutoImport
             | ConfigKey::FeatureLlm
             | ConfigKey::FeatureDocuments
-            | ConfigKey::FeatureTasks => ConfigValue::Bool(true),
+            | ConfigKey::FeatureTasks
+            | ConfigKey::FeaturePlanning
+            | ConfigKey::FeaturePeople => ConfigValue::Bool(true),
             ConfigKey::AppearanceTheme => ConfigValue::Text("dark".to_string()),
             ConfigKey::AppearanceAccent => ConfigValue::Text("blue".to_string()),
             // 384 dimensions and 133 MB: the largest embedder that leaves room for
@@ -427,6 +468,19 @@ impl ConfigKey {
             ConfigKey::NotifyLargeCharge => ConfigValue::Int(500),
             // Ruling 59 (RULINGS.md): charge alerts wait out quiet hours unless this is on.
             ConfigKey::NotifyChargesAtNight => ConfigValue::Bool(false),
+            // Ruling 114 (RULINGS.md): the one number he sets, as something to aim at.
+            ConfigKey::PlanningBedtime => ConfigValue::Text("23:30".to_string()),
+            // Routine group names; empty is no routine, so no minutes are taken off the day.
+            ConfigKey::PlanningMorningRoutine | ConfigKey::PlanningEveningRoutine => {
+                ConfigValue::Text(String::new())
+            }
+            // Ruling 98 (RULINGS.md): the morning plan is drafted at his first activity, and at
+            // this hour only when nothing has happened by then.
+            ConfigKey::PlanningFallbackHour => ConfigValue::Int(11),
+            // Ruling 92 (RULINGS.md): an index unchanged 21 days is asked about as one line, and a
+            // native task untouched 4 weeks is offered for drop in the weekly plan.
+            ConfigKey::PlanningIndexStaleDays => ConfigValue::Int(21),
+            ConfigKey::PlanningTaskStaleDays => ConfigValue::Int(28),
         }
     }
 
@@ -440,6 +494,8 @@ impl ConfigKey {
             | ConfigKey::FeatureLlm
             | ConfigKey::FeatureDocuments
             | ConfigKey::FeatureTasks
+            | ConfigKey::FeaturePlanning
+            | ConfigKey::FeaturePeople
             | ConfigKey::AssistantRerank
             | ConfigKey::AssistantCheckIn
             | ConfigKey::NotifyChargesAtNight => ValueKind::Bool,
@@ -455,8 +511,14 @@ impl ConfigKey {
             | ConfigKey::NotifyTierMailFailing
             | ConfigKey::NotifyTierBankNeedsUser
             | ConfigKey::NotifyTierBankFailing
-            | ConfigKey::NotifyTierLargeCharge => ValueKind::Text,
+            | ConfigKey::NotifyTierLargeCharge
+            | ConfigKey::PlanningBedtime
+            | ConfigKey::PlanningMorningRoutine
+            | ConfigKey::PlanningEveningRoutine => ValueKind::Text,
             ConfigKey::AssistantCheckInHour
+            | ConfigKey::PlanningFallbackHour
+            | ConfigKey::PlanningIndexStaleDays
+            | ConfigKey::PlanningTaskStaleDays
             | ConfigKey::AssistantMaxTurns
             | ConfigKey::AssistantChatArchiveDays
             | ConfigKey::AssistantChatDeleteDays
@@ -499,7 +561,14 @@ impl ConfigKey {
             | ConfigKey::NotifyTierBankFailing
             | ConfigKey::NotifyLargeCharge
             | ConfigKey::NotifyTierLargeCharge
-            | ConfigKey::NotifyChargesAtNight => true,
+            | ConfigKey::NotifyChargesAtNight
+            // Read each time a day's plan inputs are assembled.
+            | ConfigKey::PlanningBedtime
+            | ConfigKey::PlanningMorningRoutine
+            | ConfigKey::PlanningEveningRoutine
+            | ConfigKey::PlanningFallbackHour
+            | ConfigKey::PlanningIndexStaleDays
+            | ConfigKey::PlanningTaskStaleDays => true,
             ConfigKey::FeatureJournal
             | ConfigKey::FeatureNotes
             | ConfigKey::FeatureRoutines
@@ -508,6 +577,8 @@ impl ConfigKey {
             | ConfigKey::FeatureLlm
             | ConfigKey::FeatureDocuments
             | ConfigKey::FeatureTasks
+            | ConfigKey::FeaturePlanning
+            | ConfigKey::FeaturePeople
             // Models are loaded once at startup and held resident. Reloading one
             // mid-run would stall every question for the length of a download.
             | ConfigKey::AssistantEmbedModel
@@ -527,6 +598,8 @@ impl ConfigKey {
             ConfigKey::FeatureLlm => "LLM",
             ConfigKey::FeatureDocuments => "Documents",
             ConfigKey::FeatureTasks => "Tasks",
+            ConfigKey::FeaturePlanning => "Planning",
+            ConfigKey::FeaturePeople => "People",
             ConfigKey::AppearanceTheme => "Theme",
             ConfigKey::AppearanceAccent => "Accent",
             ConfigKey::AssistantEmbedModel => "Embedding model",
@@ -552,6 +625,14 @@ impl ConfigKey {
             ConfigKey::NotifyLargeCharge => "Large charge alert at (0 is off)",
             ConfigKey::NotifyTierLargeCharge => "Alert: large charge",
             ConfigKey::NotifyChargesAtNight => "Charge alerts during quiet hours",
+            ConfigKey::PlanningBedtime => "Bedtime target (HH:MM)",
+            ConfigKey::PlanningMorningRoutine => "Morning routine (routine name)",
+            ConfigKey::PlanningEveningRoutine => "Evening routine (routine name)",
+            ConfigKey::PlanningFallbackHour => "Morning plan if nothing by (hour)",
+            ConfigKey::PlanningIndexStaleDays => {
+                "Ask if a project's task list is current after (days)"
+            }
+            ConfigKey::PlanningTaskStaleDays => "Offer to drop a task untouched for (days)",
         }
     }
 
@@ -571,6 +652,8 @@ impl ConfigKey {
             ConfigKey::FeatureLlm => Some(Feature::Llm),
             ConfigKey::FeatureDocuments => Some(Feature::Documents),
             ConfigKey::FeatureTasks => Some(Feature::Tasks),
+            ConfigKey::FeaturePlanning => Some(Feature::Planning),
+            ConfigKey::FeaturePeople => Some(Feature::People),
             ConfigKey::AppearanceTheme
             | ConfigKey::AppearanceAccent
             // Not a `Feature`: these own no projection, no tab and no scheduler.
@@ -597,7 +680,13 @@ impl ConfigKey {
             | ConfigKey::NotifyTierBankFailing
             | ConfigKey::NotifyLargeCharge
             | ConfigKey::NotifyTierLargeCharge
-            | ConfigKey::NotifyChargesAtNight => None,
+            | ConfigKey::NotifyChargesAtNight
+            | ConfigKey::PlanningBedtime
+            | ConfigKey::PlanningMorningRoutine
+            | ConfigKey::PlanningEveningRoutine
+            | ConfigKey::PlanningFallbackHour
+            | ConfigKey::PlanningIndexStaleDays
+            | ConfigKey::PlanningTaskStaleDays => None,
         }
     }
 
@@ -615,7 +704,9 @@ impl ConfigKey {
             | ConfigKey::FeatureAutoImport
             | ConfigKey::FeatureLlm
             | ConfigKey::FeatureDocuments
-            | ConfigKey::FeatureTasks => ConfigGroup::Features,
+            | ConfigKey::FeatureTasks
+            | ConfigKey::FeaturePlanning
+            | ConfigKey::FeaturePeople => ConfigGroup::Features,
             ConfigKey::AppearanceTheme | ConfigKey::AppearanceAccent => ConfigGroup::Appearance,
             ConfigKey::AssistantEmbedModel
             | ConfigKey::AssistantRerank
@@ -640,6 +731,12 @@ impl ConfigKey {
             | ConfigKey::NotifyLargeCharge
             | ConfigKey::NotifyTierLargeCharge
             | ConfigKey::NotifyChargesAtNight => ConfigGroup::Notifications,
+            ConfigKey::PlanningBedtime
+            | ConfigKey::PlanningMorningRoutine
+            | ConfigKey::PlanningEveningRoutine
+            | ConfigKey::PlanningFallbackHour
+            | ConfigKey::PlanningIndexStaleDays
+            | ConfigKey::PlanningTaskStaleDays => ConfigGroup::Planning,
         }
     }
 
@@ -682,8 +779,10 @@ impl ConfigKey {
             ConfigKey::ArchiveBackfillBatch => Some((1, 200)),
             ConfigKey::NotifyQuietStart
             | ConfigKey::NotifyQuietEnd
-            | ConfigKey::NotifySummaryHour => Some((0, 23)),
+            | ConfigKey::NotifySummaryHour
+            | ConfigKey::PlanningFallbackHour => Some((0, 23)),
             ConfigKey::NotifyLargeCharge => Some((0, 1_000_000)),
+            ConfigKey::PlanningIndexStaleDays | ConfigKey::PlanningTaskStaleDays => Some((1, 365)),
             _ => None,
         }
     }
@@ -730,6 +829,12 @@ impl ConfigKey {
                 return Err(format!("{self} must be an IANA time zone, got {t:?}"));
             }
         }
+        if self == ConfigKey::PlanningBedtime {
+            let t = value.as_text().unwrap_or_default();
+            if clock_time(t).is_none() {
+                return Err(format!("{self} must be a time like 23:30, got {t:?}"));
+            }
+        }
         Ok(())
     }
 }
@@ -749,6 +854,8 @@ pub enum Feature {
     Llm,
     Documents,
     Tasks,
+    Planning,
+    People,
 }
 
 /// Every feature, in the order [`ALL_KEYS`] lists their switches.
@@ -761,6 +868,8 @@ pub const ALL_FEATURES: &[Feature] = &[
     Feature::Llm,
     Feature::Documents,
     Feature::Tasks,
+    Feature::Planning,
+    Feature::People,
 ];
 
 impl Feature {
@@ -775,6 +884,8 @@ impl Feature {
             Feature::Llm => ConfigKey::FeatureLlm,
             Feature::Documents => ConfigKey::FeatureDocuments,
             Feature::Tasks => ConfigKey::FeatureTasks,
+            Feature::Planning => ConfigKey::FeaturePlanning,
+            Feature::People => ConfigKey::FeaturePeople,
         }
     }
 
@@ -910,6 +1021,8 @@ mod tests {
                 | ConfigKey::FeatureLlm
                 | ConfigKey::FeatureDocuments
                 | ConfigKey::FeatureTasks
+                | ConfigKey::FeaturePlanning
+                | ConfigKey::FeaturePeople
                 | ConfigKey::AppearanceTheme
                 | ConfigKey::AppearanceAccent
                 | ConfigKey::AssistantEmbedModel
@@ -934,11 +1047,17 @@ mod tests {
                 | ConfigKey::NotifyTierBankFailing
                 | ConfigKey::NotifyLargeCharge
                 | ConfigKey::NotifyTierLargeCharge
-                | ConfigKey::NotifyChargesAtNight => counted += 1,
+                | ConfigKey::NotifyChargesAtNight
+                | ConfigKey::PlanningBedtime
+                | ConfigKey::PlanningMorningRoutine
+                | ConfigKey::PlanningEveningRoutine
+                | ConfigKey::PlanningFallbackHour
+                | ConfigKey::PlanningIndexStaleDays
+                | ConfigKey::PlanningTaskStaleDays => counted += 1,
             }
         }
         assert_eq!(
-            counted, 33,
+            counted, 41,
             "ALL_KEYS does not list every ConfigKey variant"
         );
 
@@ -976,11 +1095,13 @@ mod tests {
                 | Feature::AutoImport
                 | Feature::Llm
                 | Feature::Documents
-                | Feature::Tasks => counted += 1,
+                | Feature::Tasks
+                | Feature::Planning
+                | Feature::People => counted += 1,
             }
         }
         assert_eq!(
-            counted, 8,
+            counted, 10,
             "ALL_FEATURES does not list every Feature variant"
         );
 

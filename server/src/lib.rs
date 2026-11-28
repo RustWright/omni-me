@@ -206,6 +206,8 @@ pub struct AppState {
     /// unconfirmed preview rather than let one be redeemed against an archive that
     /// has moved on.
     pub purge_ticket: Arc<tokio::sync::Mutex<Option<routes::PurgeTicket>>>,
+    /// `None` when [`RunConfig::calendar`] is.
+    pub calendar: Option<Arc<omni_me_core::calendar::sync::Reader>>,
 }
 
 /// The shared runtime handles [`run`] hands a [`SourceBuilder`] so it can
@@ -237,6 +239,9 @@ pub type SourceBuilder = Box<dyn FnOnce(SourceCtx) -> SourceFuture + Send>;
 /// intentionally absent here.
 pub struct RunConfig {
     pub source_builder: SourceBuilder,
+    /// The calendar this server reads every 15 minutes and on `POST /calendar/refresh`
+    /// (ruling 113). The public binary has none; a deployment supplies its own (133).
+    pub calendar: Option<Arc<dyn omni_me_core::calendar::CalendarSource>>,
 }
 
 /// Boot the public server: run all generic startup, delegate source
@@ -392,6 +397,9 @@ pub async fn run(cfg: RunConfig) {
         instance,
         purge_ticket: Arc::new(tokio::sync::Mutex::new(None)),
         wipe_ticket: Arc::new(tokio::sync::Mutex::new(None)),
+        calendar: cfg
+            .calendar
+            .map(|s| Arc::new(omni_me_core::calendar::sync::Reader::new(s))),
     };
 
     // Auto-import: the engine owns the store/projections/device_id but not the
@@ -496,6 +504,18 @@ pub async fn run(cfg: RunConfig) {
             }
         });
     }
+    // The morning plan's one silent push, and closing plans that lapsed or were replaced. The
+    // agent drafts the plan. Ruling 98.
+    {
+        let notifier = NtfyNotifier::from_env(&state.secrets)
+            .map(|n| Arc::new(n) as Arc<dyn omni_me_core::notify::Notifier>);
+        Arc::new(omni_me_core::planning::ritual::RitualJob::new(
+            (*state.db).clone(),
+            enrich_writer.clone(),
+            notifier,
+        ))
+        .spawn();
+    }
     // Routine items ticked from journal lines, on the structurer seat. Ruling 127.
     if state.llm_client.model_name() != "none" {
         let (db, writer, llm) = (
@@ -532,6 +552,77 @@ pub async fn run(cfg: RunConfig) {
                 }
             }
         });
+    }
+    // People mentions in journal lines, task text and email senders. Known names match with no
+    // model; new names are role D's, so without a model only known names are found. Rulings
+    // 124, 136, 137.
+    {
+        let (db, writer, blob_dir) = (
+            (*state.db).clone(),
+            enrich_writer.clone(),
+            (*state.blob_dir).clone(),
+        );
+        let llm = (state.llm_client.model_name() != "none").then(|| state.llm_client.clone());
+        let own: Vec<String> = creds
+            .imap
+            .values()
+            .map(|a| a.account.trim().to_lowercase())
+            .collect();
+        tokio::spawn(async move {
+            use omni_me_core::people::finding;
+            if let Err(e) = finding::init_schema(&db).await {
+                tracing::error!(error = %e, "people mentions: no state table; job off");
+                return;
+            }
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(15 * 60));
+            loop {
+                tick.tick().await;
+                let config = match omni_me_core::events::load_shared(&db).await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "people mentions: no config; skipped");
+                        continue;
+                    }
+                };
+                if !config.enabled(omni_me_core::config::Feature::People) {
+                    continue;
+                }
+                let tz = omni_me_core::assistant::scheduled::user_timezone(&config);
+                let today = chrono::Utc::now().with_timezone(&tz).date_naive();
+                let mail = finding::Mailbox {
+                    blob_dir: &blob_dir,
+                    own_addresses: &own,
+                };
+                match finding::run(&db, &writer, llm.as_deref(), Some(mail), today, tz).await {
+                    Ok(r) if r.lines_read == 0 => {}
+                    Ok(r) => tracing::info!(
+                        lines = r.lines_read,
+                        mentions = r.mentions,
+                        guessed = r.guessed,
+                        "people mentions: sources read"
+                    ),
+                    Err(e) => tracing::warn!(error = %e, "people mentions: run failed"),
+                }
+            }
+        });
+    }
+    // The calendar, read every 15 minutes. Ruling 113.
+    match state.calendar.clone() {
+        Some(reader) => {
+            let (db, writer) = ((*state.db).clone(), enrich_writer.clone());
+            tokio::spawn(async move {
+                let mut tick = tokio::time::interval(std::time::Duration::from_secs(15 * 60));
+                loop {
+                    tick.tick().await;
+                    match reader.read(&db, &writer, chrono::Utc::now()).await {
+                        Ok(omni_me_core::calendar::sync::SyncOutcome::Unchanged) => {}
+                        Ok(outcome) => tracing::info!(?outcome, "calendar read"),
+                        Err(e) => tracing::warn!(error = %e, "calendar: read failed"),
+                    }
+                }
+            });
+        }
+        None => tracing::info!("no calendar source; the calendar read is off"),
     }
     // Coursework deadlines from the LEARN feed, when its address is configured. Ruling 122.
     if let Some(url) = state.secrets.get("learn_feed_url").cloned() {
@@ -619,6 +710,7 @@ pub fn build_app(
         .merge(routes::feedback_routes())
         .merge(routes::llm_routes())
         .merge(routes::task_routes())
+        .merge(routes::planning_routes())
         // Behind the bearer gate like the rest, and with two gates of its own on
         // top: a preview ticket and a named instance. See `routes::wipe`.
         .merge(routes::wipe_routes());

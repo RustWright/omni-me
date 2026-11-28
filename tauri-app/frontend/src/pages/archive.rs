@@ -75,7 +75,7 @@ pub fn ArchivePage() -> Element {
     use_effect(move || {
         // Snapshot before any .set() — a read guard held across a write to the
         // same signal deadlocks (the pattern `pending_share` documents).
-        let intent = *nav_intent.read();
+        let intent = nav_intent.read().clone();
         if intent == Some(crate::NavIntent::ArchiveUnverified) {
             nav_intent.set(None);
             unverified_only.set(true);

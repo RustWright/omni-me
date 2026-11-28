@@ -409,9 +409,10 @@ pub async fn commit_batch(
     }
 
     let mut corrections = corrections.unwrap_or_default();
-    let effective = apply_corrections(&drafts, &indices, &mut corrections)?;
+    let base = state.base_currency.read().await.clone();
+    let effective = apply_corrections(&drafts, &indices, &mut corrections, &base)?;
     let mut added = added.unwrap_or_default();
-    check_added(&mut added)?;
+    check_added(&mut added, &base)?;
     if indices.is_empty() && added.is_empty() {
         return Err("nothing to commit: no row selected and none added".into());
     }
@@ -581,6 +582,7 @@ fn apply_corrections(
     drafts: &[DraftTransaction],
     indices: &[usize],
     corrections: &mut [DraftCorrection],
+    base: &str,
 ) -> Result<Vec<DraftTransaction>, String> {
     corrections.sort_by_key(|c| c.index);
     for pair in corrections.windows(2) {
@@ -609,7 +611,7 @@ fn apply_corrections(
                 posting.fx_rate = p.fx_rate.clone();
             }
         }
-        super::budget::refuse_imbalance(&c.postings)
+        super::budget::balance_or_refuse(&mut c.postings, base)
             .map_err(|e| format!("row {}: {e}", c.index + 1))?;
         c.tags = normalize_tags(&c.tags).map_err(|e| format!("row {}: {e}", c.index + 1))?;
     }
@@ -630,7 +632,7 @@ fn apply_corrections(
 
 /// Hand-entered rows get the checks a correction gets; `index` is renumbered to
 /// the row's position so the stored audit and the txn ids agree.
-fn check_added(added: &mut [DraftCorrection]) -> Result<(), String> {
+fn check_added(added: &mut [DraftCorrection], base: &str) -> Result<(), String> {
     for (i, row) in added.iter_mut().enumerate() {
         row.index = i;
         if row.description.trim().is_empty() {
@@ -640,7 +642,7 @@ fn check_added(added: &mut [DraftCorrection]) -> Result<(), String> {
         if row.postings.len() < 2 {
             return Err(format!("added row {} needs at least two postings", i + 1));
         }
-        super::budget::refuse_imbalance(&row.postings)
+        super::budget::balance_or_refuse(&mut row.postings, base)
             .map_err(|e| format!("added row {}: {e}", i + 1))?;
         row.tags = normalize_tags(&row.tags).map_err(|e| format!("added row {}: {e}", i + 1))?;
     }
@@ -794,14 +796,14 @@ mod tests {
             tags: vec![" Sister ".into(), "sister".into(), "trip:Ottawa".into()],
             ..correction(0, "Expenses:Gifts")
         }];
-        apply_corrections(&drafts, &[0], &mut fixes).unwrap();
+        apply_corrections(&drafts, &[0], &mut fixes, "CAD").unwrap();
         assert_eq!(fixes[0].tags, vec!["sister", "trip:ottawa"]);
 
         let mut bad = vec![DraftCorrection {
             tags: vec!["a,b".into()],
             ..correction(0, "Expenses:Gifts")
         }];
-        assert!(apply_corrections(&drafts, &[0], &mut bad).is_err());
+        assert!(apply_corrections(&drafts, &[0], &mut bad, "CAD").is_err());
     }
 
     #[test]
@@ -814,13 +816,13 @@ mod tests {
             },
             correction(3, "Expenses:Health"),
         ];
-        check_added(&mut rows).unwrap();
+        check_added(&mut rows, "CAD").unwrap();
         assert_eq!((rows[0].index, rows[1].index), (0, 1));
         assert_eq!(rows[0].description, "Royalty payment");
 
         let mut lopsided = vec![correction(0, "Expenses:Health")];
         lopsided[0].postings.pop();
-        assert!(check_added(&mut lopsided).is_err());
+        assert!(check_added(&mut lopsided, "CAD").is_err());
     }
 
     #[test]
@@ -830,7 +832,7 @@ mod tests {
             balanced("b", "Expenses:Groceries"),
         ];
         let mut fixes = vec![correction(1, "Expenses:Health")];
-        let rows = apply_corrections(&drafts, &[0, 1], &mut fixes).unwrap();
+        let rows = apply_corrections(&drafts, &[0, 1], &mut fixes, "CAD").unwrap();
         assert_eq!(rows[0].postings[0].account, "Expenses:Groceries");
         assert_eq!(rows[1].postings[0].account, "Expenses:Health");
         assert_eq!(rows[1].description, "Pharmacy, corrected");
@@ -840,19 +842,20 @@ mod tests {
     #[test]
     fn corrections_are_refused_when_they_do_not_add_up() {
         let drafts = vec![balanced("a", "Expenses:Groceries")];
-        let unselected = apply_corrections(&drafts, &[], &mut [correction(0, "E:H")]);
+        let unselected = apply_corrections(&drafts, &[], &mut [correction(0, "E:H")], "CAD");
         assert!(unselected.unwrap_err().contains("not selected"));
 
         let twice = apply_corrections(
             &drafts,
             &[0],
             &mut [correction(0, "E:H"), correction(0, "E:I")],
+            "CAD",
         );
         assert!(twice.unwrap_err().contains("twice"));
 
         let mut off = correction(0, "E:H");
         off.postings[0].amount = Decimal::from_str("12.00").unwrap();
-        let unbalanced = apply_corrections(&drafts, &[0], &mut [off]);
+        let unbalanced = apply_corrections(&drafts, &[0], &mut [off], "CAD");
         assert!(unbalanced.unwrap_err().contains("don't balance"));
     }
 
@@ -866,9 +869,26 @@ mod tests {
         };
         drafts[0].postings[0].fx_rate = Some(fx);
         let mut fixes = vec![correction(0, "Expenses:Health")];
-        apply_corrections(&drafts, &[0], &mut fixes).unwrap();
+        apply_corrections(&drafts, &[0], &mut fixes, "CAD").unwrap();
         assert!(fixes[0].postings[0].fx_rate.is_some());
         assert!(fixes[0].postings[1].fx_rate.is_none());
+    }
+
+    /// Ruling 132: a corrected two-currency row is priced on commit instead of refused.
+    #[test]
+    fn a_corrected_conversion_is_priced_not_refused() {
+        let drafts = vec![balanced("a", "Expenses:Groceries")];
+        let mut fix = correction(0, "Assets:NonRegistered:USD");
+        fix.postings[0].commodity = "USD".into();
+        fix.postings[0].amount = Decimal::from_str("-100.00").unwrap();
+        fix.postings[1].account = "Assets:NonRegistered:CAD".into();
+        fix.postings[1].commodity = "CAD".into();
+        fix.postings[1].amount = Decimal::from_str("137.00").unwrap();
+        let mut fixes = vec![fix];
+        let rows = apply_corrections(&drafts, &[0], &mut fixes, "CAD").unwrap();
+        let usd = &rows[0].postings[0];
+        assert_eq!(usd.fx_rate.as_ref().unwrap().quote_commodity, "CAD");
+        assert!(omni_me_core::accounts::imbalances(&rows[0].postings).is_empty());
     }
 
     #[test]

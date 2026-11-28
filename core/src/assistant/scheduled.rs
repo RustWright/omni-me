@@ -155,13 +155,16 @@ pub fn is_due(
     }
     // Compared by local period, not elapsed time: an interval test drifts later each run, and a
     // UTC date puts an evening run on tomorrow.
-    let current = prompt.cadence.period_start(now.date_naive());
+    let today = now.date_naive();
+    let current = prompt.cadence.period_start(today);
     match last_run {
         Some(last) => {
             let last = last.with_timezone(&prompt.timezone).date_naive();
             prompt.cadence.period_start(last) < current
         }
-        None => true,
+        // A first run waits for its own day: a weekly plan on a Wednesday, or a monthly review
+        // on the 26th, would ask about a period mostly gone. Only later runs catch up.
+        None => current == today,
     }
 }
 
@@ -447,6 +450,24 @@ mod tests {
         let caught_up = at("2026-11-17T07:00:00Z");
         assert!(!is_due(&p, Some(caught_up), at("2026-11-22T12:00:00Z")));
         assert!(is_due(&p, Some(caught_up), at("2026-11-23T07:00:00Z")));
+    }
+
+    /// Never run, a weekly or monthly prompt waits for its own day rather than firing mid-period.
+    #[test]
+    fn a_first_run_waits_for_its_day() {
+        let mut p = prompt(true, 7);
+        p.cadence = Cadence::Weekly(Weekday::Sun);
+        // 2026-11-26 is a Thursday, 2026-11-29 a Sunday.
+        assert!(!is_due(&p, None, at("2026-11-26T09:00:00Z")));
+        assert!(is_due(&p, None, at("2026-11-29T09:00:00Z")));
+        p.cadence = Cadence::Monthly(1);
+        assert!(!is_due(&p, None, at("2026-11-26T09:00:00Z")));
+        assert!(is_due(&p, None, at("2026-12-01T09:00:00Z")));
+        p.cadence = Cadence::Daily;
+        assert!(
+            is_due(&p, None, at("2026-11-26T09:00:00Z")),
+            "a daily one is due any day"
+        );
     }
 
     /// A clock that ran ahead must not make every later tick due.

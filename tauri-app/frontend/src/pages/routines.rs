@@ -389,6 +389,10 @@ fn ChecklistGroup(group: RoutineGroup, date: String) -> Element {
                         let is_done = completion.is_some();
                         let is_skipped = completion.map(|c| c.skipped).unwrap_or(false);
                         let skip_reason = completion.and_then(|c| c.reason.clone());
+                        // Ruling 127: a tick read from the journal says so, and which line.
+                        let inferred_from = completion
+                            .filter(|c| c.inferred == Some(true))
+                            .map(|c| c.source_line.clone().unwrap_or_default());
                         let is_armed = pending_skip.read().as_deref() == Some(item.id.as_str());
                         let item_id = item.id.clone();
                         let gid = group.id.clone();
@@ -428,7 +432,14 @@ fn ChecklistGroup(group: RoutineGroup, date: String) -> Element {
                                         },
                                         Icon { name: IconName::Check, class: "w-4 h-4", stroke: "3" }
                                     }
-                                    span { class: "flex-1 text-sm text-obsidian-text-muted line-through opacity-50", "{item.name}" }
+                                    div { class: "flex-1 min-w-0 flex flex-col",
+                                        span { class: "text-sm text-obsidian-text-muted line-through opacity-50", "{item.name}" }
+                                        if let Some(line) = inferred_from {
+                                            span { class: "text-[11px] text-obsidian-text-muted truncate",
+                                                if line.is_empty() { "inferred from the journal" } else { "inferred · {line}" }
+                                            }
+                                        }
+                                    }
                                 } else if is_skipped {
                                     button {
                                         class: "w-6 h-6 rounded-md bg-obsidian-text-muted/20 flex items-center justify-center text-obsidian-text-muted/40",

@@ -21,23 +21,56 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] needs hi
 Rulings 90–131, the UI ruled in `design/0102/`, the preps in overlay `*_PREP.md`;
 evidence in `PUSH_0074_RESEARCH.md`. In dependency order. Prep and design sessions need him;
 builds follow them.
-- [0115] **Task inputs only he can give:** go for the seed import (overlay `TASKS_PREP.md`); wiring
+- [0115] **Held until [0109] lands** (his call, 11-22: planning may revise task decisions). **Task inputs only he can give:** go for the seed import (overlay `TASKS_PREP.md`); wiring
   `scripts/task-hub.sh` into the shared session hooks (push and SessionStart receipt, 91, 121);
   the LEARN feed address as `learn_feed_url` in dev and live secrets (122). [USER]
-- [0116] **Task surfaces, with [0109]:** unattached deadlines and `USER` hub items reach him in a
-  ritual, the hub trial's acted/dismissed record (92), courses closed at term end (123), staleness
-  thresholds as settings (92), timer controls on the view (93), an "inferred" mark on ticks (127). [M]
-- [0117] **1.1.54 crashed on the S9's first launches after the upgrade**, before a reboot; no log
-  survived, and it ran clean after. Watch the next upgrade with logcat running before any release. [S]
-- [0109] **Planning build:** read-only calendar (96), plan records, the ritual tier and summary
+- [0116] **Task surfaces: mostly built** (`705f9eb`, `88999a0`; `docs/src/planning.md`): view timer
+  with nudge, "Waiting on him" in the brief, staleness settings, inferred ticks. Left: the hub
+  trial's acted/dismissed record (92, needs a design call), courses closed at term end (123, needs
+  the LEARN feed, [0115]). Pause/Stop seen on the S9 (1.2.11-dev); the nudge, the inferred mark
+  and "Waiting on him" in a ritual answer are not yet seen. [M]
+- [0109] **Planning build:** read-only calendar (96; source interface public, Google connector
+  in the overlay, 133), plan records, the ritual tier and summary
   lines (98), block reminders, the load measure (99). Needs [0106]. Reminders per [0104]'s results
   (`PUSH_0074_RESEARCH.md` Appendix B): plugin 2.4.0, reschedule on every start, `USE_EXACT_ALARM`
   (his phone is Android 15), `start:<block>` action ids; MainActivity reads a Start tap
   from the launch intent so it works on a closed app (his call), handed over like the deep link. [L]
+  Built as the slices below, in dependency order; [0109] closes when they all have.
+- [0123] **Plans and the planning specialist: built** (`e2cf053`, `docs/src/planning.md`). Left:
+  his places seeded on live (126) on his go, by the `/planning/places` calls in that doc; on live
+  also set Settings → Planning (bedtime, morning and evening routine names). [XS]
+- [0124] **Rituals, summary lines, load, goals: built** (`456814a`..`58ee6f1`, `docs/src/planning.md`
+  § The other rituals, § Goals; goals are ruling 134). 11-26 dev runs fixed routing (`1820d85`),
+  the brief's gaps (`fc48313`..`2ee3757`), and the seat: interactive, ruling 135, measured in
+  `MODEL_BENCH.md` Part 11 (`7901110`); the weekly then answered in 5 s, all 8 items asked about.
+  Left: his read of the prompt texts in `planning/rituals.rs`, and a monthly review on a real 1st. [S]
+- [0127] **Calendar read: built** (`docs/src/planning.md` § Calendar; overlay `src/google_calendar.rs`):
+  15-minute read, `POST /calendar/refresh` before every planning answer, `calendar_read` status on
+  the card and brief. Tested against Google's documented shapes only. Left: his Google Cloud setup
+  and first real read (overlay `SETUP.md` § Google Calendar, walked through live). [USER]
+- [0128] **Live may OOM-loop on its next restart:** SurrealKV's startup compaction needed ~2.1 GB
+  on dev's 2.2 GB volume against a 1500m cap and looped forever (dev, 11-25; fixed by compacting a
+  copy off-box, `~/omni-dev-tools/state/dev-server-0128/`, old data kept as `_data.pre-0128`).
+  Live has the same cap, a 1.9 GB volume, and no restart since 11-22. Discussed at the live
+  release (his call): planned off-box compaction (~1.5 h downtime), a bigger box, or leave it. Never test on the box
+  (`feedback-no-memory-experiments-beside-live`). [S]
 - [0110] **People build:** mentions, facts, resolution, pickers and group cards (102–104), merge
   and unmerge reversible for every attached record from the first event, the person view and the
   People tab with model-free search (118–120), per `design/0102/`; task text as a source (124);
   the fact shape (128), recall first (129). Seed and evidence: overlay `PEOPLE_PREP.md`. [L]
+  Built as the slices below, in dependency order; [0110] closes when they all have.
+- [0131] **Finding mentions: built** (`people::finding`, a 15-minute server job; `docs/src/people.md`
+  § Finding mentions): journal, task text, and person senders only (ruling 137, his call 11-27).
+  On dev (`9f4acfc`). Left: a real journal name seen end to end; history at the seed import. [S]
+- [0132] **Evening people questions: built** (`people::questions`, `components/people_questions.rs`;
+  `docs/src/people.md` § Evening questions), on dev (`a4f5ba9`) and the S9 (1.2.13-dev). Left: his
+  first real answers on the S9, and the summary's "People:" line seen at dev's next 19:00. [S]
+- [0133] **Person view and People tab: built** (`people::view`, `pages/people.rs`), three passes in
+  the mock render. Left: a name tapped in chat or a card, and the assistant's link (119's other two
+  ways in); the mentions list behind "Appears in"; one look on the S9 with real records. [S]
+- [0134] **Assistant:** a person lookup verb and fact proposals with a citation, on a ZDR seat (107,
+  128), which chat and the rituals qualify as while they are direct to DeepInfra (ruling 107).
+  Contacts seed import on his go (105). [M]
 
 ## Waiting on his decision
 
@@ -78,17 +111,22 @@ builds follow them.
 - [0026] **`budget.set` needs a catalogued `budget` type**, which means a `category` column
   and a `BudgetProjection` bump. Without the type, the action is undiscoverable. [M]
 
-## Off-box backup
-
-- [0006] **Off-box backup: built, proven on dev** (upload, export round trip, restore check, purge
-  delete, lost-blob alert), on PR 9's branches. Live needs his `backup_secrets.py live` and the PR 9
-  release. Blobs have one copy until then. [S]
-
 ## Bugs
 
-- [0118] **A WS transfer half came back alone and was booked twice** (3 on live, from his report):
-  the driver fetches each account's newest 50, so the busier half ages out first. Fixed (`unjoined`
-  in the subprocess contract); ships with PR 9, then probe live for repeats. Duplicates deleted. [S]
+- [0135] **A new projection replays the whole log through every projection on first launch**
+  (verified, `projection.rs` `catch_up` takes the oldest mark): 15 min on the dev agent when
+  `people` arrived (11-27). Phones pay it on the release carrying [0129]; fix or accept first. On the
+  S9 (1.2.11-dev to 1.2.12-dev): about 4 min before any command answered. [S–M]
+- [0136] **Leaving Journal before the editor bundle loads kills the wasm** (seen in the mock render,
+  11-27): `destroyEditor` is called before `editor.rs`'s lazy inject defines it, and the app
+  panics. Guard the call on the function existing; check whether the device app can hit it. [S]
+- [0119] **A currency conversion arrived as two one-sided rows** (his report, Nov 22 USD to CAD): the
+  money-transfer source reports each side per balance under one reference. Fixed: joined after dedup, target leg priced
+  (overlay `a9d79e4`); next release. The Nov 22 one was merged on live by script. [XS]
+- [0120] **Two-currency entries are priced on save** (ruling 132): built, CI green, verified on the
+  S9 (preview line, saved rate, re-price after an edit). Ships with the next release. [S]
+- [0118] **Watch the brokerage transfer fix on live:** shipped in v1.2.8; confirm no lone
+  transfer row reaches Reconcile when the next joined transfer's busy leg ages out. [XS]
 - [0097] **A photo-only email fails the receipt handler** ("produced no extractable text": it
   reads the body and PDF text only), though the archive still files and reads the photo. Whether
   a receipt draft results is unverified (his test mail, dev uid 15062, 2026-11-16). [S]

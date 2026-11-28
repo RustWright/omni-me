@@ -1267,6 +1267,8 @@ pub async fn invoke_get_completions_for_date(
             date: date.to_string(),
             skipped: false,
             reason: None,
+            inferred: Some(true),
+            source_line: Some("07:40 meditated for ten minutes".into()),
         }])
     }
     #[cfg(not(feature = "mock"))]
@@ -2407,6 +2409,26 @@ pub async fn invoke_update_transaction(
             changes: serde_json::Value,
         }
         invoke_unit("update_transaction", &Args { txn_id, changes }).await
+    }
+}
+
+/// What saving these postings would price (ruling 132, RULINGS.md): `Some` sentence when a
+/// two-currency entry gets an inferred rate, `None` when nothing would be priced.
+pub async fn invoke_preview_postings(
+    postings: Vec<serde_json::Value>,
+) -> Result<Option<String>, String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = postings;
+        Ok(None)
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {
+            postings: Vec<serde_json::Value>,
+        }
+        invoke("preview_postings", &Args { postings }).await
     }
 }
 
@@ -5092,6 +5114,561 @@ pub async fn invoke_read_thread_proposals(
     }
 }
 
+/// The card for one `plan.set` proposal; `None` until its detail has synced.
+pub async fn invoke_plan_card(proposal_id: &str) -> Result<Option<crate::types::PlanCard>, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(mock_assistant::plan_card(proposal_id))
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            proposal_id: &'a str,
+        }
+        invoke("plan_card", &Args { proposal_id }).await
+    }
+}
+
+/// A Start tap on a block reminder, recorded by the backend; `None` when none is waiting.
+pub async fn invoke_take_block_start() -> Result<Option<crate::types::StartedBlock>, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(None)
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("take_block_start", &Args {}).await
+    }
+}
+
+/// What is left of today and the rest of the week.
+/// Start, Pause or Stop on a block in the Plan view; `step` is `start`, `pause` or `stop`.
+pub async fn invoke_block_timer(
+    block_start: i64,
+    step: &str,
+) -> Result<crate::types::StartedBlock, String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = (block_start, step);
+        Ok(crate::types::StartedBlock {
+            title: "Thesis ch. 2: methods draft".into(),
+            when: "14:15–15:45".into(),
+        })
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            block_start: i64,
+            step: &'a str,
+        }
+        invoke("block_timer", &Args { block_start, step }).await
+    }
+}
+
+pub async fn invoke_plan_view() -> Result<crate::types::PlanView, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(mock_assistant::plan_view())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("plan_view", &Args {}).await
+    }
+}
+
+/// Everyone, most recent first, or the local matches for `query` (ruling 119).
+pub async fn invoke_people_list(query: String) -> Result<crate::types::PeopleList, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(mock_people::list(&query))
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {
+            query: String,
+        }
+        invoke("people_list", &Args { query }).await
+    }
+}
+
+pub async fn invoke_person_view(
+    person_id: String,
+) -> Result<Option<crate::types::PersonView>, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(mock_people::person(&person_id))
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {
+            person_id: String,
+        }
+        invoke("person_view", &Args { person_id }).await
+    }
+}
+
+/// Undo or "Wrong?" on one line of "How this record was built".
+pub async fn invoke_person_undo(undo: crate::types::PersonUndo) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        mock_people::undo(&undo);
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {
+            undo: crate::types::PersonUndo,
+        }
+        invoke("person_undo", &Args { undo }).await
+    }
+}
+
+/// The design's own people (`design/0102/` § 3), so the render can be held against it.
+#[cfg(feature = "mock")]
+mod mock_people {
+    use crate::types::{FactLine, PeopleList, PersonDecision, PersonRow, PersonUndo, PersonView};
+    use std::cell::RefCell;
+
+    thread_local! {
+        static UNDONE: RefCell<Vec<PersonUndo>> = const { RefCell::new(Vec::new()) };
+    }
+
+    fn row(id: &str, name: &str, provisional: bool, about: &str, last: &str) -> PersonRow {
+        PersonRow {
+            id: id.into(),
+            name: name.into(),
+            provisional,
+            about: Some(about.into()),
+            last: Some(last.into()),
+        }
+    }
+
+    fn rows() -> Vec<PersonRow> {
+        vec![
+            // Most recent first, as core orders them.
+            row(
+                "so",
+                "Sarah Okafor",
+                false,
+                "Postdoc in my lab",
+                "journal, 19 Nov",
+            ),
+            row("mg", "Marcus", true, "Climbing gym", "journal, 19 Nov"),
+            row("dl", "Dr. Lee", false, "Supervisor", "task, 18 Nov"),
+            row(
+                "rc",
+                "Robert Chen",
+                false,
+                "Senior engineer at Northwind Labs",
+                "email, 16 Nov",
+            ),
+            row("ss", "Sarah", false, "My sister", "journal, 2 Nov"),
+            row(
+                "sm",
+                "Shanice Moore",
+                false,
+                "Housing office",
+                "email, 28 Oct",
+            ),
+        ]
+    }
+
+    pub fn list(query: &str) -> PeopleList {
+        let all = rows();
+        let q = query.trim().to_lowercase();
+        let rows = all
+            .iter()
+            .filter(|r| q.is_empty() || r.name.to_lowercase().contains(&q))
+            .cloned()
+            .collect();
+        PeopleList {
+            total: all.len(),
+            rows,
+        }
+    }
+
+    pub fn person(id: &str) -> Option<PersonView> {
+        let r = rows().into_iter().find(|r| r.id == id)?;
+        let decision = |text: &str, by: &str, guessed: bool, n: &str| PersonDecision {
+            text: text.into(),
+            by: by.into(),
+            guessed,
+            undo: if guessed {
+                PersonUndo::Wrong {
+                    mention_id: n.into(),
+                    person_id: id.into(),
+                }
+            } else {
+                PersonUndo::Answer {
+                    mention_id: n.into(),
+                }
+            },
+        };
+        let (also, addresses, last, facts, appears, decisions) = if id == "rc" {
+            (
+                vec!["Bobby".to_string()],
+                vec!["rchen@northwind.example".to_string()],
+                "email \"Re: masters reference\", 16 Nov",
+                vec![
+                    FactLine {
+                        line: "Senior engineer at Northwind Labs".into(),
+                        source: "email · 3 Oct".into(),
+                    },
+                    FactLine {
+                        line: "Offered to write a masters reference".into(),
+                        source: "journal · 30 Oct".into(),
+                    },
+                    FactLine {
+                        line: "Met through Dr. Lee".into(),
+                        source: "journal · 30 Oct".into(),
+                    },
+                ],
+                "Appears in 14 emails, 3 journal entries",
+                vec![
+                    decision(
+                        "\"Bobby\" in your journal is this person",
+                        "you, 30 Oct",
+                        false,
+                        "m1",
+                    ),
+                    decision("An email of 14 Nov linked to them", "automatic", true, "m2"),
+                    decision(
+                        "\"Bob\" is another name for them",
+                        "you, 2 Nov",
+                        false,
+                        "m3",
+                    ),
+                ],
+            )
+        } else {
+            (
+                Vec::new(),
+                Vec::new(),
+                "journal \"Lunch with Sarah.\", 19 Nov",
+                Vec::new(),
+                "Appears in 1 journal entry",
+                vec![decision(
+                    "\"Sarah\" in your journal is this person",
+                    "you, 19 Nov",
+                    false,
+                    "m9",
+                )],
+            )
+        };
+        // As core does: Wrong? leaves a "not this person" line with its own Undo.
+        let decisions = UNDONE.with(|u| {
+            let u = u.borrow();
+            let mut out: Vec<PersonDecision> = decisions
+                .into_iter()
+                .filter(|d| !u.contains(&d.undo))
+                .collect();
+            for undone in u.iter() {
+                if let PersonUndo::Wrong {
+                    mention_id,
+                    person_id,
+                } = undone
+                    && person_id == id
+                {
+                    let excluded = PersonUndo::Exclusion {
+                        mention_id: mention_id.clone(),
+                        person_id: person_id.clone(),
+                    };
+                    if !u.contains(&excluded) {
+                        out.push(PersonDecision {
+                            text: "An email of 14 Nov is not this person".into(),
+                            by: "you".into(),
+                            guessed: false,
+                            undo: excluded,
+                        });
+                    }
+                }
+            }
+            out
+        });
+        Some(PersonView {
+            id: r.id,
+            name: r.name,
+            provisional: r.provisional,
+            also,
+            addresses,
+            last: Some(last.into()),
+            facts,
+            appears: Some(appears.into()),
+            decisions,
+        })
+    }
+
+    pub fn undo(undo: &PersonUndo) {
+        UNDONE.with(|u| u.borrow_mut().push(undo.clone()));
+    }
+}
+
+/// Today's and yesterday's people questions (rulings 104, 118). No model call.
+pub async fn invoke_people_questions() -> Result<crate::types::PeopleQuestions, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(mock_questions::questions())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("people_questions", &Args {}).await
+    }
+}
+
+/// One tap on a question card, Undo included.
+pub async fn invoke_people_reply(
+    reply: crate::types::PeopleReply,
+) -> Result<crate::types::PeopleReplyOutcome, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(mock_questions::reply(&reply))
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {
+            reply: crate::types::PeopleReply,
+        }
+        invoke("people_reply", &Args { reply }).await
+    }
+}
+
+/// "Someone I know…": everyone, closest spelling first.
+pub async fn invoke_people_closest(
+    query: String,
+) -> Result<Vec<crate::types::PersonChoice>, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(mock_questions::closest(&query))
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {
+            query: String,
+        }
+        invoke("people_closest", &Args { query }).await
+    }
+}
+
+/// The design's own three questions (`design/0102/` § 2).
+#[cfg(feature = "mock")]
+mod mock_questions {
+    use crate::types::{
+        PeopleQuestions, PeopleReply, PeopleReplyOutcome, PersonChoice, QuestionCard, QuestionRow,
+    };
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    thread_local! {
+        static ANSWERED: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
+    }
+
+    fn choice(id: &str, name: &str, context: &str) -> PersonChoice {
+        PersonChoice {
+            person_id: id.into(),
+            name: name.into(),
+            context: context.into(),
+        }
+    }
+
+    fn everyone() -> Vec<PersonChoice> {
+        vec![
+            choice(
+                "so",
+                "Sarah Okafor",
+                "Postdoc in my lab. Last: \"Sarah reviewed my ch. 1 draft\", 12 Nov",
+            ),
+            choice(
+                "ss",
+                "Sarah",
+                "My sister. Last: \"Called Sarah about Christmas flights\", 2 Nov",
+            ),
+            choice(
+                "sm",
+                "Shanice Moore",
+                "Housing office. Last: email \"Your housing application\", 28 Oct",
+            ),
+            choice(
+                "rc",
+                "Robert Chen",
+                "Senior engineer at Northwind Labs. Last: \"Coffee with Bobby, he offered to write a reference\", 30 Oct",
+            ),
+            choice(
+                "dl",
+                "Dr. Lee",
+                "Supervisor. Last: task \"Send Dr. Lee the outline\", 18 Nov",
+            ),
+        ]
+    }
+
+    fn row(id: &str, name: &str, line: &str, candidates: Vec<PersonChoice>) -> QuestionRow {
+        QuestionRow {
+            mention_id: id.into(),
+            name: name.into(),
+            line: line.into(),
+            sender: None,
+            candidates,
+            answered: ANSWERED.with(|a| a.borrow().get(id).cloned()),
+            more: 0,
+        }
+    }
+
+    pub fn questions() -> PeopleQuestions {
+        let all = everyone();
+        let mut email = row(
+            "q2",
+            "Robert Chen",
+            "Hi, Bobby here, following up on the reference you asked about.",
+            vec![all[3].clone()],
+        );
+        email.sender = Some("Robert Chen <rchen@northwind.example>".into());
+        email.more = 2;
+        let cards = vec![
+            QuestionCard {
+                key: "q1".into(),
+                picker: true,
+                heading: "Which Sarah?".into(),
+                source: "Your journal, today".into(),
+                email: false,
+                lapses_tonight: false,
+                confirms_address: false,
+                rows: vec![row(
+                    "q1",
+                    "Sarah",
+                    "Lunch with Sarah. She's thinking about leaving the lab before spring.",
+                    all[..2].to_vec(),
+                )],
+            },
+            QuestionCard {
+                key: "q2".into(),
+                picker: true,
+                heading: "Who sent this?".into(),
+                source: "From an email · sender not yet confirmed".into(),
+                email: true,
+                lapses_tonight: false,
+                confirms_address: true,
+                rows: vec![email],
+            },
+            QuestionCard {
+                key: "journal/today".into(),
+                picker: false,
+                heading: "New names in today's journal".into(),
+                source: "Your journal, today".into(),
+                email: false,
+                lapses_tonight: false,
+                confirms_address: false,
+                rows: vec![
+                    row(
+                        "q3",
+                        "Marcus",
+                        "Marcus from the climbing gym lent me his belay device.",
+                        Vec::new(),
+                    ),
+                    row(
+                        "q4",
+                        "Shara",
+                        "Talked to Shara about the conference budget.",
+                        Vec::new(),
+                    ),
+                    row(
+                        "q5",
+                        "Priya",
+                        "Priya's talk on causal inference was the best of the day.",
+                        Vec::new(),
+                    ),
+                ],
+            },
+        ];
+        let open = cards.iter().filter(|c| !c.done()).count();
+        PeopleQuestions { open, cards }
+    }
+
+    fn name_of(id: &str) -> String {
+        everyone()
+            .into_iter()
+            .find(|c| c.person_id == id)
+            .map_or_else(|| "someone".into(), |c| c.name)
+    }
+
+    pub fn reply(reply: &PeopleReply) -> PeopleReplyOutcome {
+        let set = |id: &str, text: String| {
+            ANSWERED.with(|a| a.borrow_mut().insert(id.to_string(), text));
+        };
+        match reply {
+            PeopleReply::Person {
+                mention_id,
+                person_id,
+            } => {
+                let mut text = name_of(person_id);
+                if mention_id == "q2" {
+                    text.push_str(", address confirmed");
+                }
+                set(mention_id, text);
+                // As core does: a spelling not already theirs asks about a typo.
+                let ask = matches!(mention_id.as_str(), "q3" | "q4" | "q5");
+                PeopleReplyOutcome { ask_spelling: ask }
+            }
+            PeopleReply::NewPerson { mention_id } => {
+                set(mention_id, "new person".into());
+                PeopleReplyOutcome::default()
+            }
+            PeopleReply::DontKnow { mention_id } => {
+                set(mention_id, "don't know".into());
+                PeopleReplyOutcome::default()
+            }
+            PeopleReply::Spelling {
+                mention_id,
+                person_id,
+                typo,
+            } => {
+                let who = name_of(person_id);
+                let name = questions()
+                    .cards
+                    .into_iter()
+                    .flat_map(|c| c.rows)
+                    .find(|r| &r.mention_id == mention_id)
+                    .map(|r| r.name)
+                    .unwrap_or_default();
+                let text = if *typo {
+                    format!("{who}, a typo")
+                } else {
+                    format!("{who}, also \"{name}\"")
+                };
+                set(mention_id, text);
+                PeopleReplyOutcome::default()
+            }
+            PeopleReply::Undo { mention_id } => {
+                ANSWERED.with(|a| a.borrow_mut().remove(mention_id));
+                PeopleReplyOutcome::default()
+            }
+        }
+    }
+
+    pub fn closest(query: &str) -> Vec<PersonChoice> {
+        // Not core's Jaro-Winkler: enough to put "Sa…" names first for the render.
+        let q = query.trim().to_lowercase();
+        let mut all = everyone();
+        all.sort_by_key(|c| {
+            let n = c.name.to_lowercase();
+            let shared = n.chars().zip(q.chars()).filter(|(a, b)| a == b).count();
+            std::cmp::Reverse(shared)
+        });
+        all
+    }
+}
+
 /// Accept or decline one proposal. Accepting is what authors the change.
 pub async fn invoke_decide_assistant_proposal(
     proposal_id: &str,
@@ -5440,8 +6017,16 @@ mod mock_assistant {
                 let lower = asked.to_lowercase();
                 let demo = cfg!(feature = "demo");
                 let refuses = demo && lower.contains("journal");
-                let proposes =
-                    !refuses && (lower.contains("note") || (demo && lower.contains("remind")));
+                // "plan" proposes a day plan; asking again re-plans, swapping the first two
+                // blocks, so the superseded card and the moved marks are reachable.
+                let plans = !refuses && !demo && lower.contains("plan");
+                let proposes = !refuses
+                    && !plans
+                    && (lower.contains("note") || (demo && lower.contains("remind")));
+                if plans {
+                    let p = plan_proposal(&q.thread_id, &answer_id);
+                    PROPOSALS.with(|list| list.borrow_mut().push(p));
+                }
                 if proposes {
                     let title = if demo { asked.trim() } else { "Renew passport" };
                     let p = note_proposal(&q.thread_id, &answer_id, title, now());
@@ -5668,6 +6253,282 @@ mod mock_assistant {
             found.decision = Some(if approve { "approved" } else { "rejected" }.to_string());
             Ok(found.clone())
         })
+    }
+
+    const PLAN_BLOCKS: [&str; 3] = [
+        "11:00-12:10 Thesis ch. 2: methods draft",
+        "14:15-15:45 omni-me: reminder spike",
+        "16:45-17:45 Write the masters reference request",
+    ];
+    const PLAN_UNTIMED: [&str; 4] = [
+        "Reply to landlord about the lease (10 min)",
+        "Pay the hydro bill (5 min)",
+        "Book the dentist (5 min)",
+        "Return library books (15 min)",
+    ];
+
+    fn plans() -> Vec<AssistantProposal> {
+        PROPOSALS.with(|p| {
+            p.borrow()
+                .iter()
+                .filter(|p| p.action == "plan.set")
+                .cloned()
+                .collect()
+        })
+    }
+
+    /// The first plan, or a re-plan of the last one with its first two blocks swapped and the
+    /// last small thing dropped.
+    fn plan_proposal(thread_id: &str, message_id: &str) -> AssistantProposal {
+        let replan = !plans().is_empty();
+        let mut blocks: Vec<String> = PLAN_BLOCKS.iter().map(|b| b.to_string()).collect();
+        let mut untimed: Vec<&str> = PLAN_UNTIMED.to_vec();
+        if replan {
+            let (a, b) = (blocks[0].split_at(12), blocks[1].split_at(12));
+            blocks = vec![
+                format!("{}{}", a.0, b.1),
+                format!("{}{}", b.0, a.1),
+                blocks[2].clone(),
+            ];
+            untimed.pop();
+        }
+        AssistantProposal {
+            proposal_id: next_id("mock-plan"),
+            thread_id: thread_id.to_string(),
+            message_id: message_id.to_string(),
+            action: "plan.set".into(),
+            args: serde_json::json!({
+                "date": chrono::Utc::now().date_naive().to_string(),
+                "blocks": blocks,
+                "untimed": untimed,
+            }),
+            rationale: "It's tight: the reference email is the thing I'd protect.".into(),
+            reversible: true,
+            created_at: now(),
+            decision: None,
+        }
+    }
+
+    fn texts(p: &AssistantProposal, key: &str) -> Vec<String> {
+        p.args
+            .get(key)
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn day_head() -> crate::types::DayHead {
+        let today = chrono::Utc::now().date_naive();
+        crate::types::DayHead {
+            date: today.to_string(),
+            weekday: today.format("%A").to_string(),
+            label: today.format("%a %-d %b").to_string(),
+            window: Some(
+                "From 11:00 (up 09:40, morning routine 1 h 20) to 22:30 \
+                 (bed 23:30, less evening routine 1 h)"
+                    .into(),
+            ),
+            all_day: vec!["Mum's birthday".into()],
+            notices: vec![],
+        }
+    }
+
+    /// Blocks parsed from `blocks`, among the fixture's calendar events and trip.
+    fn mock_slots(blocks: &[String], before: &[String]) -> Vec<crate::types::PlanSlot> {
+        use crate::types::{PlanSlot, SlotKind};
+        let fixed = |kind, from: &str, to: &str, title: &str, place: Option<&str>| PlanSlot {
+            kind,
+            from: from.into(),
+            to: to.into(),
+            title: title.into(),
+            place: place.map(str::to_string),
+            moved: false,
+            timer: None,
+        };
+        let mut out = vec![
+            fixed(SlotKind::Travel, "12:15", "13:00", "Travel to Campus", None),
+            fixed(
+                SlotKind::Event,
+                "13:00",
+                "14:00",
+                "Lab meeting",
+                Some("Campus"),
+            ),
+            fixed(SlotKind::Event, "16:00", "16:30", "Call with Dr. Lee", None),
+        ];
+        for b in blocks {
+            let (time, title) = b.split_at(12);
+            let moved = before
+                .iter()
+                .any(|o| o.ends_with(title) && !o.starts_with(time));
+            out.push(PlanSlot {
+                kind: SlotKind::Block,
+                from: time[..5].into(),
+                to: time[6..11].into(),
+                title: title.trim().into(),
+                place: None,
+                moved,
+                timer: None,
+            });
+        }
+        out.sort_by(|a, b| a.from.cmp(&b.from));
+        out
+    }
+
+    fn untimed_items(texts: &[String]) -> Vec<crate::types::UntimedItem> {
+        texts
+            .iter()
+            .filter_map(|t| {
+                let (title, rest) = t.rsplit_once(" (")?;
+                let minutes = rest.trim_end_matches(" min)").parse().ok()?;
+                Some(crate::types::UntimedItem {
+                    title: title.into(),
+                    minutes,
+                })
+            })
+            .collect()
+    }
+
+    pub fn plan_card(proposal_id: &str) -> Option<crate::types::PlanCard> {
+        use crate::types::{DueItem, FitLine, PlanCard, PlanStatus};
+        let all = plans();
+        let i = all.iter().position(|p| p.proposal_id == proposal_id)?;
+        let p = &all[i];
+        let newer = all.get(i + 1);
+        // As core's `plan::status`: an accepted plan stays in force until a later one is accepted.
+        let later_accepted = all[i + 1..]
+            .iter()
+            .any(|n| n.decision.as_deref() == Some("approved"));
+        let status = match (p.decision.as_deref(), newer) {
+            (Some("approved"), _) if later_accepted => PlanStatus::Superseded,
+            (Some("approved"), _) => PlanStatus::Accepted,
+            (Some(_), _) => PlanStatus::Skipped,
+            (None, Some(_)) => PlanStatus::Superseded,
+            (None, None) => PlanStatus::Proposed,
+        };
+        let before = i
+            .checked_sub(1)
+            .map(|j| texts(&all[j], "blocks"))
+            .unwrap_or_default();
+        let blocks = texts(p, "blocks");
+        let hm = |t: &str| {
+            chrono::DateTime::parse_from_rfc3339(t)
+                .map(|d| d.format("%H:%M").to_string())
+                .unwrap_or_default()
+        };
+        Some(PlanCard {
+            proposal_id: p.proposal_id.clone(),
+            status,
+            drafted: hm(&p.created_at),
+            until: (status == PlanStatus::Proposed).then(|| "11:00".to_string()),
+            replaced_at: newer
+                .filter(|_| status == PlanStatus::Superseded)
+                .map(|n| hm(&n.created_at)),
+            day: day_head(),
+            slots: mock_slots(&blocks, &before),
+            untimed: untimed_items(&texts(p, "untimed")),
+            fit: Some(FitLine {
+                text: "About 5 h 50 of work in 5 h 15 free.".into(),
+                over: true,
+            }),
+            coming_due: vec![
+                DueItem {
+                    title: "Hydro bill, $84.20".into(),
+                    when: "Fri".into(),
+                    overdue: false,
+                },
+                DueItem {
+                    title: "Masters reference request".into(),
+                    when: "Mon".into(),
+                    overdue: false,
+                },
+            ],
+            unread: vec![],
+        })
+    }
+
+    /// Today from the accepted plan, if any, with the now line after the first two rows.
+    pub fn plan_view() -> crate::types::PlanView {
+        use crate::types::{DueItem, FitLine, PlanView, TodayView, WeekRow};
+        let all = plans();
+        let accepted = all
+            .iter()
+            .rev()
+            .find(|p| p.decision.as_deref() == Some("approved"));
+        let blocks = accepted.map(|p| texts(p, "blocks")).unwrap_or_default();
+        const NOW: &str = "15:07";
+        let mut slots = mock_slots(&blocks, &[]);
+        let blocks_done = slots
+            .iter()
+            .filter(|s| s.kind == crate::types::SlotKind::Block && s.to.as_str() <= NOW)
+            .count();
+        slots.retain(|s| s.to.as_str() > NOW);
+        let now_at = slots.iter().filter(|s| s.from.as_str() <= NOW).count();
+        // The design's moment: the block under way, its timer running (ruling 93).
+        for s in slots.iter_mut() {
+            if s.kind == crate::types::SlotKind::Block && s.from.as_str() <= NOW {
+                s.timer = Some(crate::types::SlotTimer {
+                    state: crate::types::TimerShown::Running,
+                    line: Some("40 min working · 52 min since start".into()),
+                    block_start: 0,
+                });
+            }
+        }
+        let row = |day: &str, free: i64, planned: Option<i64>, due: &[&str], all_day: &[&str]| {
+            let hours = match planned {
+                Some(p) => format!("{} h / {} h", p / 60, free / 60),
+                None => format!("{} h free", free / 60),
+            };
+            WeekRow {
+                date: String::new(),
+                day: day.into(),
+                free_min: free,
+                planned_min: planned,
+                hours,
+                all_day: all_day.iter().map(|s| s.to_string()).collect(),
+                due: due.iter().map(|s| s.to_string()).collect(),
+                thread_id: None,
+            }
+        };
+        PlanView {
+            today: TodayView {
+                day: day_head(),
+                now: NOW.into(),
+                slots,
+                now_at,
+                blocks_done,
+                untimed: accepted
+                    .map(|p| untimed_items(&texts(p, "untimed")))
+                    .unwrap_or_default(),
+                fit: accepted.map(|_| FitLine {
+                    text: "5 h 35 in 5 h 15 free".into(),
+                    over: true,
+                }),
+                free: accepted.is_none().then(|| "3 h 10 free".to_string()),
+                pending: accepted.is_none() && all.iter().any(|p| p.decision.is_none()),
+                due: vec![DueItem {
+                    title: "Pay the hydro bill".into(),
+                    when: "today".into(),
+                    overdue: false,
+                }],
+                thread_id: all.last().map(|p| p.thread_id.clone()),
+            },
+            week_title: "Rest of the week".into(),
+            week: vec![
+                row("Fri", 360, Some(180), &["Hydro bill"], &[]),
+                row("Sat", 480, None, &[], &["Long run"]),
+                row("Sun", 420, None, &[], &[]),
+            ],
+            goals_title: "November goals".into(),
+            goals: vec![
+                "Thesis ch. 2 drafted by 1 Dec".into(),
+                "Masters applications in by 15 Dec".into(),
+            ],
+        }
     }
 
     pub fn threads() -> Vec<AssistantThread> {

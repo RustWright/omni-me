@@ -14,6 +14,7 @@ mod reading_bench;
 mod responder;
 mod retrieval_bench;
 mod review_bench;
+mod ritual_bench;
 mod structuring_bench;
 mod transcription_bench;
 
@@ -215,6 +216,11 @@ struct Args {
     /// Test scaffolding, on the same terms as [`Args::ask`].
     bench_cases: bool,
 
+    /// Compare the seats on the rituals' opening turn. See `ritual_bench`.
+    ///
+    /// Test scaffolding, on the same terms as [`Args::ask`].
+    bench_rituals: bool,
+
     /// Author a question event, then exit — a stand-in for the client.
     ///
     /// Unlike [`Args::ask`], the resident agent answers: two processes, one hub, as a phone and
@@ -241,6 +247,7 @@ fn parse_args() -> Result<Args, String> {
         bench_transcription: false,
         bench_review: false,
         bench_cases: false,
+        bench_rituals: false,
         ask_event: None,
         thread: None,
     };
@@ -257,6 +264,7 @@ fn parse_args() -> Result<Args, String> {
             "--bench-transcription" => args.bench_transcription = true,
             "--bench-review" => args.bench_review = true,
             "--bench-cases" => args.bench_cases = true,
+            "--bench-rituals" => args.bench_rituals = true,
             "--constrained" => args.constrained = true,
             "--reindex" => args.reindex = true,
             "--ask" => {
@@ -348,6 +356,19 @@ fn parse_args() -> Result<Args, String> {
             || args.ask.is_some())
     {
         return Err("--bench-cases is its own run; pick one".to_string());
+    }
+    if args.bench_rituals
+        && (args.bench
+            || args.bench_retrieval
+            || args.bench_extraction
+            || args.bench_structuring
+            || args.bench_reading
+            || args.bench_transcription
+            || args.bench_review
+            || args.bench_cases
+            || args.ask.is_some())
+    {
+        return Err("--bench-rituals is its own run; pick one".to_string());
     }
     // With `--bench` this means the constrained arm only, on purpose: some endpoints have no
     // `tools`. The scorecard says so and reports the tax as not applicable, never silently.
@@ -943,7 +964,18 @@ async fn run(args: Args) -> Result<(), String> {
     // rather than starting the schedulers. They pull once first: asking about
     // records this device has not seen would answer "not there" for data that
     // exists, which looks like a retrieval failure and is not one.
-    if args.ask.is_some() || args.bench || args.bench_review || args.bench_cases {
+    if args.ask.is_some()
+        || args.bench
+        || args.bench_review
+        || args.bench_cases
+        || args.bench_rituals
+    {
+        // The rituals bench runs real data through both seats, so both are checked.
+        if args.bench_rituals {
+            let (creds, options) = (load_credentials()?, client_options_from_env()?);
+            privacy_preflight(&creds, &options, LlmRole::Interactive, "--bench-rituals")?;
+            privacy_preflight(&creds, &options, LlmRole::Batch, "--bench-rituals")?;
+        }
         // These two run the pulled clone of real data through a seat, like the role C benches.
         if args.bench_cases || args.bench_review {
             let (role, arm) = if args.bench_cases {
@@ -1009,6 +1041,25 @@ async fn run(args: Args) -> Result<(), String> {
             .await;
         } else if args.bench_cases {
             case_bench::run(&db, &config, llm.as_ref(), retrievers).await;
+        } else if args.bench_rituals {
+            let arms = [
+                ritual_bench::Arm {
+                    name: "interactive",
+                    llm: llm.as_ref(),
+                    thinking: None,
+                },
+                ritual_bench::Arm {
+                    name: "batch",
+                    llm: llms.batch.as_ref(),
+                    thinking: None,
+                },
+                ritual_bench::Arm {
+                    name: "batch-no-think",
+                    llm: llms.batch.as_ref(),
+                    thinking: Some(false),
+                },
+            ];
+            ritual_bench::run(&db, &config, &arms, retrievers).await;
         } else if args.bench_review {
             review_bench::run(
                 &db,
@@ -1031,6 +1082,7 @@ async fn run(args: Args) -> Result<(), String> {
     // here it would sit in the middle of the ask-to-answer path. See
     // `PULL_INTERVAL_ENV`.
     let pull_interval = Duration::from_millis(env_u64(PULL_INTERVAL_ENV, DEFAULT_PULL_INTERVAL_MS));
+    let calendar_client = sync_client.clone();
     let (pull_scheduler, _pull) = PullScheduler::spawn_with(
         sync_client,
         db.clone(),
@@ -1097,6 +1149,10 @@ async fn run(args: Args) -> Result<(), String> {
         "agent running; answering questions"
     );
 
+    let calendar = sync::ServerCalendar {
+        client: calendar_client,
+        pulls: pull_scheduler.clone(),
+    };
     let responder = responder::Responder {
         db: &db,
         config: &config,
@@ -1105,6 +1161,7 @@ async fn run(args: Args) -> Result<(), String> {
         writer,
         retrievers,
         horizon,
+        calendar: &calendar,
     };
     // Beside the responder rather than spawned: both borrow the embedder, which
     // lives in this scope. Only the responder ends the agent.

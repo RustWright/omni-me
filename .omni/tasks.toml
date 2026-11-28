@@ -1,15 +1,15 @@
 schema  = 1
 project = "omni-me"
 cycle   = 6
-updated = 2026-11-22
-next_id = 119
+updated = 2026-11-27
+next_id = 137
 
 # Narrative lives in tasks.md. Contract: ../../setup_files/TASK_HUB_CONTRACT.md
 # Public repo: titles are public. Keep private identity out.
 
 [[task]]
 id     = "omni-me-0001"
-title  = "Confirm the 11-16 weekly WS buys arrive as two legs with no Unmatched"
+title  = "Confirm the 11-16 weekly brokerage buys arrive as two legs with no Unmatched"
 status = "done"
 size   = "XS"
 ref    = "tasks.md § Now — dated"
@@ -49,7 +49,7 @@ ref    = "project.md § Decisions in force"
 [[task]]
 id     = "omni-me-0006"
 title  = "Build the encrypted R2 backup job (blobs, event log, config)"
-status = "todo"
+status = "done"
 size   = "M"
 ref    = "tasks.md § Off-box backup"
 
@@ -788,12 +788,118 @@ ref    = "tasks.md § Cycle 6"
 blocked_by = ["omni-me-0104", "omni-me-0106", "omni-me-0112", "omni-me-0114"]
 
 [[task]]
+id     = "omni-me-0121"
+title  = "Calendar core: event model, source trait, change events, poll"
+status = "done"
+size   = "M"
+ref    = "tasks.md § Cycle 6"
+
+[[task]]
+id     = "omni-me-0122"
+title  = "Free time and fit: day window, travel buffers, validator"
+status = "done"
+size   = "M"
+ref    = "tasks.md § Cycle 6"
+
+[[task]]
+id     = "omni-me-0123"
+title  = "Plans and the planning specialist, morning ritual job"
+status = "todo"
+size   = "XS"
+ref    = "tasks.md § Cycle 6"
+
+[[task]]
+id     = "omni-me-0124"
+title  = "Ritual summary lines and the load measure"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Cycle 6"
+blocked_by = ["omni-me-0123"]
+
+[[task]]
+id     = "omni-me-0125"
+title  = "Block reminders and Start on the app"
+status = "done"
+size   = "M"
+ref    = "tasks.md § Cycle 6"
+blocked_by = ["omni-me-0123"]
+
+[[task]]
+id     = "omni-me-0126"
+title  = "Read-only view and plan card: tap-to-chat, on-device check"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § Cycle 6"
+blocked_by = ["omni-me-0123"]
+
+[[task]]
+id     = "omni-me-0127"
+title  = "Google Calendar connector in the overlay"
+status = "doing"
+size   = "M"
+ref    = "tasks.md § Cycle 6"
+
+[[task]]
+id     = "omni-me-0128"
+title  = "Live may OOM-loop on restart: compact a copy first"
+status = "todo"
+size   = "S"
+ref    = "tasks.md § Cycle 6"
+
+[[task]]
 id     = "omni-me-0110"
 title  = "People build: mentions, facts, resolution, pickers"
 status = "todo"
 size   = "L"
 ref    = "tasks.md § Cycle 6"
 blocked_by = ["omni-me-0108"]
+
+[[task]]
+id     = "omni-me-0129"
+title  = "People records: events, projection, merge mapping"
+status = "done"
+size   = "M"
+ref    = "tasks.md § Cycle 6"
+
+[[task]]
+id     = "omni-me-0130"
+title  = "People name matcher: text and spelling closeness"
+status = "done"
+size   = "S"
+ref    = "tasks.md § Cycle 6"
+blocked_by = ["omni-me-0129"]
+
+[[task]]
+id     = "omni-me-0131"
+title  = "Finding people mentions in journal, tasks, mail"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Cycle 6"
+blocked_by = ["omni-me-0130"]
+
+[[task]]
+id     = "omni-me-0132"
+title  = "Evening people questions: picker and group cards"
+status = "done"
+size   = "M"
+ref    = "tasks.md § Cycle 6"
+blocked_by = ["omni-me-0131"]
+
+[[task]]
+id     = "omni-me-0133"
+title  = "Person view and People tab"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Cycle 6"
+blocked_by = ["omni-me-0130"]
+
+[[task]]
+id     = "omni-me-0134"
+title  = "Assistant person lookup and fact proposals"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Cycle 6"
+blocked_by = ["omni-me-0129"]
 
 [[task]]
 id     = "omni-me-0111"
@@ -841,13 +947,41 @@ blocked_by = ["omni-me-0109"]
 [[task]]
 id     = "omni-me-0117"
 title  = "Watch the next app upgrade for the first-launch crash"
-status = "todo"
+status = "done"
 size   = "S"
 ref    = "tasks.md § Cycle 6"
 
 [[task]]
 id     = "omni-me-0118"
-title  = "WS transfer half booked twice after its partner left the fetch window"
+title  = "Brokerage transfer half booked twice after its partner left the fetch window"
 status = "doing"
+size   = "S"
+ref    = "tasks.md § Bugs"
+
+[[task]]
+id     = "omni-me-0119"
+title  = "Currency conversion booked as two one-sided rows"
+status = "doing"
+size   = "XS"
+ref    = "tasks.md § Bugs"
+
+[[task]]
+id     = "omni-me-0120"
+title  = "Transaction editor cannot hold a two-currency entry"
+status = "doing"
+size   = "S"
+ref    = "tasks.md § Bugs"
+
+[[task]]
+id     = "omni-me-0135"
+title  = "A new projection replays the whole log on first launch"
+status = "todo"
+size   = "M"
+ref    = "tasks.md § Bugs"
+
+[[task]]
+id     = "omni-me-0136"
+title  = "Leaving Journal before the editor bundle loads kills the wasm"
+status = "todo"
 size   = "S"
 ref    = "tasks.md § Bugs"

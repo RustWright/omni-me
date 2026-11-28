@@ -211,6 +211,12 @@ pub struct Session<'a> {
     /// Route each request to a specialist first. Off by default: it costs one
     /// model call, and scripted test clients answer only the loop's own calls.
     specialists: bool,
+    /// A specialist chosen by the caller, skipping the router: a scheduled job that is
+    /// always about one domain (the morning plan, ruling 112).
+    fixed: Option<super::specialist::Specialist>,
+    /// Read the calendar fresh before a planning brief (ruling 113). Without one the brief reads
+    /// what is recorded.
+    calendar: Option<&'a dyn crate::calendar::sync::Refresh>,
 }
 
 impl<'a> Session<'a> {
@@ -240,7 +246,17 @@ impl<'a> Session<'a> {
             enable_thinking: None,
             retrievers: Retrievers::default(),
             specialists: false,
+            fixed: None,
+            calendar: None,
         })
+    }
+
+    pub fn with_calendar_refresh(
+        mut self,
+        calendar: &'a dyn crate::calendar::sync::Refresh,
+    ) -> Self {
+        self.calendar = Some(calendar);
+        self
     }
 
     /// Give `search` a meaning-based retriever alongside keyword matching.
@@ -262,6 +278,12 @@ impl<'a> Session<'a> {
     /// Route each request to a specialist. See `specialist`.
     pub fn with_specialists(mut self) -> Self {
         self.specialists = true;
+        self
+    }
+
+    /// Answer as `specialist`, without routing.
+    pub fn with_specialist(mut self, specialist: super::specialist::Specialist) -> Self {
+        self.fixed = Some(specialist);
         self
     }
 
@@ -316,12 +338,28 @@ impl<'a> Session<'a> {
         // The brief before the date: the provider caches the longest unchanged
         // prefix, and the date line changes every minute while a 44 KB brief
         // does not.
-        let system = if self.specialists {
-            let who = super::specialist::route(self.llm, self.config, history, question).await;
-            tracing::info!(specialist = ?who, "routed");
-            format!("{system}{}", super::specialist::brief(self.db, who).await)
-        } else {
-            system
+        let who = match self.fixed {
+            Some(who) => Some(who),
+            None if self.specialists => {
+                Some(super::specialist::route(self.llm, self.config, history, question).await)
+            }
+            None => None,
+        };
+        let system = match who {
+            Some(who) => {
+                tracing::info!(specialist = ?who, fixed = self.fixed.is_some(), "routed");
+                if who == super::specialist::Specialist::Planning
+                    && let Some(calendar) = self.calendar
+                    && let Err(e) = calendar.refresh().await
+                {
+                    // The server records a failed read itself; the brief says the calendar is
+                    // stale once that record has synced.
+                    tracing::warn!(error = %e, "calendar refresh before planning failed");
+                }
+                let brief = super::specialist::brief(self.db, self.config, who).await;
+                format!("{system}{brief}")
+            }
+            None => system,
         };
         let system = format!("{system}{}", today_line(self.config, chrono::Utc::now()));
         let mut messages = vec![ChatMessage::System(system)];

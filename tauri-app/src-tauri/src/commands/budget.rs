@@ -88,9 +88,10 @@ pub struct TransactionDraft {
 #[tauri::command(rename_all = "snake_case")]
 pub async fn record_transaction(
     state: State<'_, AppState>,
-    draft: TransactionDraft,
+    mut draft: TransactionDraft,
 ) -> Result<TransactionRow, String> {
-    refuse_imbalance(&draft.postings)?;
+    let base = state.base_currency.read().await.clone();
+    balance_or_refuse(&mut draft.postings, &base)?;
     if draft.from_reading
         && let Some(why) = omni_me_core::future_dated::refusal(
             draft.date,
@@ -138,17 +139,48 @@ pub(crate) fn refuse_imbalance(postings: &[Posting]) -> Result<(), String> {
     ))
 }
 
+/// Prices a two-currency entry so it balances (ruling 132, RULINGS.md), then refuses whatever
+/// still does not. Every path that writes postings goes through this, so they agree.
+pub(crate) fn balance_or_refuse(postings: &mut [Posting], base: &str) -> Result<(), String> {
+    accounts::price_two_currencies(postings, Some(base));
+    refuse_imbalance(postings)
+}
+
+/// What saving these postings would price, as a sentence for the form to show first.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn preview_postings(
+    state: State<'_, AppState>,
+    mut postings: Vec<Posting>,
+) -> Result<Option<String>, String> {
+    let base = state.base_currency.read().await.clone();
+    Ok(accounts::price_two_currencies(&mut postings, Some(&base)).map(|p| describe_price(&p)))
+}
+
+fn describe_price(p: &accounts::InferredPrice) -> String {
+    let quote = &p.fx.quote_commodity;
+    format!(
+        "{} {} priced at {} {quote} each ({} {quote})",
+        p.amount.abs().normalize(),
+        p.commodity,
+        p.fx.rate.round_dp(4).normalize(),
+        (p.amount * p.fx.rate).abs().round_dp(2),
+    )
+}
+
 #[tauri::command(rename_all = "snake_case")]
 pub async fn update_transaction(
     state: State<'_, AppState>,
     txn_id: String,
-    changes: serde_json::Value,
+    mut changes: serde_json::Value,
 ) -> Result<(), String> {
     tracing::info!(txn_id = %txn_id, "update_transaction");
     if let Some(postings) = changes.get("postings") {
-        let postings: Vec<Posting> = serde_json::from_value(postings.clone())
+        let mut postings: Vec<Posting> = serde_json::from_value(postings.clone())
             .map_err(|e| format!("decode postings: {e}"))?;
-        refuse_imbalance(&postings)?;
+        let base = state.base_currency.read().await.clone();
+        balance_or_refuse(&mut postings, &base)?;
+        changes["postings"] =
+            serde_json::to_value(&postings).map_err(|e| format!("encode postings: {e}"))?;
     }
     let payload = serde_json::json!({ "txn_id": txn_id, "changes": changes });
     append_and_apply(&state, EventType::TransactionUpdated, txn_id, payload).await

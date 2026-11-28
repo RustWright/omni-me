@@ -123,6 +123,9 @@ edit site carries their reasoning. These are settled. Do not re-open one without
   empty, pointing at its archived copy.
 - **89.** A batch may be committed from the list without opening it only when the sender
   authenticated, the line items summed to a stated total, and nothing raised a warning.
+- **132.** A two-currency entry that does not balance is priced to balance on save, as hledger
+  infers a conversion, and the form shows the rate before saving ([0120]). The non-base currency
+  is priced in the base; with no base among them, the received side in the given side.
 
 ## Data and operations
 - **42.** Live is the pause. Every live step waits for the user's go, one at a time. Dev is mine.
@@ -297,7 +300,10 @@ edit site carries their reasoning. These are settled. Do not re-open one without
 - **107.** Other people's data goes to ZDR seats only. Benches use synthetic people data to start,
   reconsidered if quality disappoints. The OpenRouter privacy setting ([0010]) is confirmed before
   OpenRouter's next use, for anything. Done, and live's role D (an open-weights model on DeepInfra,
-  called directly) confirmed zero-retention by the user from DeepInfra's data-privacy page.
+  called directly) confirmed zero-retention by the user from DeepInfra's data-privacy page. That
+  policy covers every model DeepInfra serves, and live's interactive seat is direct to DeepInfra
+  too (his answer, 11-27), so people data may go through chat and the rituals. A seat moved off
+  DeepInfra direct loses that until its provider is checked.
 - **108.** A confirmed fact outlives its source email under retention, keeping the quoted sentence
   and the sender, date and subject, marked "source expired".
 - **109.** Order: tasks, planning, people, with the people data prep beside the task build. The UI
@@ -390,3 +396,26 @@ edit site carries their reasoning. These are settled. Do not re-open one without
 - **131.** A repeating obligation (rent, renewals) is a task with a repeat rule, and each
   occurrence is its own task with its own due date, so one slipping never moves the next and the
   record shows which were late. Not routines, which are habits (`Frequency::Custom` is [2,31]).
+- **133.** The calendar is read through the Google Calendar API with a read-only scope, not the
+  secret iCal address: Google expands recurrence and serves edits at once, which 113 needs.
+  The Google connector lives in the private overlay, as bank drivers do; the public engine holds a
+  provider-neutral event, a calendar-source interface and all of planning, so an adopter plugs in
+  their own source. The OAuth app must be set to "In production", or its token expires in 7 days.
+- **134.** A month's goals (110) are a few free-text lines in his words, proposed by the monthly
+  review as one card and approved like a plan. A later set for the month replaces the earlier one.
+  The view lists them read-only, with no progress line; linking a goal to something measured can
+  come later as an optional field on the same record.
+- **135.** The rituals (morning plan, evening shutdown, weekly plan, monthly review) are answered by
+  the interactive seat, not Batch, though nobody is waiting. Measured on dev, 11-26
+  (`--bench-rituals`, 9 runs a seat): interactive 9/9 at a 7 s median and half the tokens; Batch
+  8/9 with a 300 s stall and a 27 s median; Batch without reasoning cost 7× the tokens and leaked
+  its internals. Other scheduled questions stay on Batch. Cost per token was not measured.
+- **136.** Names that match nobody on file are spotted by role D, the zero-retention seat (107),
+  reading each new journal entry. Known names and aliases are matched locally, with no model. A
+  local capitalised-word pass was the alternative: free, but the prep found it mixes in apps,
+  places and ordinary words ("Will", "Long"), each one a tap on the evening card.
+- **137.** An email is a people mention only when its sender is a person: a display name matching
+  someone on file, or one role D judges a person's rather than an organisation's. Vendor and
+  institution mail is never asked about, though the mailbox is mostly that. "Unlinked" on an email
+  mention silences that sender address until he undoes it. A confirmed address on mail passing
+  sender authentication links as a guess (103). Every sender asked about was the alternative.

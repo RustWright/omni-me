@@ -241,6 +241,9 @@ pub fn build_llm_client(
     let mut client =
         OpenAiCompatClient::new(base_url, model, cfg.api_key.clone().unwrap_or_default())
             .with_sampling(sampling);
+    if role == LlmRole::Batch {
+        client = client.with_http(crate::http::unattended_llm_client());
+    }
     if let Some(extra) = options.extra_body {
         client = client.with_extra_body(extra);
     }

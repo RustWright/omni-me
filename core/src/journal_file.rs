@@ -811,14 +811,14 @@ mod tests {
         let a = AccountAddedPayload {
             account: "Assets:Northwind:Cash".into(),
             commodity: "CAD".into(),
-            display_name: Some("WS Chequing".into()),
+            display_name: Some("Northwind Chequing".into()),
             hidden: false,
             is_liquid: false,
         };
         let rendered = render_account(&a);
         let expected = "\
 account Assets:Northwind:Cash  ; commodity:CAD
-    note WS Chequing
+    note Northwind Chequing
 
 ";
         assert_eq!(rendered, expected);

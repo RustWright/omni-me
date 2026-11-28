@@ -15,8 +15,33 @@ use serde::Serialize;
 use crate::credentials::LlmRole;
 use crate::events::{
     AssistantProjection, AutoImportProjection, BudgetProjection, ConfigProjection,
-    DocumentsProjection, NotesProjection, RetentionProjection,
+    DocumentsProjection, NotesProjection, PlanningProjection, RetentionProjection,
+    RoutinesProjection, TasksProjection,
 };
+
+const RITUAL_FAILURE: FailurePolicy = FailurePolicy {
+    retry: "none; the next period raises it again, and asking in chat runs it at once",
+    alert_needs_user: false,
+    alert_failing_hours: None,
+};
+
+// Ruling 135 (RULINGS.md): the interactive seat, measured against Batch by `--bench-rituals`.
+const RITUAL_MODEL: ModelUse = ModelUse {
+    seats: &[Seat {
+        role: LlmRole::Interactive,
+        purpose: "the ritual's conversation, under the planning brief",
+        effort: "provider default",
+    }],
+    budget: "the assistant turn budget (assistant.max_turns)",
+    permission: Permission::Propose,
+};
+
+const RITUAL_READS: &[&str] = &[
+    ConfigProjection::NAME,
+    AssistantProjection::NAME,
+    PlanningProjection::NAME,
+    RoutinesProjection::NAME,
+];
 
 pub const MAIL_IMPORT: &str = "mail_import";
 pub const MAIL_BACKFILL: &str = "mail_backfill";
@@ -57,6 +82,8 @@ pub enum Tier {
     Critical,
     Review,
     Ambient,
+    /// One silent push for a ritual, never in quiet hours, gone once it lapses (ruling 98).
+    Ritual,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -215,6 +242,9 @@ pub const REGISTRY: &[JobSpec] = &[
             BudgetProjection::NAME,
             DocumentsProjection::NAME,
             RetentionProjection::NAME,
+            // The ritual lines (ruling 98).
+            PlanningProjection::NAME,
+            TasksProjection::NAME,
         ],
     },
     JobSpec {
@@ -236,6 +266,89 @@ pub const REGISTRY: &[JobSpec] = &[
         model: None,
         // Purge records decide which blobs may leave the backup.
         reads: &[DocumentsProjection::NAME],
+    },
+    // The draft half runs on the agent as a scheduled question; the push and the closing of
+    // lapsed plans run on the server (`planning::ritual::RitualJob`), which holds ntfy.
+    JobSpec {
+        name: crate::planning::ritual::MORNING_PLAN,
+        title: "Morning plan",
+        shape: Shape::Agent,
+        trigger: Trigger::OnEvent(
+            "his first activity of the day, else planning.fallback_hour; outside quiet hours",
+        ),
+        host: Host::AgentHost,
+        off_switch: "feature.planning",
+        failure: FailurePolicy {
+            retry: "none; asking in chat drafts a fresh plan",
+            alert_needs_user: false,
+            alert_failing_hours: None,
+        },
+        output: Output {
+            lands_in: "a plan card in chat, and one silent push from the server",
+            tier: Tier::Ritual,
+        },
+        model: Some(ModelUse {
+            seats: &[Seat {
+                role: LlmRole::Interactive,
+                purpose: "the day's plan, under the planning brief",
+                effort: "provider default",
+            }],
+            budget: "the assistant turn budget (assistant.max_turns); refused plans do not count",
+            permission: Permission::Propose,
+        }),
+        reads: &[
+            ConfigProjection::NAME,
+            AssistantProjection::NAME,
+            PlanningProjection::NAME,
+            RoutinesProjection::NAME,
+        ],
+    },
+    // Ruling 98 (RULINGS.md): raised at the summary hour on the agent, with no push of their own;
+    // the summary carries a line for each. Each pauses after five untouched runs (99).
+    JobSpec {
+        name: crate::planning::rituals::EVENING,
+        title: "Evening shutdown",
+        shape: Shape::Agent,
+        trigger: Trigger::Calendar("daily at notify.summary_hour, except the weekly plan's day"),
+        host: Host::AgentHost,
+        off_switch: "feature.planning; pauses itself after 5 untouched runs",
+        failure: RITUAL_FAILURE,
+        output: Output {
+            lands_in: "a thread in chat, and a line in the daily summary",
+            tier: Tier::Review,
+        },
+        model: Some(RITUAL_MODEL),
+        reads: RITUAL_READS,
+    },
+    JobSpec {
+        name: crate::planning::rituals::WEEKLY,
+        title: "Weekly plan",
+        shape: Shape::Agent,
+        trigger: Trigger::Calendar("Sundays at notify.summary_hour"),
+        host: Host::AgentHost,
+        off_switch: "feature.planning; pauses itself after 5 untouched runs",
+        failure: RITUAL_FAILURE,
+        output: Output {
+            lands_in: "a thread in chat, and a line in the daily summary",
+            tier: Tier::Review,
+        },
+        model: Some(RITUAL_MODEL),
+        reads: RITUAL_READS,
+    },
+    JobSpec {
+        name: crate::planning::rituals::MONTHLY,
+        title: "Monthly review",
+        shape: Shape::Agent,
+        trigger: Trigger::Calendar("the 1st at notify.summary_hour"),
+        host: Host::AgentHost,
+        off_switch: "feature.planning; pauses itself after 5 untouched runs",
+        failure: RITUAL_FAILURE,
+        output: Output {
+            lands_in: "a thread in chat with a goals card, and a line in the daily summary",
+            tier: Tier::Review,
+        },
+        model: Some(RITUAL_MODEL),
+        reads: RITUAL_READS,
     },
 ];
 

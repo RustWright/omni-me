@@ -89,6 +89,7 @@ async fn start_statement_server(
         instance: None,
         purge_ticket: Default::default(),
         wipe_ticket: Default::default(),
+        calendar: None,
     };
 
     let app = Router::new()

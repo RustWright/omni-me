@@ -242,7 +242,7 @@ pub fn FinancesPage() -> Element {
     let mut nav_intent = crate::use_nav_intent();
     use_effect(move || {
         // Snapshot before writing — a held read guard across a set deadlocks.
-        let intent = *nav_intent.read();
+        let intent = nav_intent.read().clone();
         if intent == Some(crate::NavIntent::FinancesReview) {
             nav_intent.set(None);
             view.set(FinancesView::Overview);
@@ -5272,6 +5272,23 @@ fn TxnFieldsForm(
     let mut postings =
         use_signal(|| seed_edit_postings(&serde_json::Value::Array(seed.postings.clone())));
     let mut error = use_signal(|| None::<String>);
+    let seed_count = seed.postings.len();
+
+    // The rate a save would infer for a two-currency entry, shown before saving (ruling 132,
+    // RULINGS.md). Built exactly as Save builds its postings, so the two cannot disagree.
+    let preview = use_resource(move || async move {
+        let rows = postings.read().clone();
+        let mut out: Vec<serde_json::Value> = rows
+            .iter()
+            .filter(|r| !r.account.trim().is_empty() && r.amount.trim().parse::<f64>().is_ok())
+            .map(EditPosting::to_posting_json)
+            .collect();
+        if out.len() < 2 {
+            return None;
+        }
+        drop_stale_rates(&mut out, &rows, seed_count);
+        bridge::invoke_preview_postings(out).await.ok().flatten()
+    });
 
     let on_save = move |_| {
         if busy {
@@ -5318,6 +5335,7 @@ fn TxnFieldsForm(
             ));
             return;
         }
+        drop_stale_rates(&mut postings_out, &rows, seed_count);
 
         error.set(None);
         on_submit.call(TxnFields {
@@ -5449,6 +5467,12 @@ fn TxnFieldsForm(
                 }
             }
 
+            if let Some(Some(priced)) = preview.read().clone() {
+                div { class: "p-3 bg-sky-950/30 border border-sky-500/30 rounded-md text-sm text-sky-200",
+                    "Saves with {priced}"
+                }
+            }
+
             // Error
             if let Some(msg) = error.read().clone().or(submit_error) {
                 div { class: "p-3 bg-red-950/30 border border-red-500/30 rounded-md text-sm text-red-300",
@@ -5512,6 +5536,34 @@ impl EditPosting {
             serde_json::Value::String(self.amount.trim().to_string()),
         );
         serde_json::Value::Object(obj)
+    }
+}
+
+/// Drop every posting's rate once the entry's money changed (an amount, a currency, a row added or
+/// removed), so the save re-prices it from the amounts; a kept rate would no longer fit them and
+/// the save would be refused. An entry whose money is untouched keeps its rates.
+fn drop_stale_rates(out: &mut [serde_json::Value], rows: &[EditPosting], seed_count: usize) {
+    let field = |r: &EditPosting, k: &str| {
+        r.original
+            .get(k)
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string()
+    };
+    let changed = out.len() != seed_count
+        || rows
+            .iter()
+            .filter(|r| !(r.account.trim().is_empty() && r.amount.trim().is_empty()))
+            .any(|r| {
+                field(r, "commodity") != r.commodity.trim()
+                    || field(r, "amount").parse::<f64>().ok() != r.amount.trim().parse::<f64>().ok()
+            });
+    if changed {
+        for p in out.iter_mut() {
+            if let Some(obj) = p.as_object_mut() {
+                obj.remove("fx_rate");
+            }
+        }
     }
 }
 

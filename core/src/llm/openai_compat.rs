@@ -74,6 +74,12 @@ impl OpenAiCompatClient {
         }
     }
 
+    /// Use `http` for every request, for a seat with its own time budget.
+    pub fn with_http(mut self, http: reqwest::Client) -> Self {
+        self.http = http;
+        self
+    }
+
     /// Merge provider-specific fields into every request. See [`Self::extra_body`].
     pub fn with_extra_body(mut self, extra: Value) -> Self {
         self.extra_body = Some(extra);

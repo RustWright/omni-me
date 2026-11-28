@@ -12,8 +12,8 @@ use crate::journal_file::JournalFile;
 
 use super::{
     AssistantProjection, AutoImportProjection, BeliefsProjection, BudgetProjection,
-    ConfigProjection, DocumentsProjection, NotesProjection, Projection, RecordTypeProjection,
-    RetentionProjection, RoutinesProjection, TasksProjection,
+    ConfigProjection, DocumentsProjection, NotesProjection, PeopleProjection, PlanningProjection,
+    Projection, RecordTypeProjection, RetentionProjection, RoutinesProjection, TasksProjection,
 };
 
 /// Projections that are never feature-gated.
@@ -36,6 +36,8 @@ pub const ALL_PROJECTIONS: &[&str] = &[
     DocumentsProjection::NAME,
     RetentionProjection::NAME,
     TasksProjection::NAME,
+    PlanningProjection::NAME,
+    PeopleProjection::NAME,
 ];
 
 /// The projections a feature owns. Non-obvious entries:
@@ -57,6 +59,8 @@ pub fn owned_projections(feature: Feature) -> &'static [&'static str] {
         Feature::AutoImport => &[BudgetProjection::NAME, AutoImportProjection::NAME],
         Feature::Documents => &[DocumentsProjection::NAME, RetentionProjection::NAME],
         Feature::Tasks => &[TasksProjection::NAME],
+        Feature::Planning => &[PlanningProjection::NAME],
+        Feature::People => &[PeopleProjection::NAME],
     }
 }
 
@@ -102,6 +106,8 @@ fn all_projections(journal_path: PathBuf) -> Vec<Box<dyn Projection>> {
         Box::new(DocumentsProjection),
         Box::new(RetentionProjection),
         Box::new(TasksProjection),
+        Box::new(PlanningProjection),
+        Box::new(PeopleProjection),
     ]
 }
 
@@ -167,7 +173,8 @@ pub fn build_projections_server() -> Vec<Box<dyn Projection>> {
     // Notes and budget: receipt import checks accounts against them, or all land in Unknown.
     // Config: skip-senders and the zone. Auto-import: the triage scorecard. Assistant: the
     // daily summary's pending count. Tasks: hub intake and the handover receipt. Routines: the
-    // journal-tick job (ruling 127).
+    // journal-tick job (ruling 127). Calendar: the 15-minute read and the plans (113). People:
+    // the mention job (136).
     vec![
         Box::new(ConfigProjection),
         Box::new(AssistantProjection),
@@ -178,6 +185,8 @@ pub fn build_projections_server() -> Vec<Box<dyn Projection>> {
         Box::new(RetentionProjection),
         Box::new(TasksProjection),
         Box::new(RoutinesProjection),
+        Box::new(PlanningProjection),
+        Box::new(PeopleProjection),
     ]
 }
 
@@ -230,6 +239,14 @@ mod tests {
             names.contains(&RoutinesProjection::NAME),
             "the journal-tick job reads routine items: {names:?}"
         );
+        assert!(
+            names.contains(&PlanningProjection::NAME),
+            "the calendar read diffs against its table: {names:?}"
+        );
+        assert!(
+            names.contains(&PeopleProjection::NAME),
+            "the mention job matches against people on file: {names:?}"
+        );
     }
 
     /// Everything else a feature owns still registers — the exclusion must be
@@ -281,6 +298,8 @@ mod tests {
             DocumentsProjection.name(),
             RetentionProjection.name(),
             TasksProjection.name(),
+            PlanningProjection.name(),
+            PeopleProjection.name(),
         ];
         let listed: BTreeSet<&str> = ALL_PROJECTIONS.iter().copied().collect();
         let actual: BTreeSet<&str> = live.iter().copied().collect();
