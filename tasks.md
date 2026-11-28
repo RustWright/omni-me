@@ -62,8 +62,9 @@ builds follow them.
 - [0131] **Finding mentions: built** (`people::finding`, a 15-minute server job; `docs/src/people.md`
   § Finding mentions): journal, task text, and person senders only (ruling 137, his call 11-27).
   On dev (`9f4acfc`). Left: a real journal name seen end to end; history at the seed import. [S]
-- [0132] **Evening people questions:** picker and group cards in chat (104, 118), lapsing after one
-  more day; every answer an undoable evidence event. [M]
+- [0132] **Evening people questions: built** (`people::questions`, `components/people_questions.rs`;
+  `docs/src/people.md` § Evening questions), on dev (`a4f5ba9`) and the S9 (1.2.13-dev). Left: his
+  first real answers on the S9, and the summary's "People:" line seen at dev's next 19:00. [S]
 - [0133] **Person view and People tab: built** (`people::view`, `pages/people.rs`), three passes in
   the mock render. Left: a name tapped in chat or a card, and the assistant's link (119's other two
   ways in); the mentions list behind "Appears in"; one look on the S9 with real records. [S]
@@ -114,7 +115,8 @@ builds follow them.
 
 - [0135] **A new projection replays the whole log through every projection on first launch**
   (verified, `projection.rs` `catch_up` takes the oldest mark): 15 min on the dev agent when
-  `people` arrived (11-27). Phones pay it on the release carrying [0129]; fix or accept first. [S–M]
+  `people` arrived (11-27). Phones pay it on the release carrying [0129]; fix or accept first. On the
+  S9 (1.2.11-dev to 1.2.12-dev): about 4 min before any command answered. [S–M]
 - [0136] **Leaving Journal before the editor bundle loads kills the wasm** (seen in the mock render,
   11-27): `destroyEditor` is called before `editor.rs`'s lazy inject defines it, and the app
   panics. Guard the call on the function existing; check whether the device app can hit it. [S]

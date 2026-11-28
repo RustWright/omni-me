@@ -880,7 +880,7 @@ blocked_by = ["omni-me-0130"]
 [[task]]
 id     = "omni-me-0132"
 title  = "Evening people questions: picker and group cards"
-status = "doing"
+status = "done"
 size   = "M"
 ref    = "tasks.md § Cycle 6"
 blocked_by = ["omni-me-0131"]
