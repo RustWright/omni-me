@@ -24,7 +24,7 @@ and check in a capped cgroup are fine, and the mock demo page is the one build e
 
 ## ⛔ Waiting on him
 - **[0127] Google Cloud setup, walked through live** (deferred 11-27): overlay `SETUP.md` § Google Calendar.
-- **[0132] on the S9:** answer tonight's people questions there; 3 cards wait on dev data.
+- **[0132] on the S9:** answer the 2 people questions left there (dev data), when he chooses.
 - **[0124] prompt texts:** the evening, weekly and monthly prompts in `planning/rituals.rs` are mine.
 - **[0116] hub trial record (92):** how "acted" and "dismissed" are recorded is a design call.
 - **[0128] at the live release (his call, 11-25):** decide how live's startup compaction gets room
