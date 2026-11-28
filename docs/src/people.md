@@ -105,7 +105,9 @@ comes back as a question while it is still in the window.
 
 **Which card.** A mention with a candidate gets a picker: everyone on file by that spelling, plus
 the owner of an email's sender address, less anyone ruled out. Names with no candidate share one
-group card per source. A row keeps its card once answered: the person "new person" made for it, and
+group card per source. For email the source is the sender: their mail in the window is one card
+("and 2 more emails from this sender"), one tap answers all of it, and Undo clears what that tap
+answered. On dev's first real data, four of five cards were one sender. A row keeps its card once answered: the person "new person" made for it, and
 an alias only that mention taught, never count as its candidates. Without that, answering would
 move the row to another card and renumber the set.
 

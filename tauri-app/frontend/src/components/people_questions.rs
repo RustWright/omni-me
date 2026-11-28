@@ -44,7 +44,14 @@ fn opening(q: &PeopleQuestions) -> String {
 
 /// The line, with the name marked where it first appears.
 #[component]
-fn Quote(line: String, name: String, #[props(default)] sender: Option<String>) -> Element {
+fn Quote(row: QuestionRow) -> Element {
+    let QuestionRow {
+        line,
+        name,
+        sender,
+        more,
+        ..
+    } = row;
     let at = line.to_lowercase().find(&name.trim().to_lowercase());
     let (before, mark, after) = match at {
         Some(i) if line.is_char_boundary(i) && line.is_char_boundary(i + name.trim().len()) => {
@@ -67,6 +74,11 @@ fn Quote(line: String, name: String, #[props(default)] sender: Option<String>) -
                 mark { class: "bg-obsidian-accent/25 text-obsidian-text rounded px-0.5", "{mark}" }
             }
             "{after}"
+            if more > 0 {
+                div { class: "text-xs text-obsidian-text-muted mt-0.5",
+                    if more == 1 { "and 1 more email from this sender" } else { "and {more} more emails from this sender" }
+                }
+            }
         }
     }
 }
@@ -134,7 +146,7 @@ fn SpellingQuestion(
     };
     rsx! {
         div { class: "flex flex-col gap-1.5",
-            Quote { line: row.line.clone(), name: row.name.clone(), sender: row.sender.clone() }
+            Quote { row: row.clone() }
             p { class: "text-sm text-obsidian-text",
                 "Linked to {spelling.person}. Was \"{name}\" a typo?"
             }
@@ -170,7 +182,7 @@ fn SomeoneIKnow(
     let failed = matches!(*found.read(), Some(Err(_)));
     rsx! {
         div { class: "flex flex-col gap-1.5",
-            Quote { line: row.line.clone(), name: row.name.clone(), sender: row.sender.clone() }
+            Quote { row: row.clone() }
             input {
                 r#type: "text",
                 class: "text-sm bg-transparent rounded-md border border-obsidian-accent/60 px-2.5 py-1.5 text-obsidian-text focus:outline-none",
@@ -242,7 +254,7 @@ fn Picker(
         div { class: CARD,
             Kicker { heading: card.heading.clone(), place }
             Source { card: card.clone() }
-            Quote { line: row.line.clone(), name: row.name.clone(), sender: row.sender.clone() }
+            Quote { row: row.clone() }
             for choice in row.candidates.iter().cloned() {
                 {
                     let id = pick_id.clone();
@@ -330,7 +342,7 @@ fn GroupCard(
                             }
                         } else {
                             rsx! {
-                                Quote { line: row.line.clone(), name: row.name.clone(), sender: row.sender.clone() }
+                                Quote { row: row.clone() }
                                 div { class: "flex flex-wrap gap-1.5",
                                     button {
                                         class: MINI,

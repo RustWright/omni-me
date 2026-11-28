@@ -60,6 +60,8 @@ pub struct Row {
     pub candidates: Vec<Choice>,
     /// His answer as one line beside Undo: "Sarah Okafor", "new person", "don't know".
     pub answered: Option<String>,
+    /// Other mail from this sender in the window, answered by the same tap.
+    pub more: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -363,8 +365,10 @@ pub async fn questions(
         people.iter().find(|p| p.id == at).map(|p| p.name.clone())
     };
 
-    let mut pickers = Vec::new();
+    let mut pickers: Vec<Card> = Vec::new();
     let mut groups: Vec<((String, String), Card)> = Vec::new();
+    // A sender's first card: picker or group, and its index.
+    let mut by_address: HashMap<String, (bool, usize)> = HashMap::new();
     for m in &mentions {
         let current = answers.get(&m.id);
         // A guess is the matcher's answer, not a question; his own answer stays, for Undo.
@@ -419,7 +423,23 @@ pub async fn questions(
                 })
                 .collect(),
             answered,
+            more: 0,
         };
+        // One sender is one question: later mail folds into the first card, which shows an
+        // unanswered one while any is left.
+        if let Some(&(picker, i)) = m.address.as_ref().and_then(|a| by_address.get(a)) {
+            let first: &mut Row = if picker {
+                &mut pickers[i].rows[0]
+            } else {
+                &mut groups[i].1.rows[0]
+            };
+            let more = first.more + 1;
+            if row.answered.is_none() && first.answered.is_some() {
+                *first = row;
+            }
+            first.more = more;
+            continue;
+        }
         let on_file = m.address.as_ref().is_some_and(|a| owners.contains_key(a));
         let source = match (m.source_kind.as_str(), on_file) {
             ("email", false) => "From an email · sender not yet confirmed".to_string(),
@@ -438,7 +458,14 @@ pub async fn questions(
             rows,
         };
         if found.is_empty() {
-            let key = (m.source_kind.clone(), m.source_id.clone());
+            let key = match &m.address {
+                Some(a) => ("email".to_string(), a.clone()),
+                None => (m.source_kind.clone(), m.source_id.clone()),
+            };
+            if let Some(a) = &m.address {
+                let at = groups.iter().position(|(k, _)| *k == key);
+                by_address.insert(a.clone(), (false, at.unwrap_or(groups.len())));
+            }
             match groups.iter_mut().find(|(k, _)| *k == key) {
                 Some((_, c)) => c.rows.push(row),
                 None => {
@@ -457,6 +484,9 @@ pub async fn questions(
             } else {
                 format!("Which {}?", m.name.trim())
             };
+            if let Some(a) = &m.address {
+                by_address.insert(a.clone(), (true, pickers.len()));
+            }
             pickers.push(card(m.id.clone(), true, heading, vec![row]));
         }
     }
@@ -532,35 +562,83 @@ async fn confirm(writer: &EventWriter, m: &MentionRow, person_id: &str) -> Resul
     append(writer, EventType::AddressConfirmed, address, &p).await
 }
 
-/// Write one tap's evidence.
-pub async fn reply(db: &Database, writer: &EventWriter, reply: &Reply) -> Result<Outcome, String> {
+/// His answer in force on a mention: none when open, cleared, or only guessed.
+fn his(all: &HashMap<String, (MentionAnswer, bool)>, id: &str) -> Option<MentionAnswer> {
+    match all.get(id) {
+        Some((a, false)) if *a != MentionAnswer::Cleared => Some(a.clone()),
+        _ => None,
+    }
+}
+
+/// The mentions one tap answers: this one, and the sender's other mail in the window that is
+/// open or was answered with it, since one sender is one question.
+async fn answered_together(
+    db: &Database,
+    config: &ResolvedConfig,
+    now: DateTime<Utc>,
+    m: &MentionRow,
+    all: &HashMap<String, (MentionAnswer, bool)>,
+) -> Result<Vec<String>, String> {
+    let mut out = vec![m.id.clone()];
+    let Some(address) = &m.address else {
+        return Ok(out);
+    };
+    let (_, days) = asked_days(config, now);
+    let days: Vec<String> = days.iter().map(NaiveDate::to_string).collect();
+    let mut resp = db
+        .query(
+            "SELECT VALUE record::id(id) FROM people_mentions
+             WHERE address = $a AND date IN $days AND record::id(id) != $id",
+        )
+        .bind(("a", address.clone()))
+        .bind(("days", days))
+        .bind(("id", m.id.clone()))
+        .await
+        .map_err(|e| e.to_string())?;
+    let others: Vec<String> = resp.take(0).map_err(|e| e.to_string())?;
+    let mine = his(all, &m.id);
+    for o in others {
+        let guessed = all
+            .get(&o)
+            .is_some_and(|(a, g)| *g && *a != MentionAnswer::Cleared);
+        if !guessed && his(all, &o) == mine {
+            out.push(o);
+        }
+    }
+    Ok(out)
+}
+
+/// Write one tap's evidence, on every mention it answers.
+pub async fn reply(
+    db: &Database,
+    writer: &EventWriter,
+    config: &ResolvedConfig,
+    now: DateTime<Utc>,
+    reply: &Reply,
+) -> Result<Outcome, String> {
+    let (Reply::Person { mention_id, .. }
+    | Reply::NewPerson { mention_id }
+    | Reply::DontKnow { mention_id }
+    | Reply::Spelling { mention_id, .. }
+    | Reply::Undo { mention_id }) = reply;
+    let m = mention(db, mention_id).await?;
+    let all = answers(db).await?;
+    let targets = answered_together(db, config, now, &m, &all).await?;
     let quiet = Outcome {
         ask_spelling: false,
     };
-    match reply {
-        Reply::Person {
-            mention_id,
-            person_id,
-        } => {
-            let m = mention(db, mention_id).await?;
-            answer_with(
-                writer,
-                mention_id,
-                MentionAnswer::Link {
-                    person_id: person_id.clone(),
-                },
-            )
-            .await?;
-            confirm(writer, &m, person_id).await?;
-            let at = records::resolve(db, person_id).await?;
-            let people = records::everyone(db).await?;
-            let named = matcher::named(&people, &m.name).iter().any(|p| p.id == at);
-            Ok(Outcome {
-                ask_spelling: !named,
-            })
+    let (answer, person) = match reply {
+        Reply::Undo { .. } => {
+            undo(db, writer, &m, &targets, &all).await?;
+            return Ok(quiet);
         }
-        Reply::NewPerson { mention_id } => {
-            let m = mention(db, mention_id).await?;
+        Reply::Person { person_id, .. } => (
+            MentionAnswer::Link {
+                person_id: person_id.clone(),
+            },
+            Some(person_id.clone()),
+        ),
+        Reply::NewPerson { .. } => {
             let id = new_person_id(mention_id);
             let p = PersonAddedPayload {
                 person_id: id.clone(),
@@ -568,56 +646,56 @@ pub async fn reply(db: &Database, writer: &EventWriter, reply: &Reply) -> Result
                 provisional: true,
             };
             append(writer, EventType::PersonAdded, &id, &p).await?;
-            answer_with(
-                writer,
-                mention_id,
+            (
                 MentionAnswer::Link {
                     person_id: id.clone(),
                 },
+                Some(id),
             )
-            .await?;
-            confirm(writer, &m, &id).await?;
-            Ok(quiet)
         }
-        Reply::DontKnow { mention_id } => {
-            answer_with(writer, mention_id, MentionAnswer::Unlinked).await?;
-            Ok(quiet)
-        }
+        Reply::DontKnow { .. } => (MentionAnswer::Unlinked, None),
         Reply::Spelling {
-            mention_id,
-            person_id,
-            typo,
-        } => {
-            let m = mention(db, mention_id).await?;
-            answer_with(
-                writer,
-                mention_id,
-                MentionAnswer::Alias {
-                    person_id: person_id.clone(),
-                    shown: !typo,
-                },
-            )
-            .await?;
-            confirm(writer, &m, person_id).await?;
-            Ok(quiet)
-        }
-        Reply::Undo { mention_id } => {
-            undo(db, writer, mention_id).await?;
-            Ok(quiet)
-        }
+            person_id, typo, ..
+        } => (
+            MentionAnswer::Alias {
+                person_id: person_id.clone(),
+                shown: !typo,
+            },
+            Some(person_id.clone()),
+        ),
+    };
+    for t in &targets {
+        answer_with(writer, t, answer.clone()).await?;
     }
+    let Some(person) = person else {
+        return Ok(quiet);
+    };
+    confirm(writer, &m, &person).await?;
+    // Only a pick asks the typo question, and only for a name not already theirs.
+    let ask_spelling = if let Reply::Person { .. } = reply {
+        let at = records::resolve(db, &person).await?;
+        let people = records::everyone(db).await?;
+        !matcher::named(&people, &m.name).iter().any(|p| p.id == at)
+    } else {
+        false
+    };
+    Ok(Outcome { ask_spelling })
 }
 
-/// Clears the answer; the address it confirmed goes too, unless another of his answers on mail
-/// from that address still names the same person.
-async fn undo(db: &Database, writer: &EventWriter, mention_id: &str) -> Result<(), String> {
-    let m = mention(db, mention_id).await?;
-    let all = answers(db).await?;
-    let linked = all
-        .get(mention_id)
-        .and_then(|(a, guessed)| (!guessed).then(|| a.person().map(str::to_string)))
-        .flatten();
-    answer_with(writer, mention_id, MentionAnswer::Cleared).await?;
+/// Clears the answers given together; the address they confirmed goes too, unless another of
+/// his answers on mail from that address still names the same person.
+async fn undo(
+    db: &Database,
+    writer: &EventWriter,
+    m: &MentionRow,
+    targets: &[String],
+    all: &HashMap<String, (MentionAnswer, bool)>,
+) -> Result<(), String> {
+    let mention_id = m.id.as_str();
+    let linked = his(all, mention_id).and_then(|a| a.person().map(str::to_string));
+    for t in targets {
+        answer_with(writer, t, MentionAnswer::Cleared).await?;
+    }
     let (Some(address), Some(person)) = (&m.address, linked) else {
         return Ok(());
     };
@@ -644,7 +722,7 @@ async fn undo(db: &Database, writer: &EventWriter, mention_id: &str) -> Result<(
         .map_err(|e| e.to_string())?;
     let siblings: Vec<String> = resp.take(0).map_err(|e| e.to_string())?;
     let resolve = resolver(&people);
-    let still_named = siblings.iter().any(|s| {
+    let still_named = siblings.iter().filter(|s| !targets.contains(s)).any(|s| {
         all.get(s).is_some_and(|(a, guessed)| {
             !guessed && a.person().and_then(|p| resolve.get(p)) == Some(&person)
         })
@@ -803,6 +881,8 @@ mod tests {
         reply(
             &db,
             &w,
+            &config,
+            now,
             &Reply::NewPerson {
                 mention_id: marcus.clone(),
             },
@@ -812,6 +892,8 @@ mod tests {
         let picked = reply(
             &db,
             &w,
+            &config,
+            now,
             &Reply::Person {
                 mention_id: shara.clone(),
                 person_id: "so".into(),
@@ -826,6 +908,8 @@ mod tests {
         reply(
             &db,
             &w,
+            &config,
+            now,
             &Reply::Spelling {
                 mention_id: shara.clone(),
                 person_id: "so".into(),
@@ -854,6 +938,8 @@ mod tests {
         reply(
             &db,
             &w,
+            &config,
+            now,
             &Reply::Undo {
                 mention_id: marcus.clone(),
             },
@@ -898,6 +984,8 @@ mod tests {
         let picked = reply(
             &db,
             &w,
+            &config,
+            now,
             &Reply::Person {
                 mention_id: m.clone(),
                 person_id: "rc".into(),
@@ -915,7 +1003,7 @@ mod tests {
         );
         assert!(q.cards[0].picker, "still the picker it was asked as");
 
-        reply(&db, &w, &Reply::Undo { mention_id: m })
+        reply(&db, &w, &config, now, &Reply::Undo { mention_id: m })
             .await
             .unwrap();
         let p = records::person(&db, "rc").await.unwrap().unwrap();
@@ -923,7 +1011,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dont_know_on_one_email_silences_the_senders_other_mail() {
+    async fn one_sender_is_one_question_and_one_tap_answers_all_their_mail() {
         let (db, w, config) = harness().await;
         let a = said(
             &w,
@@ -946,13 +1034,37 @@ mod tests {
         )
         .await;
         let now = at("2026-11-27T19:30:00Z");
-        assert_eq!(questions(&db, &config, now).await.unwrap().open, 2);
-        reply(&db, &w, &Reply::DontKnow { mention_id: a })
-            .await
-            .unwrap();
+        let q = questions(&db, &config, now).await.unwrap();
+        assert_eq!((q.cards.len(), q.cards[0].rows[0].more), (1, 1));
+        reply(
+            &db,
+            &w,
+            &config,
+            now,
+            &Reply::DontKnow {
+                mention_id: a.clone(),
+            },
+        )
+        .await
+        .unwrap();
         let q = questions(&db, &config, now).await.unwrap();
         assert_eq!(rows(&q), [(false, "Pat".into(), Some("don't know".into()))]);
         assert_eq!(q.open, 0);
+        let all = answers(&db).await.unwrap();
+        assert!(
+            all.values().all(|(a, _)| *a == MentionAnswer::Unlinked),
+            "both mails answered"
+        );
+
+        reply(&db, &w, &config, now, &Reply::Undo { mention_id: a })
+            .await
+            .unwrap();
+        let all = answers(&db).await.unwrap();
+        assert!(
+            all.values().all(|(a, _)| *a == MentionAnswer::Cleared),
+            "undo clears what was answered together"
+        );
+        assert_eq!(questions(&db, &config, now).await.unwrap().open, 1);
     }
 
     #[tokio::test]

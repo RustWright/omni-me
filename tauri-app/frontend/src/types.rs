@@ -1808,6 +1808,8 @@ pub struct QuestionRow {
     pub candidates: Vec<PersonChoice>,
     #[serde(default)]
     pub answered: Option<String>,
+    #[serde(default)]
+    pub more: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

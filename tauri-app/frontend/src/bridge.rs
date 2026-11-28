@@ -5521,6 +5521,7 @@ mod mock_questions {
             sender: None,
             candidates,
             answered: ANSWERED.with(|a| a.borrow().get(id).cloned()),
+            more: 0,
         }
     }
 
@@ -5533,6 +5534,7 @@ mod mock_questions {
             vec![all[3].clone()],
         );
         email.sender = Some("Robert Chen <rchen@northwind.example>".into());
+        email.more = 2;
         let cards = vec![
             QuestionCard {
                 key: "q1".into(),

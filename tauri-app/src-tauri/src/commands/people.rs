@@ -45,7 +45,15 @@ pub async fn people_questions(state: State<'_, AppState>) -> Result<Questions, S
 #[tauri::command(rename_all = "snake_case")]
 pub async fn people_reply(state: State<'_, AppState>, reply: Reply) -> Result<Outcome, String> {
     require_feature(&state, Feature::People)?;
-    questions::reply(&state.db, &state.writer, &reply).await
+    let config = state.config.read().await.clone();
+    questions::reply(
+        &state.db,
+        &state.writer,
+        &config,
+        chrono::Utc::now(),
+        &reply,
+    )
+    .await
 }
 
 /// "Someone I know…": everyone, closest spelling first.
