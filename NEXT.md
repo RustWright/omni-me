@@ -23,7 +23,7 @@ the next dev APK on the S9 (the dev phone), never the release on his daily phone
 and check in a capped cgroup are fine, and the mock demo page is the one build exception.
 
 ## ⛔ Waiting on him
-- **[0127] Google Cloud setup, walked through live** (deferred 11-27): overlay `SETUP.md` § Calendar.
+- **[0127] Google Cloud setup, walked through live** (deferred 11-27): overlay `SETUP.md` § Google Calendar.
 - **[0132] on the S9:** answer tonight's people questions there; 3 cards wait on dev data.
 - **[0124] prompt texts:** the evening, weekly and monthly prompts in `planning/rituals.rs` are mine.
 - **[0116] hub trial record (92):** how "acted" and "dismissed" are recorded is a design call.
